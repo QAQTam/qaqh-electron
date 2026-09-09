@@ -1,0 +1,28 @@
+{
+  "name": "qaqh-electron",
+  "version": "0.1.0",
+  "description": "QAQ-Harness desktop shell — top-tabbed AI agent workbench (Electron 44 + SolidJS 2 + qaqh-js-sdk)",
+  "type": "module",
+  "main": "out/main/index.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "qaqh-js-sdk": "file:../qaqh-js-sdk"
+  },
+  "devDependencies": {
+    "@solidjs/vite-plugin": "3.0.0-next.39",
+    "@solidjs/web": "2.0.0-rc.6",
+    "@types/node": "^26.5.0",
+    "electron": "44.2.0",
+    "solid-js": "2.0.0-rc.6",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.10",
+    "vite-plugin-electron": "1.1.2",
+    "vitest": "^5.0.0"
+  }
+}
