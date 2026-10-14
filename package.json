@@ -4,7 +4,7 @@
   "description": "QAQ-Harness desktop shell — top-tabbed AI agent workbench (Electron 44 + SolidJS 2 + qaqh-js-sdk)",
   "type": "module",
   "main": "out/main/index.js",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
