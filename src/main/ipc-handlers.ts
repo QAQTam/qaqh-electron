@@ -113,8 +113,11 @@ async function handleCommand(
         type: "conversation_send_message",
         session_id: seed,
         text,
+        images: [],
         attachments,
-      });
+        as_system: false,
+        input_purpose: "trigger_turn",
+      }, seed);
 
       if (ack.status === "rejected") {
         throw new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);

@@ -323,7 +323,7 @@ export class RingingClient {
         (event, rawData) => {
           try {
             const payload = JSON.parse(rawData);
-            if (event === "reset") {
+            if (event === "reset" || event === "ringing.reset_required") {
               if (!payload.session_id) payload.session_id = seed;
               this.eventSender("projection://reset", payload);
             } else {
@@ -381,7 +381,9 @@ export class RingingClient {
             } else if (event === "status") {
               this.eventSender("timeline://status", data);
             } else {
-              this.eventSender("timeline://entry", { session_id: seed, entry: data });
+              const realEntry = data.entry ?? data;
+              const realSessionId = data.session_id ?? seed;
+              this.eventSender("timeline://entry", { session_id: realSessionId, entry: realEntry });
             }
           } catch (e) {
             console.warn("[ringing] Failed to parse timeline json:", e, rawData);
