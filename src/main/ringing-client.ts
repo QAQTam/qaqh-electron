@@ -1,15 +1,20 @@
+import { randomUUID } from "node:crypto";
 import type { DaemonDiscovery, RingingCommandAck, TimelineStatusWire } from "./types.js";
+import { readDiscovery } from "./daemon.js";
 
 export type EventSender = (eventName: string, payload: any) => void;
 
 export class RingingClient {
   private baseUrl: string;
   private token: string;
-  private leaseId: string | null = null;
+  private clientInstanceId: string;
+  private clientSessionId: string | null = null;
+  private serverEpoch: string | null = null;
   private leaseTimer: NodeJS.Timeout | null = null;
   private activeSeed: string | null = null;
   private sseControllers: AbortController[] = [];
   private eventSender: EventSender;
+  private renewFailures = 0;
 
   constructor(discovery: DaemonDiscovery, eventSender: EventSender) {
     let urlStr = discovery.endpoint;
@@ -19,6 +24,7 @@ export class RingingClient {
     this.baseUrl = `${u.protocol}//${u.host}`;
     this.token = discovery.token;
     this.eventSender = eventSender;
+    this.clientInstanceId = `electron-${randomUUID()}`;
   }
 
   async init(): Promise<void> {
@@ -27,55 +33,95 @@ export class RingingClient {
   }
 
   private async openClient(): Promise<void> {
-    try {
-      const resp = await fetch(`${this.baseUrl}/ringing/v2/clients/open`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.token}`,
-        },
-        body: JSON.stringify({
-          client_id: `electron-${Date.now()}`,
-          capabilities: {},
-        }),
-      });
+    const url = `${this.baseUrl}/ringing/v2/clients/open`;
+    const body = {
+      schema: "qaqh.Ringing",
+      version: 2,
+      client_instance_id: this.clientInstanceId,
+    };
 
-      if (!resp.ok) {
-        throw new Error(`Client open failed with HTTP ${resp.status}`);
-      }
+    console.log(`[ringing] Opening client at ${url}`);
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.token}`,
+      },
+      body: JSON.stringify(body),
+    });
 
-      const data = (await resp.json()) as any;
-      this.leaseId = data.lease_id || null;
-      console.log(`[ringing] Client lease obtained: ${this.leaseId}`);
-    } catch (err) {
-      console.error("[ringing] Failed to open client lease:", err);
-      throw err;
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`Client open failed (HTTP ${resp.status}): ${errText}`);
     }
+
+    const data = (await resp.json()) as any;
+    if (!data.accepted || !data.client_session_id) {
+      throw new Error(`Client open rejected: ${JSON.stringify(data)}`);
+    }
+
+    this.clientSessionId = data.client_session_id;
+    this.serverEpoch = data.server_epoch;
+    this.renewFailures = 0;
+
+    console.log(
+      `[ringing] Client negotiated: session=${this.clientSessionId}, epoch=${this.serverEpoch}`
+    );
   }
 
   private startLeaseRenewal(): void {
     if (this.leaseTimer) clearInterval(this.leaseTimer);
+    // 默认 10 秒续约一次（daemon lease ttl 一般为 30 秒）
     this.leaseTimer = setInterval(async () => {
-      if (!this.leaseId) return;
+      if (!this.clientSessionId) return;
+
       try {
         const resp = await fetch(`${this.baseUrl}/ringing/v2/leases/renew`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${this.token}`,
-            "X-Ringing-Lease": this.leaseId,
+            "X-QAQH-Client-Session-Id": this.clientSessionId,
           },
-          body: JSON.stringify({
-            lease_id: this.leaseId,
-          }),
+          body: JSON.stringify({}),
         });
-        if (!resp.ok) {
+
+        if (resp.ok) {
+          this.renewFailures = 0;
+        } else {
           console.warn(`[ringing] Lease renew warning: HTTP ${resp.status}`);
+          this.handleRenewFailure();
         }
       } catch (err) {
         console.warn("[ringing] Lease renew network error:", err);
+        this.handleRenewFailure();
       }
-    }, 15000);
+    }, 10000);
+  }
+
+  private async handleRenewFailure(): Promise<void> {
+    this.renewFailures++;
+    if (this.renewFailures >= 2) {
+      console.warn("[ringing] Consecutive renew failures reached threshold. Re-discovering daemon...");
+      const disc = readDiscovery();
+      if (disc) {
+        let urlStr = disc.endpoint;
+        if (urlStr.startsWith("ws://")) urlStr = urlStr.replace("ws://", "http://");
+        if (urlStr.startsWith("wss://")) urlStr = urlStr.replace("wss://", "https://");
+        const u = new URL(urlStr);
+        this.baseUrl = `${u.protocol}//${u.host}`;
+        this.token = disc.token;
+      }
+      try {
+        await this.openClient();
+        if (this.activeSeed) {
+          console.log(`[ringing] Re-attaching active seed ${this.activeSeed} after re-negotiation`);
+          await this.attach(this.activeSeed);
+        }
+      } catch (e) {
+        console.error("[ringing] Failed to re-negotiate lease:", e);
+      }
+    }
   }
 
   getActiveSeed(): string | null {
@@ -83,18 +129,42 @@ export class RingingClient {
   }
 
   async attach(seed: string, limit: number | null = null): Promise<void> {
-    if (this.activeSeed === seed) return;
-    this.detachActive();
-    this.activeSeed = seed;
+    if (!this.clientSessionId) {
+      throw new Error("Client session not established");
+    }
+
+    if (this.activeSeed !== seed) {
+      this.detachActive();
+      this.activeSeed = seed;
+    }
+
+    // 1. 发送 session_resume 命令绑定该 seed 的所有权 (Ownership)
+    console.log(`[ringing] Claiming session ownership for seed: ${seed}`);
+    await this.command("control", {
+      type: "session_resume",
+      session_id: seed,
+    }, seed).catch((err) => {
+      console.warn(`[ringing] session_resume warning:`, err);
+    });
 
     this.eventSender("timeline://status", {
       status: "connecting",
       session_id: seed,
     } as TimelineStatusWire);
 
-    // 启动 timeline 流与 events 流
+    // 2. 取首页 timeline 快照并立刻推给渲染层
+    try {
+      const page = await this.timelinePage(seed, limit ?? 30);
+      if (page) {
+        this.eventSender("timeline://snapshot", page);
+      }
+    } catch (e) {
+      console.warn(`[ringing] Initial timeline snapshot failed for ${seed}:`, e);
+    }
+
+    // 3. 启动双路 SSE 流（时间线增量流 + 投影单流）
     this.startEventsStream(seed);
-    this.startTimelineStream(seed, limit);
+    this.startTimelineStream(seed);
   }
 
   detachActive(): void {
@@ -111,19 +181,36 @@ export class RingingClient {
     }
   }
 
-  async command(channel: string, cmd: Record<string, any>): Promise<RingingCommandAck> {
+  async command(channel: "control" | "conversation", cmd: Record<string, any>, targetSeed?: string): Promise<RingingCommandAck> {
+    if (!this.clientSessionId) {
+      throw new Error("Client session not open");
+    }
+
+    const commandId = randomUUID();
+    const envelope = {
+      schema: "qaqh.Ringing",
+      version: 2,
+      channel,
+      command_id: commandId,
+      client_instance_id: this.clientInstanceId,
+      client_session_id: this.clientSessionId,
+      session_id: targetSeed ?? this.activeSeed ?? null,
+      command: {
+        channel,
+        ...cmd,
+      },
+    };
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.token}`,
+      "X-QAQH-Client-Session-Id": this.clientSessionId,
     };
-    if (this.leaseId) {
-      headers["X-Ringing-Lease"] = this.leaseId;
-    }
 
     const resp = await fetch(`${this.baseUrl}/ringing/v2/commands/${channel}`, {
       method: "POST",
       headers,
-      body: JSON.stringify(cmd),
+      body: JSON.stringify(envelope),
     });
 
     if (!resp.ok) {
@@ -139,13 +226,15 @@ export class RingingClient {
   }
 
   async serviceRpc<T = unknown>(method: string, params: Record<string, any> = {}): Promise<T> {
+    if (!this.clientSessionId) {
+      throw new Error("Client session not open");
+    }
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.token}`,
+      "X-QAQH-Client-Session-Id": this.clientSessionId,
     };
-    if (this.leaseId) {
-      headers["X-Ringing-Lease"] = this.leaseId;
-    }
 
     const resp = await fetch(`${this.baseUrl}/ringing/v2/service/${method}`, {
       method: "POST",
@@ -162,6 +251,10 @@ export class RingingClient {
   }
 
   async timelinePage(seed: string, limit?: number | null, beforeIndex?: number | null): Promise<any> {
+    if (!this.clientSessionId) {
+      throw new Error("Client session not open");
+    }
+
     const params = new URLSearchParams();
     if (limit != null) params.set("limit", String(limit));
     if (beforeIndex != null) params.set("before_index", String(beforeIndex));
@@ -170,8 +263,8 @@ export class RingingClient {
     const url = `${this.baseUrl}/ringing/v2/sessions/${encodeURIComponent(seed)}/timeline${q ? `?${q}` : ""}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
+      "X-QAQH-Client-Session-Id": this.clientSessionId,
     };
-    if (this.leaseId) headers["X-Ringing-Lease"] = this.leaseId;
 
     const resp = await fetch(url, { headers });
     if (!resp.ok) {
@@ -181,13 +274,17 @@ export class RingingClient {
   }
 
   async uploadContent(seed: string, filename: string, buffer: Uint8Array, mediaType: string): Promise<any> {
+    if (!this.clientSessionId) {
+      throw new Error("Client session not open");
+    }
+
     const headers: Record<string, string> = {
       "Content-Type": mediaType || "application/octet-stream",
       Authorization: `Bearer ${this.token}`,
+      "X-QAQH-Client-Session-Id": this.clientSessionId,
       "X-Filename": encodeURIComponent(filename),
       "X-Session-Id": seed,
     };
-    if (this.leaseId) headers["X-Ringing-Lease"] = this.leaseId;
 
     const resp = await fetch(`${this.baseUrl}/ringing/v2/content`, {
       method: "POST",
@@ -210,9 +307,9 @@ export class RingingClient {
     const url = `${this.baseUrl}/ringing/v2/sessions/${encodeURIComponent(seed)}/events`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
+      "X-QAQH-Client-Session-Id": this.clientSessionId!,
       Accept: "text/event-stream",
     };
-    if (this.leaseId) headers["X-Ringing-Lease"] = this.leaseId;
 
     try {
       const resp = await fetch(url, { headers, signal: ctrl.signal });
@@ -221,20 +318,24 @@ export class RingingClient {
         return;
       }
 
-      await this.consumeSse(resp.body, (event, rawData) => {
-        try {
-          const payload = JSON.parse(rawData);
-          if (event === "reset") {
-            if (!payload.session_id) payload.session_id = seed;
-            this.eventSender("projection://reset", payload);
-          } else {
-            if (!payload.session_id) payload.session_id = seed;
-            this.eventSender("projection://event", payload);
+      await this.consumeSse(
+        resp.body,
+        (event, rawData) => {
+          try {
+            const payload = JSON.parse(rawData);
+            if (event === "reset") {
+              if (!payload.session_id) payload.session_id = seed;
+              this.eventSender("projection://reset", payload);
+            } else {
+              if (!payload.session_id) payload.session_id = seed;
+              this.eventSender("projection://event", payload);
+            }
+          } catch (e) {
+            console.warn("[ringing] Failed to parse event json:", e, rawData);
           }
-        } catch (e) {
-          console.warn("[ringing] Failed to parse event json:", e, rawData);
-        }
-      }, ctrl.signal);
+        },
+        ctrl.signal
+      );
     } catch (err: any) {
       if (err.name !== "AbortError") {
         console.warn(`[ringing] Events stream error (${seed}):`, err);
@@ -242,19 +343,17 @@ export class RingingClient {
     }
   }
 
-  private async startTimelineStream(seed: string, initialLimit: number | null): Promise<void> {
+  private async startTimelineStream(seed: string): Promise<void> {
     const ctrl = new AbortController();
     this.sseControllers.push(ctrl);
 
-    const params = new URLSearchParams();
-    if (initialLimit != null) params.set("limit", String(initialLimit));
-    const q = params.toString();
-    const url = `${this.baseUrl}/ringing/v2/sessions/${encodeURIComponent(seed)}/timeline${q ? `?${q}` : ""}`;
+    // 关键修正：Timeline 事件流路径为 /timeline/events
+    const url = `${this.baseUrl}/ringing/v2/sessions/${encodeURIComponent(seed)}/timeline/events`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
+      "X-QAQH-Client-Session-Id": this.clientSessionId!,
       Accept: "text/event-stream",
     };
-    if (this.leaseId) headers["X-Ringing-Lease"] = this.leaseId;
 
     try {
       const resp = await fetch(url, { headers, signal: ctrl.signal });
@@ -272,21 +371,24 @@ export class RingingClient {
         session_id: seed,
       });
 
-      await this.consumeSse(resp.body, (event, rawData) => {
-        try {
-          const data = JSON.parse(rawData);
-          if (event === "snapshot") {
-            this.eventSender("timeline://snapshot", data);
-          } else if (event === "status") {
-            this.eventSender("timeline://status", data);
-          } else {
-            // entry
-            this.eventSender("timeline://entry", { session_id: seed, entry: data });
+      await this.consumeSse(
+        resp.body,
+        (event, rawData) => {
+          try {
+            const data = JSON.parse(rawData);
+            if (event === "snapshot") {
+              this.eventSender("timeline://snapshot", data);
+            } else if (event === "status") {
+              this.eventSender("timeline://status", data);
+            } else {
+              this.eventSender("timeline://entry", { session_id: seed, entry: data });
+            }
+          } catch (e) {
+            console.warn("[ringing] Failed to parse timeline json:", e, rawData);
           }
-        } catch (e) {
-          console.warn("[ringing] Failed to parse timeline json:", e, rawData);
-        }
-      }, ctrl.signal);
+        },
+        ctrl.signal
+      );
     } catch (err: any) {
       if (err.name !== "AbortError") {
         console.warn(`[ringing] Timeline stream error (${seed}):`, err);
@@ -322,7 +424,6 @@ export class RingingClient {
         let dataAccumulator = "";
         for (const line of lines) {
           if (line.startsWith(":")) {
-            // SSE comment / keepalive
             continue;
           }
           if (line.startsWith("event:")) {
@@ -330,13 +431,11 @@ export class RingingClient {
           } else if (line.startsWith("data:")) {
             const content = line.slice(5).trim();
             dataAccumulator += (dataAccumulator ? "\n" : "") + content;
-            // 防御式内存上限：若单条 SSE 帧超过 4MB，直接截断丢弃，防止在弱硬件机器上爆内存
             if (dataAccumulator.length > 4 * 1024 * 1024) {
               console.warn("[ringing] SSE data frame exceeded 4MB memory safety cap, dropping");
               dataAccumulator = "";
             }
           } else if (line === "") {
-            // End of message
             if (dataAccumulator !== "") {
               onMessage(currentEvent, dataAccumulator);
               dataAccumulator = "";

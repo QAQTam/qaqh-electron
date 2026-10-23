@@ -48,17 +48,25 @@ async function handleCommand(
       const list = Array.isArray(raw) ? raw : [];
       return list.map((entry: any) => {
         const meta = entry.meta || {};
+        const sessionId = entry.session_id || meta.session_id || "";
+        const title = entry.title !== undefined ? entry.title : (meta.title !== undefined ? meta.title : null);
+        const cwd = entry.cwd !== undefined ? entry.cwd : (meta.cwd !== undefined ? meta.cwd : null);
+        const updatedAt = entry.updated_at || meta.updated_at || Date.now();
+        const turnCount = entry.turn_count || meta.turn_count || 0;
         const status = entry.status || "idle";
+        const archived = Boolean(entry.archived !== undefined ? entry.archived : meta.archived);
+        const workspaceId = entry.workspace_id !== undefined ? entry.workspace_id : (meta.workspace_id || null);
+
         return {
-          session_id: meta.session_id || entry.session_id,
-          title: meta.title,
-          cwd: meta.cwd,
-          updated_at: meta.updated_at || Date.now(),
-          turn_count: meta.turn_count || 0,
+          session_id: sessionId,
+          title,
+          cwd,
+          updated_at: updatedAt,
+          turn_count: turnCount,
           status,
           busy: sessionIsBusy(status),
-          archived: Boolean(meta.archived),
-          workspace_id: entry.workspace_id,
+          archived,
+          workspace_id: workspaceId,
         };
       });
     }
@@ -154,7 +162,37 @@ async function handleCommand(
 
     case "service_rpc": {
       const method = String(args.method || "");
-      const params = args.params || {};
+      const params = (args.params && typeof args.params === "object") ? { ...args.params } : {};
+
+      const exemptMethods = [
+        "daemon.version",
+        "session.list",
+        "session.activity",
+        "workspace.list",
+        "workspace.create",
+        "workspace.move_session",
+        "workspace.detach",
+        "config.load",
+        "config.save",
+        "profile.apply",
+        "profile.save_current",
+        "profile.delete",
+        "diagnostics.memory.start",
+        "diagnostics.memory.stop",
+        "diagnostics.memory.snapshot",
+      ];
+
+      const isExempt = exemptMethods.includes(method) || method.startsWith("siwc.") || method.startsWith("dsaccount.");
+      if (!isExempt) {
+        const activeSeed = client.getActiveSeed();
+        if (activeSeed && !params.session_id) {
+          params.session_id = activeSeed;
+        }
+        if (method.startsWith("fs.") && !params.scope_session_id) {
+          params.scope_session_id = params.session_id || activeSeed;
+        }
+      }
+
       return client.serviceRpc(method, params);
     }
 

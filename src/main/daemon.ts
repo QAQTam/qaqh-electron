@@ -19,21 +19,35 @@ export function getDataDir(): string {
   return join(homedir(), ".config", "qaqh");
 }
 
-export function getDiscoveryPath(): string {
-  return join(getDataDir(), "daemon.json");
+export function getDiscoveryCandidates(): string[] {
+  const candidates: string[] = [];
+  if (process.env.QAQH_DATA_DIR && process.env.QAQH_DATA_DIR.trim() !== "") {
+    candidates.push(join(process.env.QAQH_DATA_DIR, "daemon.json"));
+  }
+  const xdg = process.env.XDG_CONFIG_HOME;
+  if (xdg && xdg.trim() !== "") {
+    candidates.push(join(xdg, "qaqh", "daemon.json"));
+  }
+  candidates.push(join(homedir(), ".config", "qaqh", "daemon.json"));
+  candidates.push(join(homedir(), ".qaqh", "daemon.json"));
+  return candidates;
 }
 
 export function readDiscovery(): DaemonDiscovery | null {
-  const p = getDiscoveryPath();
-  if (!existsSync(p)) return null;
-  try {
-    const raw = readFileSync(p, "utf-8");
-    const json = JSON.parse(raw) as DaemonDiscovery;
-    return json;
-  } catch (err) {
-    console.warn(`[daemon] Failed to read ${p}:`, err);
-    return null;
+  for (const p of getDiscoveryCandidates()) {
+    if (existsSync(p)) {
+      try {
+        const raw = readFileSync(p, "utf-8");
+        const json = JSON.parse(raw) as DaemonDiscovery;
+        if (json.endpoint && json.token && json.pid) {
+          return json;
+        }
+      } catch (err) {
+        console.warn(`[daemon] Failed to read ${p}:`, err);
+      }
+    }
   }
+  return null;
 }
 
 export function isProcessAlive(pid: number): boolean {
@@ -42,7 +56,7 @@ export function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (e: any) {
-    return e.code === "EPERM"; // EPERM means process exists but we lack permission
+    return e.code === "EPERM";
   }
 }
 
@@ -52,20 +66,18 @@ export async function isEndpointReachable(discovery: DaemonDiscovery): Promise<b
     if (urlStr.startsWith("ws://")) urlStr = urlStr.replace("ws://", "http://");
     if (urlStr.startsWith("wss://")) urlStr = urlStr.replace("wss://", "https://");
     const u = new URL(urlStr);
-    const port = Number(u.port) || (u.protocol === "https:" ? 443 : 80);
-    const host = u.hostname || "127.0.0.1";
+    const healthUrl = `${u.protocol}//${u.host}/health`;
 
-    return new Promise((resolve) => {
-      const socket = net.createConnection({ host, port, timeout: 300 }, () => {
-        socket.destroy();
-        resolve(true);
-      });
-      socket.on("error", () => resolve(false));
-      socket.on("timeout", () => {
-        socket.destroy();
-        resolve(false);
-      });
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 600);
+    const resp = await fetch(healthUrl, { signal: controller.signal }).catch(() => null);
+    clearTimeout(timeout);
+
+    if (resp && resp.ok) {
+      const text = await resp.text();
+      return text.includes("ok");
+    }
+    return false;
   } catch {
     return false;
   }
