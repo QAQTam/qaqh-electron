@@ -2,6 +2,10 @@
 
 针对 Linux 环境下 Tauri 2 的不稳定问题（WebKitGTK 渲染器崩溃、DMA-BUF 闪烁、中文输入法支持欠缺、发行版动态库依赖碎片化），本项目为 **`qaqh-backend`** 与 **`qaqh-desktop-app`** 定制了一套完整的 **Electron** 宿主与构建流水线。
 
+- **核心运行栈**：**Electron 45.0.0 (最新稳定版)** + **Node.js 22+** + **TypeScript 7.0.2**
+- **打包工具链**：**electron-builder 26.15.3** + **esbuild 0.28.2**
+- **针对硬件**：针对双核双线程受限平台（如 Intel Pentium G2020）深度调优，包含 V8 堆内存硬约束与 Chromium 降负配置。
+
 ---
 
 ## 目录
