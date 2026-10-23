@@ -330,6 +330,11 @@ export class RingingClient {
           } else if (line.startsWith("data:")) {
             const content = line.slice(5).trim();
             dataAccumulator += (dataAccumulator ? "\n" : "") + content;
+            // 防御式内存上限：若单条 SSE 帧超过 4MB，直接截断丢弃，防止在弱硬件机器上爆内存
+            if (dataAccumulator.length > 4 * 1024 * 1024) {
+              console.warn("[ringing] SSE data frame exceeded 4MB memory safety cap, dropping");
+              dataAccumulator = "";
+            }
           } else if (line === "") {
             // End of message
             if (dataAccumulator !== "") {

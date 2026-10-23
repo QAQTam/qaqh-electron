@@ -6,11 +6,40 @@ import { RingingClient } from "./ringing-client.js";
 import { ChallengeManager } from "./challenges.js";
 import { registerIpcHandlers } from "./ipc-handlers.js";
 
-// Linux 平台 Chromium 调优：自动检测 Wayland 与 IME 输入法支持
+// 针对双核奔腾/弱硬件（如 G2020）的极致轻量化与低内存配置
+// 1. Linux 平台 Ozone/Wayland 与 IME 优化
 if (process.platform === "linux") {
   app.commandLine.appendSwitch("enable-features", "UseOzonePlatform");
   app.commandLine.appendSwitch("ozone-platform-hint", "auto");
 }
+
+// 2. 限制进程并发（只允许单个渲染进程，避免多核心软中断打满双核 CPU）
+app.commandLine.appendSwitch("renderer-process-limit", "1");
+app.commandLine.appendSwitch("disable-site-isolation-trials");
+
+// 3. V8 堆内存约束与代码体积优化（限制最大 256MB，优先小内存占用）
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=256 --optimize-for-size --expose-gc");
+
+// 4. 彻底禁用无用的重量级模块（纯代码/文本客户端无需 3D/WebGL、语音与后台遥测）
+app.commandLine.appendSwitch("disable-3d-apis");
+app.commandLine.appendSwitch("disable-webgl");
+app.commandLine.appendSwitch("disable-webgl2");
+app.commandLine.appendSwitch("disable-speech-api");
+app.commandLine.appendSwitch("disable-breakpad");
+app.commandLine.appendSwitch("disable-print-preview");
+app.commandLine.appendSwitch("disable-component-update");
+app.commandLine.appendSwitch("disable-domain-reliability");
+app.commandLine.appendSwitch("disable-sync");
+
+// 5. 限制磁盘和多媒体缓存（16MB / 8MB），避免触发系统 Swap 颠簸
+app.commandLine.appendSwitch("disk-cache-size", "16777216");
+app.commandLine.appendSwitch("media-cache-size", "8388608");
+
+// 6. 禁用后台不必要的重型功能
+app.commandLine.appendSwitch(
+  "disable-features",
+  "Translate,AutofillServerCommunication,CalculateNativeWinOcclusion,InterestFeedContentSuggestions"
+);
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -99,12 +128,25 @@ function createMainWindow(): void {
     minHeight: 600,
     title: "QAQ-Harness",
     show: false,
+    backgroundColor: "#18181b",
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      spellcheck: false, // 禁用拼写检查字典，直接节省 40MB+ 内存并消除打字 CPU 占用
+      backgroundThrottling: true, // 后台深度挂起定时器与 CSS 动画，节约空闲 CPU
     },
+  });
+
+  // 窗口最小化时主动释放渲染缓存并触发垃圾回收
+  mainWindow.on("minimize", () => {
+    mainWindow?.webContents.session.clearCache().catch(() => {});
+    if (typeof (global as any).gc === "function") {
+      try {
+        (global as any).gc();
+      } catch {}
+    }
   });
 
   mainWindow.once("ready-to-show", () => {

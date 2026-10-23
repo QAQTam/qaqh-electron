@@ -17,6 +17,15 @@ extraResources:
       - "**/*"
 
 linux:
+  executableArgs:
+    - "--enable-features=UseOzonePlatform"
+    - "--ozone-platform-hint=auto"
+    - "--renderer-process-limit=1"
+    - "--js-flags=--max-old-space-size=256 --optimize-for-size"
+    - "--disable-3d-apis"
+    - "--disable-webgl"
+    - "--disable-speech-api"
+    - "--disk-cache-size=16777216"
   target:
     - target: AppImage
       arch:

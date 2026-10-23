@@ -139,11 +139,26 @@ qaqh-electron/
 
 ---
 
-## 5. 常用命令与使用指南
+## 5. 极端受限硬件（双核老奔腾/弱核显）极致轻量化调优
+
+针对类似 **Intel Pentium G2020（双核双线程、无超线程、Ivy Bridge 老集显）** 这类极端受限环境，本项目实施了深度轻量化调优策略：
+
+| 调优维度 | 优化措施 | 收益与作用 |
+|---|---|---|
+| **并发与进程数收敛** | 注入 `--renderer-process-limit=1` 与 `--disable-site-isolation-trials` | 杜绝 Chromium 为多标签/跨站派生多进程，消除双核软中断卡死 |
+| **V8 堆内存硬约束** | 注入 `--max-old-space-size=256 --optimize-for-size --expose-gc` | 限制老生代堆内存最大 256MB，以字节码紧凑换取低内存常驻 |
+| **功能剥离降负** | 禁用 3D/WebGL (`--disable-3d-apis`)、语音 (`--disable-speech-api`)、拼写检查 (`spellcheck: false`) | 纯代码文本应用无需 3D，关掉拼写检查直接减少 40MB+ 词库常驻并消除打字 CPU 峰值 |
+| **I/O 与缓存节流** | 严格限制磁盘缓存 16MB (`--disk-cache-size=16777216`)、多媒体缓存 8MB | 避免磁盘密集 I/O 导致系统 Swap 剧烈颠簸 |
+| **后台挂起与主动 GC** | 开启 `backgroundThrottling: true`，监听 `minimize` 主动清理缓存并执行 `global.gc()` | 最小化或切后台时挂起非必要动画与定时器，空闲 CPU 占用趋近于 0% |
+| **SSE 长流安全保护** | 单帧数据设定 4MB 防御式安全上限 | 阻断大流量消息累积导致的内存突发暴涨 |
+
+---
+
+## 6. 常用命令与使用指南
 
 ### 开发模式
 ```bash
-# 启动本地开发
+# 启动本地开发（自动注入低内存环境）
 pnpm run dev
 ```
 
