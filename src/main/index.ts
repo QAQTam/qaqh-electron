@@ -1,10 +1,24 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net } from "electron";
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { DaemonManager } from "./daemon.js";
 import { RingingClient } from "./ringing-client.js";
 import { ChallengeManager } from "./challenges.js";
 import { registerIpcHandlers } from "./ipc-handlers.js";
+
+// 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "app",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 // 针对双核奔腾/弱硬件（如 G2020）的极致轻量化与低内存配置
 // 1. Linux 平台 Ozone/Wayland 与 IME 优化
@@ -69,6 +83,9 @@ if (!gotLock) {
 async function bootstrapApp(): Promise<void> {
   console.log("[app] Bootstrapping QAQ-Harness Electron shell...");
 
+  // 0. 注册 app:// 协议处理器，使 /assets 等 SPA 绝对路径无缝映射到本地文件
+  registerAppProtocol();
+
   // 1. 确保 daemon 在运行
   let discovery;
   try {
@@ -102,20 +119,46 @@ async function bootstrapApp(): Promise<void> {
   setupTray();
 }
 
-function resolveFrontendEntry(): string {
-  if (process.env.QAQH_DEV_URL && process.env.QAQH_DEV_URL.trim() !== "") {
-    return process.env.QAQH_DEV_URL;
-  }
+function resolveRendererDir(): string {
+  // 1. 打包生产环境/asar 内部路径: join(app.getAppPath(), "renderer")
+  const asarRenderer = join(app.getAppPath(), "renderer");
+  if (existsSync(asarRenderer)) return asarRenderer;
 
-  // 打包后的生产路径
-  const prodRenderer = join(__dirname, "../../renderer/index.html");
-  if (existsSync(prodRenderer)) return prodRenderer;
+  // 2. 本地项目 renderer 目录
+  const localRenderer = resolve(process.cwd(), "renderer");
+  if (existsSync(localRenderer)) return localRenderer;
 
-  // 开发期本地相对路径（读取同级 qaqh-desktop-app 产物）
-  const devRenderer = resolve(process.cwd(), "../qaqh-desktop-app/out/renderer/index.html");
+  // 3. 同级开发项目 qaqh-desktop-app 产物
+  const devRenderer = resolve(process.cwd(), "../qaqh-desktop-app/out/renderer");
   if (existsSync(devRenderer)) return devRenderer;
 
-  return prodRenderer;
+  return asarRenderer;
+}
+
+function registerAppProtocol(): void {
+  protocol.handle("app", (request) => {
+    try {
+      const parsedUrl = new URL(request.url);
+      let pathname = decodeURIComponent(parsedUrl.pathname);
+      if (pathname === "/" || pathname === "") {
+        pathname = "/index.html";
+      }
+
+      const rendererDir = resolveRendererDir();
+      const cleanPath = pathname.replace(/^\/+/, "");
+      const filePath = resolve(rendererDir, cleanPath);
+
+      if (!filePath.startsWith(rendererDir) || !existsSync(filePath)) {
+        console.warn(`[protocol] 404: ${pathname} (resolved: ${filePath})`);
+        return new Response("Not Found", { status: 404 });
+      }
+
+      return net.fetch(pathToFileURL(filePath).toString());
+    } catch (err) {
+      console.error("[protocol] Failed to serve app request:", err);
+      return new Response("Internal Server Error", { status: 500 });
+    }
+  });
 }
 
 function createMainWindow(): void {
@@ -153,13 +196,12 @@ function createMainWindow(): void {
     mainWindow?.show();
   });
 
-  const entry = resolveFrontendEntry();
-  if (entry.startsWith("http://") || entry.startsWith("https://")) {
-    console.log(`[app] Loading renderer from Dev URL: ${entry}`);
-    mainWindow.loadURL(entry);
+  if (process.env.QAQH_DEV_URL && process.env.QAQH_DEV_URL.trim() !== "") {
+    console.log(`[app] Loading renderer from Dev URL: ${process.env.QAQH_DEV_URL}`);
+    mainWindow.loadURL(process.env.QAQH_DEV_URL);
   } else {
-    console.log(`[app] Loading renderer from file: ${entry}`);
-    mainWindow.loadFile(entry);
+    console.log("[app] Loading renderer via standard app:// protocol (app://localhost/index.html)");
+    mainWindow.loadURL("app://localhost/index.html");
   }
 
   mainWindow.on("closed", () => {
