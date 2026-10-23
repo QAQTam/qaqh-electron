@@ -1,0 +1,9 @@
+node_modules/
+dist/
+release/
+renderer/
+resources/bin/
+.tmp/
+.qaqh/
+*.log
+.DS_Store

@@ -1,0 +1,47 @@
+appId: com.qaqh.desktop
+productName: QAQ-Harness
+copyright: Copyright © 2026 QAQ-Harness Authors
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - renderer/**/*
+  - package.json
+
+extraResources:
+  - from: resources/bin/
+    to: bin/
+    filter:
+      - "**/*"
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+    - target: tar.gz
+      arch:
+        - x64
+  category: Development
+  synopsis: QAQ-Harness AI Coding Agent Desktop Client
+  description: Next-generation multi-agent coding harness with native Linux support via Electron
+  desktop:
+    StartupWMClass: qaq-harness
+    Terminal: false
+    Type: Application
+    Categories: Development;IDE;TextEditor;Utility;
+
+deb:
+  depends:
+    - libnotify4
+    - libxtst6
+    - libnss3
+    - libasound2
+
+appImage:
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
