@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
-import * as net from "node:net";
+import { isAlive, resolveCredentials, DiscoveryError } from "@qaqh/sdk/node";
+import { RINGING_V2_VERSION } from "@qaqh/sdk/protocol";
 import type { DaemonDiscovery } from "./types.js";
 
 export function getDataDir(): string {
@@ -33,31 +34,51 @@ export function getDiscoveryCandidates(): string[] {
   return candidates;
 }
 
-export function readDiscovery(): DaemonDiscovery | null {
+/**
+ * 严格校验优先：SDK resolveCredentials 逐候选校验形状/协议版本/pid 存活。
+ * 仅当候选文档存在但缺少必需字段（旧版 daemon 遗留）时走宽松回退，避免
+ * 老文档让 shell 无法启动；wrong_protocol/dead_pid 等明确拒绝则继续下一候选。
+ */
+export async function readDiscovery(): Promise<DaemonDiscovery | null> {
   for (const p of getDiscoveryCandidates()) {
-    if (existsSync(p)) {
-      try {
-        const raw = readFileSync(p, "utf-8");
-        const json = JSON.parse(raw) as DaemonDiscovery;
-        if (json.endpoint && json.token && json.pid) {
-          return json;
+    try {
+      return await resolveCredentials({ kind: "local-discovery", path: p });
+    } catch (err) {
+      if (err instanceof DiscoveryError && err.code === "not_found") continue;
+      if (err instanceof DiscoveryError && err.code === "invalid_shape") {
+        const lenient = readLenientDiscovery(p);
+        if (lenient) {
+          console.warn(`[daemon] ${p} 缺少必需字段（旧版 discovery 文档?），宽松接受: ${err.message}`);
+          return lenient;
         }
-      } catch (err) {
-        console.warn(`[daemon] Failed to read ${p}:`, err);
+        continue;
       }
+      console.warn(`[daemon] Discovery candidate ${p} rejected: ${(err as Error).message}`);
     }
   }
   return null;
 }
 
-export function isProcessAlive(pid: number): boolean {
-  if (!pid || pid <= 0) return false;
+function readLenientDiscovery(path: string): DaemonDiscovery | null {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e: any) {
-    return e.code === "EPERM";
+    const json = JSON.parse(readFileSync(path, "utf-8")) as Record<string, any>;
+    if (json.endpoint && json.token && json.pid) {
+      return {
+        ...json,
+        server_epoch: json.server_epoch ?? "",
+        protocol_version: json.protocol_version ?? RINGING_V2_VERSION,
+        daemon_version: json.daemon_version ?? "",
+        build_id: json.build_id ?? "",
+        channel: json.channel ?? "",
+        executable: json.executable ?? "",
+        lan_endpoint: json.lan_endpoint ?? null,
+        tls_fingerprint: json.tls_fingerprint ?? null,
+      } as DaemonDiscovery;
+    }
+  } catch {
+    // fall through
   }
+  return null;
 }
 
 export async function isEndpointReachable(discovery: DaemonDiscovery): Promise<boolean> {
@@ -116,8 +137,8 @@ export class DaemonManager {
   private spawnedPid: number | null = null;
 
   async ensureDaemonRunning(timeoutMs = 15000): Promise<DaemonDiscovery> {
-    const existing = readDiscovery();
-    if (existing && isProcessAlive(existing.pid) && (await isEndpointReachable(existing))) {
+    const existing = await readDiscovery();
+    if (existing && isAlive(existing.pid) && (await isEndpointReachable(existing))) {
       console.log(`[daemon] Reusing live daemon (pid: ${existing.pid}, endpoint: ${existing.endpoint})`);
       return existing;
     }
@@ -145,8 +166,8 @@ export class DaemonManager {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 150));
-      const disc = readDiscovery();
-      if (disc && isProcessAlive(disc.pid) && (await isEndpointReachable(disc))) {
+      const disc = await readDiscovery();
+      if (disc && isAlive(disc.pid) && (await isEndpointReachable(disc))) {
         console.log(`[daemon] Daemon ready at ${disc.endpoint} (pid: ${disc.pid})`);
         return disc;
       }

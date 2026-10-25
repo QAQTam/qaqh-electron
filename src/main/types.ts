@@ -1,16 +1,7 @@
-export interface DaemonDiscovery {
-  endpoint: string;
-  token: string;
-  pid: number;
-  server_epoch: string;
-  protocol_version: number;
-  daemon_version?: string;
-  build_id?: string;
-  channel?: string;
-  executable?: string;
-  lan_endpoint?: string;
-  tls_fingerprint?: string;
-}
+// 协议契约类型直接复用 @qaqh/sdk 的生成产物，避免两份定义漂移
+import type { DaemonDiscovery as SdkDaemonDiscovery } from "@qaqh/sdk/protocol";
+
+export type DaemonDiscovery = SdkDaemonDiscovery;
 
 export interface RingingCommandAck {
   status: "accepted" | "rejected";

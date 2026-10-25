@@ -7,33 +7,18 @@
 import {
   createClient,
   SdkError,
+  type ApprovalsView,
+  type ClientV2Bootstrap,
   type ClientState,
   type RingingClient as SdkRingingClient,
   type SessionWatch,
   type TimelineWatch,
   type WatchStatus,
 } from "@qaqh/sdk";
-import type { DaemonDiscovery as SdkDaemonDiscovery } from "@qaqh/sdk/protocol";
 import { readDiscovery } from "./daemon.js";
 import type { DaemonDiscovery, RingingCommandAck, TimelineStatusWire } from "./types.js";
 
 export type EventSender = (eventName: string, payload: any) => void;
-
-function toSdkDiscovery(discovery: DaemonDiscovery): SdkDaemonDiscovery {
-  return {
-    endpoint: discovery.endpoint,
-    token: discovery.token,
-    pid: discovery.pid,
-    server_epoch: discovery.server_epoch ?? "",
-    protocol_version: discovery.protocol_version,
-    daemon_version: discovery.daemon_version ?? "",
-    build_id: discovery.build_id ?? "",
-    channel: discovery.channel ?? "",
-    executable: discovery.executable ?? "",
-    lan_endpoint: discovery.lan_endpoint ?? null,
-    tls_fingerprint: discovery.tls_fingerprint ?? null,
-  };
-}
 
 const TIMELINE_STATUS_BY_WATCH: Record<WatchStatus, TimelineStatusWire["status"]> = {
   connecting: "connecting",
@@ -53,13 +38,13 @@ export class RingingClient {
   constructor(discovery: DaemonDiscovery, eventSender: EventSender) {
     this.eventSender = eventSender;
     this.sdk = createClient({
-      credentials: toSdkDiscovery(discovery),
+      credentials: discovery,
       // Daemon restarts re-publish daemon.json (new port/token); the SDK
       // consults this hook before every recovery reconnect.
       refreshCredentials: async () => {
-        const fresh = readDiscovery();
+        const fresh = await readDiscovery();
         if (!fresh) throw new Error("daemon discovery document disappeared");
-        return toSdkDiscovery(fresh);
+        return fresh;
       },
       logger: console,
     });
@@ -162,6 +147,28 @@ export class RingingClient {
       if (err instanceof SdkError && err.kind === "command_rejected") {
         return { status: "rejected", code: err.code, message: err.message };
       }
+      // 提交超时 = 结果未知：命令可能已被 daemon 接受。按 command_id 轮询
+      // commandStatus 闭环，而不是把未知结果当失败抛给渲染层。
+      if (err instanceof SdkError && err.kind === "outcome_unknown" && err.commandId) {
+        const resolved = await this.sdk.resolveOutcome(err, { timeoutMs: 10_000 }).catch(() => null);
+        if (resolved) {
+          if (resolved.state === "succeeded") {
+            return { status: "accepted", command_id: resolved.command_id };
+          }
+          if (resolved.state === "rejected") {
+            return {
+              status: "rejected",
+              code: resolved.error_code ?? undefined,
+              message: "command rejected (resolved via commandStatus)",
+            };
+          }
+          if (resolved.state === "failed") {
+            // 提交已被接受、执行失败：失败经由 timeline/turn 事件呈现给渲染层
+            console.warn(`[ringing] command ${resolved.command_id} failed: ${resolved.error_code ?? "unknown"}`);
+            return { status: "accepted", command_id: resolved.command_id };
+          }
+        }
+      }
       throw err;
     }
   }
@@ -177,6 +184,16 @@ export class RingingClient {
       limit: limit ?? undefined,
       beforeIndex: beforeIndex ?? undefined,
     });
+  }
+
+  /** Canonical bootstrap 快照（渲染层读取 control.state.activity）。 */
+  bootstrap(seed: string): Promise<ClientV2Bootstrap> {
+    return this.sdk.bootstrap(seed);
+  }
+
+  /** approvals.admin capability；渲染层拿到的仍是 ChallengeManager 发出的 challenge 视图。 */
+  approvals(seed: string): Promise<ApprovalsView> {
+    return this.sdk.approvals(seed);
   }
 
   async uploadContent(seed: string, _filename: string, buffer: Uint8Array, mediaType: string): Promise<any> {

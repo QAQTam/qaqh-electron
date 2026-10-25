@@ -10,6 +10,7 @@ import {
   uploadAttachment,
 } from "./native-dialogs.js";
 import { scanUserSkills } from "./skills-scanner.js";
+import type { RingingV2PendingApprovals } from "@qaqh/sdk/protocol";
 import type { RingingCommandAck } from "./types.js";
 
 function sessionIsBusy(status: string): boolean {
@@ -22,6 +23,31 @@ function sessionIsBusy(status: string): boolean {
     "waitingask",
     "waitingplan",
   ].includes(String(status).toLowerCase());
+}
+
+/**
+ * 把 approvals.admin 的两个槽位摊平成 ChallengeManager 期望的条目形状。
+ * details 整卡透传：渲染层读取的 tool_name/action_summary/risk/plan_content
+ * 等键正是 daemon admin 视图的键。
+ */
+function flattenAdminApprovals(pending: RingingV2PendingApprovals): Array<Record<string, any>> {
+  const items: Array<Record<string, any>> = [];
+  if (pending.pending_permission) {
+    items.push({
+      kind: "tool_permission",
+      interaction_id: pending.pending_permission.tool_call_id,
+      details: pending.pending_permission,
+    });
+  }
+  if (pending.pending_interaction) {
+    const kind = pending.pending_interaction.kind === "permission" ? "tool_permission" : pending.pending_interaction.kind;
+    items.push({
+      kind,
+      interaction_id: pending.pending_interaction.id,
+      details: (pending.pending_interaction.details as Record<string, any> | null) ?? {},
+    });
+  }
+  return items;
 }
 
 export function registerIpcHandlers(
@@ -80,8 +106,11 @@ async function handleCommand(
 
     case "pending_approvals": {
       const seed = String(args.seed || "");
-      const pending = await client.serviceRpc<any[]>("session.pending_approvals", { session_id: seed }).catch(() => []);
-      return challenges.issueViews(seed, Array.isArray(pending) ? pending : []);
+      // approvals.admin 是已实现的 canonical capability（旧的
+      // session.pending_approvals 是后端 pending 方法，永远兜底成空数组）。
+      const view = await client.approvals(seed).catch(() => null);
+      const items = view && view.kind === "admin" ? flattenAdminApprovals(view.pending) : [];
+      return challenges.issueViews(seed, items);
     }
 
     case "respond_approval": {
@@ -212,7 +241,9 @@ async function handleCommand(
 
     case "session_bootstrap": {
       const seed = String(args.seed || "");
-      return client.serviceRpc("session.activity", { session_id: seed }).catch(() => ({}));
+      // 渲染层读取 bootstrap.control.state.activity —— canonical ClientV2Bootstrap
+      // （旧的 session.activity 是后端 pending 方法，此前一直失败兜底成 {}）
+      return client.bootstrap(seed).catch(() => ({}));
     }
 
     case "timeline_status": {
