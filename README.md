@@ -74,9 +74,11 @@ Tauri 2 在 Windows (WebView2) 和 macOS (WKWebView) 表现良好，但在 Linux
 - **效果**：`qaqh-desktop-app` 的编译产物 `out/renderer` **无需修改任何一行业务代码**，直接无缝跑在 Electron 中！
 
 ### Ringing v2 客户端与 SSE 事件流转发
-Node.js 侧实现的 `RingingClient` 承担：
-- **握手与 Lease 维护**：调用 `POST /ringing/v2/clients/open` 获取 Lease，并以 15 秒间隔调用 `POST /ringing/v2/leases/renew` 维持租约；
-- **单活动流 (Active Seed Stream)**：前端 `attach(seed)` 时切换活动流，建立 `GET /ringing/v2/sessions/{seed}/events` 与 `GET /ringing/v2/sessions/{seed}/timeline` 两个 SSE 长连接；
+
+传输层由本仓 `src/main/ringing-client.ts` 适配 **`@qaqh/sdk`**（`file:../qaqh-sdk`，随主进程 bundle 打包）实现，手写 HTTP/SSE 客户端已移除。适配器保持渲染层事件契约不变：
+- **握手与 Lease 维护**：SDK `connect` 协商 Lease 并按 daemon 下发的 `renew_interval_ms` 续约；续约失败进入 recovering，先经 `refreshCredentials` 重读 `daemon.json`（daemon 重启换端口/凭据自动跟随），再重开客户端；
+- **单活动流 (Active Seed Stream)**：前端 `attach(seed)` 时切换活动流；投影走 SDK `watchSession`（bootstrap + `?since_cursor=` 断线无缝续传、指数退避重连、`reset_required`/`stream_terminated` 显式暂停），timeline 走 SDK `watchTimeline`（SSE `Last-Event-ID: {epoch}:timeline:{seq}` 续传）；
+- **命令语义**：SDK `submit` 携带幂等 `command_id`，超时以 `outcome_unknown` 暴露（可凭同 id 重发/查询，daemon 幂等回执）；内容上传走后端 multipart 契约（`session_id`/`media_type`/`content` 三段），下载支持 `sha256:` 前缀与单区间 Range；
 - **事件转发**：解析收到的 SSE 数据包并实时发送至渲染进程：
   - `timeline://entry`（时间线增量）
   - `timeline://status`（连接状态 open / closed / reconnecting）

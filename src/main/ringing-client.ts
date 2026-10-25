@@ -1,127 +1,75 @@
-import { randomUUID } from "node:crypto";
-import type { DaemonDiscovery, RingingCommandAck, TimelineStatusWire } from "./types.js";
+// Ringing v2 transport adapter over @qaqh/sdk.
+//
+// Owns the legacy EventSender contract consumed by the renderer
+// (timeline://*, projection://*, conn://liveness); all HTTP/SSE/lease
+// mechanics — cursor resumption, backoff reconnects, lease renewal with
+// credential refresh, multipart content upload — live in the SDK.
+import {
+  createClient,
+  SdkError,
+  type ClientState,
+  type RingingClient as SdkRingingClient,
+  type SessionWatch,
+  type TimelineWatch,
+  type WatchStatus,
+} from "@qaqh/sdk";
+import type { DaemonDiscovery as SdkDaemonDiscovery } from "@qaqh/sdk/protocol";
 import { readDiscovery } from "./daemon.js";
+import type { DaemonDiscovery, RingingCommandAck, TimelineStatusWire } from "./types.js";
 
 export type EventSender = (eventName: string, payload: any) => void;
 
+function toSdkDiscovery(discovery: DaemonDiscovery): SdkDaemonDiscovery {
+  return {
+    endpoint: discovery.endpoint,
+    token: discovery.token,
+    pid: discovery.pid,
+    server_epoch: discovery.server_epoch ?? "",
+    protocol_version: discovery.protocol_version,
+    daemon_version: discovery.daemon_version ?? "",
+    build_id: discovery.build_id ?? "",
+    channel: discovery.channel ?? "",
+    executable: discovery.executable ?? "",
+    lan_endpoint: discovery.lan_endpoint ?? null,
+    tls_fingerprint: discovery.tls_fingerprint ?? null,
+  };
+}
+
+const TIMELINE_STATUS_BY_WATCH: Record<WatchStatus, TimelineStatusWire["status"]> = {
+  connecting: "connecting",
+  live: "open",
+  reconnecting: "reconnecting",
+  paused: "closed",
+  closed: "closed",
+};
+
 export class RingingClient {
-  private baseUrl: string;
-  private token: string;
-  private clientInstanceId: string;
-  private clientSessionId: string | null = null;
-  private serverEpoch: string | null = null;
-  private leaseTimer: NodeJS.Timeout | null = null;
+  private readonly sdk: SdkRingingClient;
+  private readonly eventSender: EventSender;
   private activeSeed: string | null = null;
-  private sseControllers: AbortController[] = [];
-  private eventSender: EventSender;
-  private renewFailures = 0;
+  private sessionWatch: SessionWatch | null = null;
+  private timelineWatch: TimelineWatch | null = null;
 
   constructor(discovery: DaemonDiscovery, eventSender: EventSender) {
-    let urlStr = discovery.endpoint;
-    if (urlStr.startsWith("ws://")) urlStr = urlStr.replace("ws://", "http://");
-    if (urlStr.startsWith("wss://")) urlStr = urlStr.replace("wss://", "https://");
-    const u = new URL(urlStr);
-    this.baseUrl = `${u.protocol}//${u.host}`;
-    this.token = discovery.token;
     this.eventSender = eventSender;
-    this.clientInstanceId = `electron-${randomUUID()}`;
+    this.sdk = createClient({
+      credentials: toSdkDiscovery(discovery),
+      // Daemon restarts re-publish daemon.json (new port/token); the SDK
+      // consults this hook before every recovery reconnect.
+      refreshCredentials: async () => {
+        const fresh = readDiscovery();
+        if (!fresh) throw new Error("daemon discovery document disappeared");
+        return toSdkDiscovery(fresh);
+      },
+      logger: console,
+    });
+    this.sdk.onStateChange((state: ClientState) => {
+      if (state === "recovering") console.warn("[ringing] Lease lost; SDK is recovering");
+    });
   }
 
   async init(): Promise<void> {
-    await this.openClient();
-    this.startLeaseRenewal();
-  }
-
-  private async openClient(): Promise<void> {
-    const url = `${this.baseUrl}/ringing/v2/clients/open`;
-    const body = {
-      schema: "qaqh.Ringing",
-      version: 2,
-      client_instance_id: this.clientInstanceId,
-    };
-
-    console.log(`[ringing] Opening client at ${url}`);
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.token}`,
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(`Client open failed (HTTP ${resp.status}): ${errText}`);
-    }
-
-    const data = (await resp.json()) as any;
-    if (!data.accepted || !data.client_session_id) {
-      throw new Error(`Client open rejected: ${JSON.stringify(data)}`);
-    }
-
-    this.clientSessionId = data.client_session_id;
-    this.serverEpoch = data.server_epoch;
-    this.renewFailures = 0;
-
-    console.log(
-      `[ringing] Client negotiated: session=${this.clientSessionId}, epoch=${this.serverEpoch}`
-    );
-  }
-
-  private startLeaseRenewal(): void {
-    if (this.leaseTimer) clearInterval(this.leaseTimer);
-    // 默认 10 秒续约一次（daemon lease ttl 一般为 30 秒）
-    this.leaseTimer = setInterval(async () => {
-      if (!this.clientSessionId) return;
-
-      try {
-        const resp = await fetch(`${this.baseUrl}/ringing/v2/leases/renew`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${this.token}`,
-            "X-QAQH-Client-Session-Id": this.clientSessionId,
-          },
-          body: JSON.stringify({}),
-        });
-
-        if (resp.ok) {
-          this.renewFailures = 0;
-        } else {
-          console.warn(`[ringing] Lease renew warning: HTTP ${resp.status}`);
-          this.handleRenewFailure();
-        }
-      } catch (err) {
-        console.warn("[ringing] Lease renew network error:", err);
-        this.handleRenewFailure();
-      }
-    }, 10000);
-  }
-
-  private async handleRenewFailure(): Promise<void> {
-    this.renewFailures++;
-    if (this.renewFailures >= 2) {
-      console.warn("[ringing] Consecutive renew failures reached threshold. Re-discovering daemon...");
-      const disc = readDiscovery();
-      if (disc) {
-        let urlStr = disc.endpoint;
-        if (urlStr.startsWith("ws://")) urlStr = urlStr.replace("ws://", "http://");
-        if (urlStr.startsWith("wss://")) urlStr = urlStr.replace("wss://", "https://");
-        const u = new URL(urlStr);
-        this.baseUrl = `${u.protocol}//${u.host}`;
-        this.token = disc.token;
-      }
-      try {
-        await this.openClient();
-        if (this.activeSeed) {
-          console.log(`[ringing] Re-attaching active seed ${this.activeSeed} after re-negotiation`);
-          await this.attach(this.activeSeed);
-        }
-      } catch (e) {
-        console.error("[ringing] Failed to re-negotiate lease:", e);
-      }
-    }
+    await this.sdk.connect();
   }
 
   getActiveSeed(): string | null {
@@ -129,333 +77,118 @@ export class RingingClient {
   }
 
   async attach(seed: string, limit: number | null = null): Promise<void> {
-    if (!this.clientSessionId) {
-      throw new Error("Client session not established");
-    }
-
     if (this.activeSeed !== seed) {
       this.detachActive();
       this.activeSeed = seed;
     }
 
-    // 1. 发送 session_resume 命令绑定该 seed 的所有权 (Ownership)
-    console.log(`[ringing] Claiming session ownership for seed: ${seed}`);
-    await this.command("control", {
-      type: "session_resume",
-      session_id: seed,
-    }, seed).catch((err) => {
-      console.warn(`[ringing] session_resume warning:`, err);
+    // 1. session_resume 绑定该 seed 的展示通道（拒绝不影响只读 attach）
+    await this.command("control", { type: "session_resume", session_id: seed }, seed).catch((err) => {
+      console.warn("[ringing] session_resume warning:", err);
     });
 
-    this.eventSender("timeline://status", {
-      status: "connecting",
-      session_id: seed,
-    } as TimelineStatusWire);
+    this.sendTimelineStatus("connecting", seed);
 
-    // 2. 取首页 timeline 快照并立刻推给渲染层
+    // 2. 首页 timeline 快照立刻推给渲染层
     try {
-      const page = await this.timelinePage(seed, limit ?? 30);
-      if (page) {
-        this.eventSender("timeline://snapshot", page);
-      }
-    } catch (e) {
-      console.warn(`[ringing] Initial timeline snapshot failed for ${seed}:`, e);
+      const page = await this.timelinePage(seed, limit ?? 30, null);
+      this.eventSender("timeline://snapshot", page);
+    } catch (err) {
+      console.warn(`[ringing] Initial timeline snapshot failed for ${seed}:`, err);
     }
 
-    // 3. 启动双路 SSE 流（时间线增量流 + 投影单流）
-    this.startEventsStream(seed);
-    this.startTimelineStream(seed);
+    // 3. 双路流：投影单流（bootstrap + since_cursor 无缝续传）+ timeline 流（Last-Event-ID 续传）
+    this.sessionWatch?.close();
+    this.sessionWatch = this.sdk.watchSession(
+      seed,
+      {
+        onEvent: (envelope) => {
+          this.eventSender("conn://liveness", {});
+          this.eventSender("projection://event", envelope);
+        },
+        onReset: (reset) => {
+          console.warn(`[ringing] Reset required (${reset.reason}) for ${seed}`);
+          this.eventSender("projection://reset", { ...reset, session_id: reset.session_id || seed });
+        },
+        onTerminated: (info) => {
+          console.warn(`[ringing] Session stream terminated (${info.code}) for ${seed}: ${info.message}`);
+        },
+        onError: (error) => console.warn(`[ringing] Session watch error for ${seed}:`, error),
+      },
+      { skipBootstrap: false }
+    );
+
+    this.timelineWatch?.close();
+    this.timelineWatch = this.sdk.watchTimeline(seed, {
+      onEntry: (frame) => {
+        this.eventSender("conn://liveness", {});
+        this.eventSender("timeline://entry", { session_id: frame.session_id, entry: frame.entry });
+      },
+      onStatus: (status) => this.sendTimelineStatus(TIMELINE_STATUS_BY_WATCH[status], seed),
+      onTerminated: (info) => {
+        console.warn(`[ringing] Timeline stream terminated (${info.code}) for ${seed}: ${info.message}`);
+      },
+      onError: (error) => console.warn(`[ringing] Timeline watch error for ${seed}:`, error),
+    });
   }
 
   detachActive(): void {
-    for (const ctrl of this.sseControllers) {
-      ctrl.abort();
-    }
-    this.sseControllers = [];
+    this.sessionWatch?.close();
+    this.sessionWatch = null;
+    this.timelineWatch?.close();
+    this.timelineWatch = null;
     if (this.activeSeed) {
-      this.eventSender("timeline://status", {
-        status: "closed",
-        session_id: this.activeSeed,
-      } as TimelineStatusWire);
+      this.sendTimelineStatus("closed", this.activeSeed);
       this.activeSeed = null;
     }
   }
 
-  async command(channel: "control" | "conversation", cmd: Record<string, any>, targetSeed?: string): Promise<RingingCommandAck> {
-    if (!this.clientSessionId) {
-      throw new Error("Client session not open");
-    }
-
-    const commandId = randomUUID();
-    const envelope = {
-      schema: "qaqh.Ringing",
-      version: 2,
-      channel,
-      command_id: commandId,
-      client_instance_id: this.clientInstanceId,
-      client_session_id: this.clientSessionId,
-      session_id: targetSeed ?? this.activeSeed ?? null,
-      command: {
-        channel,
-        ...cmd,
-      },
-    };
-
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${this.token}`,
-      "X-QAQH-Client-Session-Id": this.clientSessionId,
-    };
-
-    const resp = await fetch(`${this.baseUrl}/ringing/v2/commands/${channel}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(envelope),
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text();
+  async command(
+    channel: "control" | "conversation",
+    cmd: Record<string, any>,
+    targetSeed?: string
+  ): Promise<RingingCommandAck> {
+    try {
+      const { ack } = await this.sdk.submit(channel, cmd as any, targetSeed ?? this.activeSeed ?? null);
       return {
-        status: "rejected",
-        code: `HTTP_${resp.status}`,
-        message: errText || resp.statusText,
+        status: ack.status,
+        command_id: ack.command_id,
+        code: ack.code ?? undefined,
+        message: ack.message ?? undefined,
+        retry_after_ms: ack.retry_after_ms ?? undefined,
       };
+    } catch (err) {
+      // 维持旧契约：daemon 明确拒绝时返回 rejected ack 而不是抛错；其余错误上抛。
+      if (err instanceof SdkError && err.kind === "command_rejected") {
+        return { status: "rejected", code: err.code, message: err.message };
+      }
+      throw err;
     }
-
-    return (await resp.json()) as RingingCommandAck;
   }
 
   async serviceRpc<T = unknown>(method: string, params: Record<string, any> = {}): Promise<T> {
-    if (!this.clientSessionId) {
-      throw new Error("Client session not open");
-    }
-
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${this.token}`,
-      "X-QAQH-Client-Session-Id": this.clientSessionId,
-    };
-
-    const resp = await fetch(`${this.baseUrl}/ringing/v2/service/${method}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(params),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`RPC ${method} failed (${resp.status}): ${text}`);
-    }
-
-    return (await resp.json()) as T;
+    // ServiceMap covers the typed slice; dynamic names (pending backend
+    // delivery) ride the same POST /service/{method} route at runtime.
+    return this.sdk.service(method as never, params as never) as Promise<T>;
   }
 
   async timelinePage(seed: string, limit?: number | null, beforeIndex?: number | null): Promise<any> {
-    if (!this.clientSessionId) {
-      throw new Error("Client session not open");
-    }
-
-    const params = new URLSearchParams();
-    if (limit != null) params.set("limit", String(limit));
-    if (beforeIndex != null) params.set("before_index", String(beforeIndex));
-
-    const q = params.toString();
-    const url = `${this.baseUrl}/ringing/v2/sessions/${encodeURIComponent(seed)}/timeline${q ? `?${q}` : ""}`;
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
-      "X-QAQH-Client-Session-Id": this.clientSessionId,
-    };
-
-    const resp = await fetch(url, { headers });
-    if (!resp.ok) {
-      throw new Error(`timelinePage failed with HTTP ${resp.status}`);
-    }
-    return resp.json();
-  }
-
-  async uploadContent(seed: string, filename: string, buffer: Uint8Array, mediaType: string): Promise<any> {
-    if (!this.clientSessionId) {
-      throw new Error("Client session not open");
-    }
-
-    const headers: Record<string, string> = {
-      "Content-Type": mediaType || "application/octet-stream",
-      Authorization: `Bearer ${this.token}`,
-      "X-QAQH-Client-Session-Id": this.clientSessionId,
-      "X-Filename": encodeURIComponent(filename),
-      "X-Session-Id": seed,
-    };
-
-    const resp = await fetch(`${this.baseUrl}/ringing/v2/content`, {
-      method: "POST",
-      headers,
-      body: buffer as any,
+    return this.sdk.timelinePage(seed, {
+      limit: limit ?? undefined,
+      beforeIndex: beforeIndex ?? undefined,
     });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`Upload content failed: ${text}`);
-    }
-
-    return resp.json();
   }
 
-  private async startEventsStream(seed: string): Promise<void> {
-    const ctrl = new AbortController();
-    this.sseControllers.push(ctrl);
-
-    const url = `${this.baseUrl}/ringing/v2/sessions/${encodeURIComponent(seed)}/events`;
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
-      "X-QAQH-Client-Session-Id": this.clientSessionId!,
-      Accept: "text/event-stream",
-    };
-
-    try {
-      const resp = await fetch(url, { headers, signal: ctrl.signal });
-      if (!resp.ok || !resp.body) {
-        console.warn(`[ringing] Events stream failed for ${seed}: HTTP ${resp.status}`);
-        return;
-      }
-
-      await this.consumeSse(
-        resp.body,
-        (event, rawData) => {
-          try {
-            const payload = JSON.parse(rawData);
-            if (event === "reset" || event === "ringing.reset_required") {
-              if (!payload.session_id) payload.session_id = seed;
-              this.eventSender("projection://reset", payload);
-            } else {
-              if (!payload.session_id) payload.session_id = seed;
-              this.eventSender("projection://event", payload);
-            }
-          } catch (e) {
-            console.warn("[ringing] Failed to parse event json:", e, rawData);
-          }
-        },
-        ctrl.signal
-      );
-    } catch (err: any) {
-      if (err.name !== "AbortError") {
-        console.warn(`[ringing] Events stream error (${seed}):`, err);
-      }
-    }
-  }
-
-  private async startTimelineStream(seed: string): Promise<void> {
-    const ctrl = new AbortController();
-    this.sseControllers.push(ctrl);
-
-    // 关键修正：Timeline 事件流路径为 /timeline/events
-    const url = `${this.baseUrl}/ringing/v2/sessions/${encodeURIComponent(seed)}/timeline/events`;
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
-      "X-QAQH-Client-Session-Id": this.clientSessionId!,
-      Accept: "text/event-stream",
-    };
-
-    try {
-      const resp = await fetch(url, { headers, signal: ctrl.signal });
-      if (!resp.ok || !resp.body) {
-        console.warn(`[ringing] Timeline stream failed for ${seed}: HTTP ${resp.status}`);
-        this.eventSender("timeline://status", {
-          status: "closed",
-          session_id: seed,
-        });
-        return;
-      }
-
-      this.eventSender("timeline://status", {
-        status: "open",
-        session_id: seed,
-      });
-
-      await this.consumeSse(
-        resp.body,
-        (event, rawData) => {
-          try {
-            const data = JSON.parse(rawData);
-            if (event === "snapshot") {
-              this.eventSender("timeline://snapshot", data);
-            } else if (event === "status") {
-              this.eventSender("timeline://status", data);
-            } else {
-              const realEntry = data.entry ?? data;
-              const realSessionId = data.session_id ?? seed;
-              this.eventSender("timeline://entry", { session_id: realSessionId, entry: realEntry });
-            }
-          } catch (e) {
-            console.warn("[ringing] Failed to parse timeline json:", e, rawData);
-          }
-        },
-        ctrl.signal
-      );
-    } catch (err: any) {
-      if (err.name !== "AbortError") {
-        console.warn(`[ringing] Timeline stream error (${seed}):`, err);
-        this.eventSender("timeline://status", {
-          status: "closed",
-          session_id: seed,
-        });
-      }
-    }
-  }
-
-  private async consumeSse(
-    stream: ReadableStream<Uint8Array>,
-    onMessage: (event: string, data: string) => void,
-    signal: AbortSignal
-  ): Promise<void> {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buffer = "";
-    let currentEvent = "message";
-
-    try {
-      while (!signal.aborted) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        this.eventSender("conn://liveness", {});
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() ?? "";
-
-        let dataAccumulator = "";
-        for (const line of lines) {
-          if (line.startsWith(":")) {
-            continue;
-          }
-          if (line.startsWith("event:")) {
-            currentEvent = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            const content = line.slice(5).trim();
-            dataAccumulator += (dataAccumulator ? "\n" : "") + content;
-            if (dataAccumulator.length > 4 * 1024 * 1024) {
-              console.warn("[ringing] SSE data frame exceeded 4MB memory safety cap, dropping");
-              dataAccumulator = "";
-            }
-          } else if (line === "") {
-            if (dataAccumulator !== "") {
-              onMessage(currentEvent, dataAccumulator);
-              dataAccumulator = "";
-            }
-            currentEvent = "message";
-          }
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
+  async uploadContent(seed: string, _filename: string, buffer: Uint8Array, mediaType: string): Promise<any> {
+    return this.sdk.uploadContent(seed, { bytes: buffer, mediaType });
   }
 
   destroy(): void {
-    if (this.leaseTimer) {
-      clearInterval(this.leaseTimer);
-      this.leaseTimer = null;
-    }
     this.detachActive();
+    void this.sdk.disconnect();
+  }
+
+  private sendTimelineStatus(status: TimelineStatusWire["status"], seed: string): void {
+    this.eventSender("timeline://status", { status, session_id: seed } as TimelineStatusWire);
   }
 }
