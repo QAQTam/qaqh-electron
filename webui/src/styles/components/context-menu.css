@@ -1,0 +1,53 @@
+/* QAQ-Harness WebUI —— 应用内右键菜单(ContextMenu) */
+
+@layer components {
+  /* 比下拉菜单更紧凑:右键菜单是「顺手一点」,不是一次导航。条目一行高、
+     副标题一行小字,宽度跟着内容走但封顶,免得长路径把菜单拉成一条横带。 */
+  .context-menu {
+    position: fixed;
+    z-index: 95;
+    display: grid;
+    gap: 1px;
+    min-width: 156px;
+    max-width: min(300px, 78vw);
+    padding: 5px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    color: var(--text);
+    background: var(--surface);
+    box-shadow: var(--shadow-panel);
+  }
+  .context-menu > button {
+    display: grid;
+    gap: 1px;
+    width: 100%;
+    padding: 5px 8px;
+    border-radius: var(--r-sm);
+    color: var(--text);
+    text-align: left;
+    font-size: calc(13px * var(--font-scale));
+    line-height: 1.35;
+  }
+  .context-menu > button:hover,
+  .context-menu > button:focus-visible { background: var(--surface-2); outline: none; }
+  .context-menu-label { white-space: nowrap; }
+  /* 副标题只做「这是哪一个」的提示(选区摘要 / 路径 / 链接),不参与操作。 */
+  .context-menu-hint {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .context-menu-separator { height: 1px; margin: 3px 4px; background: var(--border); }
+
+  @starting-style {
+    .context-menu { opacity: 0; transform: translateY(-2px); }
+  }
+  .context-menu { transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
+  @media (prefers-reduced-motion: reduce) {
+    .context-menu { transition: none; }
+  }
+}

@@ -1,0 +1,39 @@
+/* DeepSeek 账号卡：只补**金额行**这一小块。
+ *
+ * 卡片骨架直接复用 `.siwc-card*`（见 components/siwc.css）——同一页里两族的卡片
+ * 必须长得一样，另起一套只会慢慢分叉。token 全部取自 tokens/base.css，不新增变量。
+ * 金额用 tabular-nums：数字列对齐，扫一眼就能比较。
+ */
+
+@layer components {
+  .dsaccount-rows {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: 0;
+  }
+
+  .dsaccount-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .dsaccount-row__label {
+    color: var(--muted);
+    font-size: 0.85em;
+  }
+
+  .dsaccount-row__value {
+    margin: 0;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .dsaccount-row__hint {
+    margin: 0;
+    color: var(--warn);
+    font-size: 0.85em;
+  }
+}

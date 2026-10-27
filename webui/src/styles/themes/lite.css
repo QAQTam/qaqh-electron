@@ -1,0 +1,211 @@
+/* QAQ-Harness WebUI —— 主题范本: Lite 极简纯净 (纯低配 · 零动效 · 纯净实底)
+ *
+ * 核心设计目标（专为 2c2t、弱核显/软光栅、老旧 Linux 等受限硬件打造）：
+ *  1. 彻底清空所有无限循环动画（Zero Continuous Repaints）：
+ *     消除一切 keyframe 循环，使 WebKitGTK / 浏览器合成器在静止时完全进入 0% CPU 休眠。
+ *  2. 彻底移除全域毛玻璃滤镜（Zero Backdrop Filter）：
+ *     杜绝高斯模糊计算对 CPU/弱显卡的重度压榨。
+ *  3. 100% 纯净实底化（Pure Solid Surfaces）：
+ *     侧栏、顶栏、标签栏、浮层全使用实色底，消除 GPU/CPU Alpha 混合。
+ *  4. 瞬切响应与轻质线框（Instant Transition & Crisp Lines）：
+ *     移除缓动插值，采用高对比度 1px 线框与极简微阴影，几何秩序规整。
+ *  5. 严格的作用域隔离（Zero Theme Pollution）：
+ *     所有规则均限定在 `:root[data-theme-preset="lite"]` 与 `html.theme-lite` 命名空间下，
+ *     切换主题时通过 `applyThemePreset` 彻底卸载，绝不污染系统基线或其他主题。
+ */
+
+/* ── 几何拓扑、动效阻断与轻投影 Tokens ─────────────────────────────── */
+
+:root[data-theme-preset="lite"],
+html.theme-lite {
+  /* 几何拓扑: 规整微圆角，避免复杂圆角边缘反走样开销 */
+  --radius-control: 4px;
+  --radius-panel: 6px;
+  --radius-dialog: 8px;
+  --radius-pill: 999px;
+  --r-sm: 4px;
+  --r-md: 4px;
+  --r-lg: 6px;
+  --r-input: 4px;
+
+  /* 动效阻断: 彻底清除缓动时间与贝塞尔插值，实现物理瞬切 */
+  --dur-fast: 0s !important;
+  --dur: 0s !important;
+  --dur-out: 0s !important;
+  --dur-enter: 0s !important;
+  --dur-layout: 0s !important;
+  --dur-normal: 0s !important;
+  --dur-slow: 0s !important;
+  --ease: steps(1) !important;
+
+  /* 材质实底化与轻投影 */
+  --glass-blur: 0px !important;
+  --glass-bg: var(--surface) !important;
+  --glass-border: var(--border) !important;
+  --shadow-panel: 0 1px 4px rgba(0, 0, 0, 0.12) !important;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+  --shadow-glass: none !important;
+}
+
+/* ── 浅色极简高辨识色板 (Paper Crisp Light) ───────────────────────── */
+
+:root[data-theme-preset="lite"]:not([data-theme="dark"]),
+html.theme-lite:not([data-theme="dark"]) {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #eaedf1;
+  --surface-user: #e8ebf0;
+  --surface-code: #f0f2f5;
+  --border: #d2d6df;
+  --border-strong: #7d8697;
+  --text: #12151a;
+  --muted: #565d6c;
+  --accent: #1e5adb;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(30, 90, 219, 0.08);
+  --focus-ring: #1e5adb;
+  --flyout-bg: #ffffff;
+  --stroke-control: #7d8697;
+  --stroke-control-strong: #7d8697;
+  --ok: #0d6e38;
+  --warn: #895600;
+  --err: #b81c2f;
+  --err-soft: rgba(184, 28, 47, 0.08);
+}
+
+/* ── 深色极简石墨色板 (Graphite Clean Dark) ────────────────────────── */
+
+:root[data-theme-preset="lite"][data-theme="dark"],
+html.theme-lite[data-theme="dark"] {
+  --bg: #121417;
+  --surface: #1a1d22;
+  --surface-2: #242830;
+  --surface-user: #22262e;
+  --surface-code: #16181d;
+  --border: #323742;
+  --border-strong: #6c768a;
+  --text: #f0f2f5;
+  --muted: #959fad;
+  --accent: #508cf7;
+  --on-accent: #0f1217;
+  --accent-soft: rgba(80, 140, 247, 0.12);
+  --focus-ring: #508cf7;
+  --flyout-bg: #1a1d22;
+  --stroke-control: #6c768a;
+  --stroke-control-strong: #6c768a;
+  --ok: #27a84e;
+  --warn: #e8b625;
+  --err: #f34b57;
+  --err-soft: rgba(243, 75, 87, 0.12);
+}
+
+/* ── 全域毛玻璃阻断 (Zero Backdrop Filter) ─────────────────────────── */
+
+:root[data-theme-preset="lite"] *,
+:root[data-theme-preset="lite"] *::before,
+:root[data-theme-preset="lite"] *::after,
+html.theme-lite *,
+html.theme-lite *::before,
+html.theme-lite *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transition-duration: 0s !important;
+}
+
+/* ── 彻底停用所有循环动画 (Zero Continuous Repaint / Sleep Compositor) ─ */
+
+:root[data-theme-preset="lite"] :is(
+  .composer-live-dot,
+  .tab-dot.run,
+  .session-pending-body,
+  .session-pending-body::before,
+  .session-pending-track,
+  .tools-refresh-icon.spinning,
+  .dev-live,
+  .compact-card.running .compact-card-mark,
+  .skeletonPulse,
+  .genui-pulse,
+  .spin,
+  .qaqh-spin,
+  .icon-spin,
+  .text-shimmer-glow
+),
+html.theme-lite :is(
+  .composer-live-dot,
+  .tab-dot.run,
+  .session-pending-body,
+  .session-pending-body::before,
+  .session-pending-track,
+  .tools-refresh-icon.spinning,
+  .dev-live,
+  .compact-card.running .compact-card-mark,
+  .skeletonPulse,
+  .genui-pulse,
+  .spin,
+  .qaqh-spin,
+  .icon-spin,
+  .text-shimmer-glow
+) {
+  animation: none !important;
+  transform: none !important;
+}
+
+/* 1. Composer 状态指示点：转为静态常驻实心圆点，移除高斯光晕扩散 */
+:root[data-theme-preset="lite"] .composer-live-dot,
+html.theme-lite .composer-live-dot {
+  opacity: 1 !important;
+  box-shadow: none !important;
+  background: var(--accent) !important;
+}
+
+/* 2. 标签栏运行状态点：转为静态高对比度轮廓 */
+:root[data-theme-preset="lite"] .tab-dot.run,
+html.theme-lite .tab-dot.run {
+  border: 2px solid var(--accent) !important;
+  border-radius: 50% !important;
+}
+
+/* 3. 待响应走马灯与微缩条：静态对齐展示，杜绝无意义位移重绘 */
+:root[data-theme-preset="lite"] .session-pending-track,
+:root[data-theme-preset="lite"] .session-pending-body,
+html.theme-lite .session-pending-track,
+html.theme-lite .session-pending-body {
+  transform: none !important;
+}
+
+/* 4. 文本流光扫光：转为纯色文本直接呈现 */
+:root[data-theme-preset="lite"] .text-shimmer-glow,
+html.theme-lite .text-shimmer-glow {
+  background: none !important;
+  -webkit-background-clip: unset !important;
+  background-clip: unset !important;
+  color: var(--text) !important;
+  opacity: 1 !important;
+}
+
+/* ── 纯净实底表面 (Solid Structural Surfaces) ───────────────────────── */
+
+/* 1. 外壳与导航栏采用实体底色 */
+:root[data-theme-preset="lite"] :is(#top, .global-nav, .message-sidebar, .session-capsule, .session-header, .settings-page),
+html.theme-lite :is(#top, .global-nav, .message-sidebar, .session-capsule, .session-header, .settings-page) {
+  background: var(--bg) !important;
+  border-color: var(--border) !important;
+  box-shadow: none !important;
+}
+
+/* 2. 浮层、卡片与输入容器采用实色表面 */
+:root[data-theme-preset="lite"] :is(.composer-surface, .card, .turn-deliverables-card, .approval-stack, .select-content, .context-menu, .composer-menu, .fluent-tooltip, .toast),
+html.theme-lite :is(.composer-surface, .card, .turn-deliverables-card, .approval-stack, .select-content, .context-menu, .composer-menu, .fluent-tooltip, .toast) {
+  background: var(--surface) !important;
+  border-color: var(--border-strong) !important;
+  box-shadow: var(--shadow-panel) !important;
+  animation: none !important;
+  transform: none !important;
+}
+
+/* 3. 浮动胶囊会话栏实底 */
+:root[data-theme-preset="lite"] .session-capsule,
+html.theme-lite .session-capsule {
+  background: var(--surface) !important;
+  border: 1px solid var(--border-strong) !important;
+}

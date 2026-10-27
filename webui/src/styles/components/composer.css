@@ -1,0 +1,231 @@
+/* QAQ-Harness WebUI —— 输入区与多模态控制栏 (Composer & Controls) */
+
+@layer components {
+  /* 输入区:文本与工具栏共用一张表面,按钮进入正常布局流,不再悬浮偏斜。 */
+  #composer {
+    grid-column: 1;
+    width: min(calc(var(--content-width) + 2 * var(--content-gutter)), 100%);
+    padding: var(--space-2) var(--content-gutter) var(--space-4); position: relative;
+    container: composer / inline-size;
+  }
+  .composer-surface {
+    position: relative;
+    width: min(var(--content-width), 100%); margin-inline: auto;
+    display: flex; flex-direction: column;
+    min-height: 96px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-panel);
+    background: var(--surface);
+    box-shadow: none;
+    transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  }
+  /* Reading and writing surfaces stay solid; Mica belongs to the outer shell. */
+  html.tauri .composer-surface {
+    background: var(--surface);
+    border-color: var(--border);
+    box-shadow: none;
+  }
+  .composer-surface:focus-within {
+    border-color: var(--focus-ring);
+    box-shadow: none;
+  }
+  html.tauri .composer-surface:focus-within { border-color: var(--focus-ring); box-shadow: none; }
+  .composer-surface:has(textarea:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  #composer textarea {
+    display: block; width: 100%; flex: 1 0 auto;
+    min-height: 52px; max-height: 160px;
+    resize: none; overflow-y: auto;
+    background: transparent;
+    border: 0; border-radius: inherit;
+    padding: 12px 14px 7px;
+    font-size: var(--fs-md); line-height: 22px;
+    outline: none;
+  }
+  #composer textarea:focus-visible { outline: none; }
+  .composer-toolbar {
+    min-height: 42px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 0 8px 8px 9px;
+  }
+  /* 只读身份行(§1.5):在输入表面**外**的下方,与表面同宽对齐;不描边、
+     不占输入高度,所以它永远不会盖住正文。 */
+  .composer-identity {
+    width: min(var(--content-width), 100%); margin: 6px auto 0;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+    min-height: 20px; padding: 0 4px;
+    color: var(--muted); font-size: 10px; line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+  }
+  .composer-identity > span { white-space: nowrap; }
+  .composer-identity strong { color: var(--text); font-weight: 600; }
+  .composer-identity-item { display: inline-flex; align-items: center; gap: 4px; }
+  .composer-identity-item svg { width: 12px; height: 12px; flex: none; }
+  .composer-identity-item.is-live { color: var(--text); }
+  .composer-identity-item.is-live strong { color: var(--accent); }
+  .composer-identity-item.is-idle { opacity: 0.65; }
+  .composer-live-dot {
+    width: 6px; height: 6px; border-radius: 999px;
+    background: var(--accent); box-shadow: 0 0 6px var(--accent);
+    flex: none; margin-right: 1px;
+    animation: live-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes live-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.15); }
+  }
+  .composer-controls, .composer-submit-area { display: flex; align-items: center; gap: 5px; min-width: 0; }
+  .composer-submit-area { flex: none; }
+  .composer-control-wrap { position: relative; min-width: 0; }
+  .composer-tool-button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    min-height: 32px; max-width: 210px; padding: 0 8px;
+    border: 1px solid transparent; border-radius: var(--r-md);
+    color: var(--muted); background: transparent;
+    font-size: var(--fs-xs); white-space: nowrap;
+    transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  }
+  .composer-tool-button:hover, .composer-tool-button[aria-expanded="true"] {
+    color: var(--text); background: var(--surface-2); border-color: var(--border);
+  }
+  .composer-tool-button svg { width: 14px; height: 14px; flex: none; }
+  .composer-add-file { width: 32px; padding: 0; border-color: var(--border); color: var(--text); }
+  .composer-add-file svg { width: 16px; height: 16px; }
+  /* 截图按钮与「添加附件」同尺寸:同一排控件,宽窄不一会让人以为是两种东西。 */
+  .composer-shot { width: 32px; padding: 0; border-color: var(--border); color: var(--text); }
+  .composer-shot svg { width: 16px; height: 16px; }
+  /* 会话级 profile 选择器(§1.5):profile 名 + 生效 model 同一个 chip——
+     model 是 profile 的属性,不单独给「临时换个模型 ID」的假入口。 */
+  .composer-profile-button { max-width: min(280px, 34vw); color: var(--text); }
+  .composer-profile-button > span { overflow: hidden; text-overflow: ellipsis; }
+  .composer-profile-model { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+  .composer-profile-menu { max-height: 46vh; overflow-y: auto; }
+  .composer-menu {
+    position: absolute; z-index: 30; bottom: calc(100% + 8px); left: 0;
+    display: grid; gap: 3px; width: 260px; max-width: min(280px, 80vw);
+    padding: 8px; border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+    color: var(--text); background: var(--surface); box-shadow: var(--shadow-panel);
+  }
+  /* 首页配置栏在页面中段:那里向上弹会顶出视口顶边、把首个条目裁掉,所以
+     StartupView 的菜单改用向下展开。输入区贴着窗口底部,那边继续向上。 */
+  .composer-menu-below { top: calc(100% + 8px); bottom: auto; }
+  .composer-menu-right { left: auto; right: 0; }
+  .composer-menu > strong { padding: 3px 7px 6px; font-size: var(--fs-xs); font-weight: 600; }
+  .composer-menu > button {
+    position: relative; display: grid; gap: 2px; width: 100%; padding: 7px;
+    border-radius: var(--r-md); text-align: left; color: var(--text); font-size: var(--fs-sm);
+  }
+  .composer-menu > button:hover, .composer-menu > button.selected { background: var(--surface-2); }
+  .composer-menu > button small, .composer-menu-note { color: var(--muted); font-size: 10px; line-height: 1.4; }
+  .composer-menu-note { padding: 5px 7px 2px; }
+  /* 新建会话的工作区选择:只作用于新建,和上面那个「本会话 profile」chip 语义
+     不同(前者是待建目标,后者是当前会话),所以两者都留着、不合并(§1.5)。
+     长路径折行会撑破菜单,故路径行省略号截断。 */
+  .composer-workspace-button { max-width: min(220px, 28vw); color: var(--text); }
+  .composer-workspace-button span { overflow: hidden; text-overflow: ellipsis; }
+  /* 上限按视口高走:条目再多也在菜单内部滚,不把整页顶出滚动条。
+     单行工作区行约 40px、两行 56px,52vh 在 900px 高的窗口里正好装下 5 条。 */
+  .composer-workspace-menu { max-height: min(52vh, 460px); overflow-y: auto; }
+  /* 「盘符 + 两级目录 + 末段名」在 260px 里放不下,空间够就放宽到 320px;
+     窄容器保持 260px——菜单是从 chip 左边缘向右长的,太宽会顶出视口右边。 */
+  @container workspace (min-width: 560px) {
+    .composer-workspace-menu { width: min(320px, 84vw); max-width: none; }
+  }
+  /* ── 工作区行(三处共用:首页 / 输入区 / 侧栏移动菜单)─────────────
+     单行「目录前缀 + 末段名」:前缀先被裁,末段永远可见。裁的必须是**左端**——
+     右端紧挨末段名,丢掉的就是「程序装在哪一级目录」这条最该留的信息。
+     flex-end + overflow:hidden 让溢出发生在起始侧;text-align 在这里不管用
+     (溢出容器里行盒宽度跟着内容走,对齐无从谈起),text-overflow 又会把右端
+     换成省略号。 */
+  .workspace-row { display: flex; align-items: baseline; min-width: 0; }
+  .workspace-row-dir {
+    display: flex; justify-content: flex-end;
+    flex: 0 1 auto; min-width: 0; overflow: hidden;
+    font-family: var(--font-mono); font-size: 10px; line-height: 1.5; color: var(--muted);
+  }
+  .workspace-row-dir > span { flex: none; white-space: nowrap; }
+  /* 单行时是 flex 项(不收缩,由前缀让位);两行/紧凑时是 grid 项,自己省略号截断。 */
+  .workspace-row-name {
+    flex: none; min-width: 0; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .workspace-row-path {
+    font-family: var(--font-mono);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* 选中项的对勾:行尾绝对定位,单行/两行两种排法共用一份,不额外占一行高。
+     宿主按钮只需 `position: relative` + 右侧留白,不各自再画一个勾。 */
+  .composer-workspace-menu > button:not(.composer-menu-action) { padding-right: 26px; }
+  .workspace-row-check {
+    position: absolute; right: 7px; top: 50%; translate: 0 -50%;
+    width: 14px; height: 14px; color: var(--accent);
+  }
+  .composer-menu > button.composer-menu-action {
+    margin-top: 3px; padding-top: 9px;
+    border-top: 1px solid var(--border); border-radius: 0;
+  }
+  .composer-workspace-browse { display: inline-flex; align-items: center; gap: 6px; }
+  .composer-workspace-browse svg { width: 14px; height: 14px; flex: none; }
+  .composer-attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px 0; }
+  .composer-file-chip {
+    display: inline-flex; align-items: center; gap: 6px; max-width: min(260px, 100%);
+    padding: 4px 6px; border: 1px solid var(--border); border-radius: var(--r-md);
+    color: var(--text); background: var(--surface-2); font-size: var(--fs-xs);
+  }
+  .composer-file-chip > svg { width: 13px; height: 13px; flex: none; color: var(--muted); }
+  .composer-file-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .composer-file-chip > small { flex: none; color: var(--muted); font-size: 10px; }
+  .composer-file-chip button { display: grid; place-items: center; width: 18px; height: 18px; color: var(--muted); }
+  .composer-file-chip button:hover { color: var(--text); }
+  .composer-file-chip button svg { width: 13px; height: 13px; }
+  /* 上传态用文字说明,不叠百分比条:附件通常是单次快速往返。 */
+  .composer-file-chip.uploading > small { color: var(--accent); }
+  .composer-file-chip.failed { border-color: var(--err); }
+  .composer-file-chip.failed > svg, .composer-file-chip.failed > small { color: var(--err); }
+  .icon-btn {
+    display: inline-grid; place-items: center;
+    width: 32px; height: 32px;
+    border-radius: var(--r-md);
+    color: var(--muted);
+    transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  #composer .icon-btn { width: 36px; height: 36px; }
+  #composer .icon-btn.send:not(:disabled) {
+    background: var(--accent); color: var(--on-accent);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  #composer .icon-btn.send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); color: var(--on-accent); }
+  #composer .icon-btn.stop { background: var(--err-soft); color: var(--err); }
+  .icon-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+  .icon-btn:active:not(:disabled) { background: var(--accent-soft); }
+  .icon-btn:disabled { opacity: .4; }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  /* 历史/压缩/回底 */
+  .history-note { color: var(--muted); font-size: var(--fs-xs); padding: 4px 0 8px; }
+  .history-note.retry { min-height: 28px; }
+  .history-note.retry:hover { color: var(--text); }
+  /* 只让出块间距:行内方向的 margin-inline: auto 归 timeline.css 的内容列规则,
+     这里写 margin 简写会把左右 margin 清零、分隔线贴左而正文居中。 */
+  .compact-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: var(--fs-xs); margin-block: 8px; }
+  .compact-divider::before, .compact-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .back-bottom {
+    position: absolute; right: var(--space-4); bottom: 12px;
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 28px; padding: 0 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    background: var(--bg);
+    color: var(--text); font-size: var(--fs-xs);
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .back-bottom:hover { background: var(--surface-2); }
+  .back-bottom svg { width: 12px; height: 12px; }
+  /* 展开收起(§13.2):grid-template-rows 0fr↔1fr + opacity */
+  .collapse {
+    display: grid; grid-template-rows: 0fr;
+    opacity: 0;
+    transition: grid-template-rows var(--dur-out) var(--ease), opacity var(--dur-out) var(--ease);
+  }
+  .collapse.open { grid-template-rows: 1fr; opacity: 1; transition-duration: var(--dur); }
+  .collapse-inner { min-height: 0; overflow: hidden; }
+}

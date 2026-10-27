@@ -1,0 +1,27 @@
+/* QAQ-Harness WebUI —— 全局基础规则 */
+
+@layer base {
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: var(--fs-body)/1.75 var(--font-ui);
+    overflow: hidden;
+  }
+  /* 仅在 Windows 且成功拿到 Mica 材质时才允许透明穿透；
+     Linux (WebKitGTK) 或无材质环境下必须保持实底，防止 X11 产生黑屏穿底或缩放黑边 */
+  html.tauri.has-mica body { background: transparent; }
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  button:focus:not(:focus-visible) { outline: none; }
+  code, kbd, pre { font-family: var(--font-code); }
+  ::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border: 3px solid transparent; border-radius: var(--radius-pill); background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+}

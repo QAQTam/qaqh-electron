@@ -1,0 +1,82 @@
+/* QAQ-Harness WebUI —— 受限硬件/低配性能模式 (Performance Mode)
+ *
+ * 核心目标：
+ * 1. 彻底关闭 backdrop-filter 高斯模糊与饱和度滤镜（避免 Ivy Bridge 等弱核显由 CPU 软件光栅化打满全核）；
+ * 2. 停用长周期/持续性的动画（如 shimmer、微动效），降低合成器（Compositor）主线程排版与重绘压力；
+ * 3. 简化 box-shadow 为单层轻阴影或纯描边；
+ * 4. 浮层/弹窗退回实底（Solid Fill），移除 Alpha 混合与合成层负担。
+ */
+
+@layer utilities {
+  html[data-perf-mode="low"],
+  html.perf-mode-low {
+    --glass-blur: 0px !important;
+    --dur-normal: 0.05s !important;
+    --dur-slow: 0.1s !important;
+  }
+
+  /* 精准停用关键组件的毛玻璃滤镜，避免通配符选择器（*）引发的全 DOM 样式重算与布局抖动 */
+  html[data-perf-mode="low"] :is(.session-capsule, .global-nav, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .quit-dialog, .turn-deliverables-card, .approval-stack, #top),
+  html.perf-mode-low :is(.session-capsule, .global-nav, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .quit-dialog, .turn-deliverables-card, .approval-stack, #top) {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* 浮层与弹窗：实色填充，避免透明混合 */
+  html[data-perf-mode="low"] .composer-menu,
+  html.perf-mode-low .composer-menu,
+  html[data-perf-mode="low"] .context-menu,
+  html.perf-mode-low .context-menu,
+  html[data-perf-mode="low"] .select-content,
+  html.perf-mode-low .select-content,
+  html[data-perf-mode="low"] .fluent-tooltip,
+  html.perf-mode-low .fluent-tooltip,
+  html[data-perf-mode="low"] .settings-page,
+  html.perf-mode-low .settings-page {
+    background: var(--surface) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18) !important;
+  }
+
+  /* 侧栏与顶栏实底化 */
+  html[data-perf-mode="low"] .global-nav,
+  html.perf-mode-low .global-nav,
+  html[data-perf-mode="low"] .message-sidebar,
+  html.perf-mode-low .message-sidebar,
+  html[data-perf-mode="low"] #top,
+  html.perf-mode-low #top {
+    background: var(--bg) !important;
+  }
+
+  /* 停用持续发光与各类无限循环动画，允许 WebKitGTK/合成器挂起休眠 */
+  html[data-perf-mode="low"] :is(
+    .text-shimmer-glow,
+    .composer-live-dot,
+    .tab-dot.run,
+    .session-pending-body::before,
+    .session-pending-track,
+    .dev-live,
+    .compact-card.running .compact-card-mark,
+    .skeletonPulse,
+    .genui-pulse
+  ),
+  html.perf-mode-low :is(
+    .text-shimmer-glow,
+    .composer-live-dot,
+    .tab-dot.run,
+    .session-pending-body::before,
+    .session-pending-track,
+    .dev-live,
+    .compact-card.running .compact-card-mark,
+    .skeletonPulse,
+    .genui-pulse
+  ) {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  html[data-perf-mode="low"] .composer-live-dot,
+  html.perf-mode-low .composer-live-dot {
+    opacity: 1 !important;
+    box-shadow: none !important;
+  }
+}

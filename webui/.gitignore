@@ -1,0 +1,14 @@
+node_modules/
+out/
+.tmp/
+target/
+
+# agent 工具目录（plan 产物），不入库
+.zcode/
+
+# 会话/工具运行时目录（本地状态，不入库）
+.qaqh/
+
+# 系统与工具索引
+.DS_Store
+.codegraph/

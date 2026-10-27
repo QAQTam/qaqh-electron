@@ -1,0 +1,52 @@
+/* QAQ-Harness WebUI —— 主样式表入口
+ * 分层顺序: reset -> tokens -> base -> components -> utilities
+ */
+
+@layer reset, tokens, base, components, utilities;
+
+/* 1. 字体声明与重置 */
+@import "./reset.css";
+
+/* 2. 设计规范与主题 Tokens */
+@import "./tokens/base.css";
+@import "./tokens/fluent.css";
+
+/* 3. 全局基础规则 */
+@import "./base.css";
+
+/* 4. 应用外壳与桌面骨架 */
+@import "./shell/layout.css";
+@import "./shell/sidebar.css";
+@import "./shell/tabs.css";
+
+/* 5. 核心业务组件 */
+@import "./components/timeline.css";
+@import "./components/tools.css";
+@import "./components/text-shimmer.css";
+@import "./components/markdown.css";
+@import "./components/workspace-panel.css";
+@import "./components/composer.css";
+@import "./components/context-menu.css";
+@import "./components/approval.css";
+@import "./components/genui.css";
+@import "./components/settings.css";
+@import "./components/controls.css";
+@import "./components/dev-console.css";
+@import "./components/feedback.css";
+@import "./components/deliverables.css";
+@import "./components/siwc.css";
+@import "./components/dsaccount.css";
+@import "./components/oauth.css";
+@import "./components/effort.css";
+
+/* Windows 11 / Fluent 2 覆盖层（仅 data-platform="windows" 生效） */
+@import "./components/fluent.css";
+
+/* 6. 主题预设 */
+@import "./themes/lite.css";
+@import "./themes/macos-liquid-glass.css";
+@import "./themes/zen-console.css";
+
+/* 7. 响应式适配、无障碍与工具类 */
+@import "./utilities.css";
+@import "./performance.css";

@@ -1,0 +1,214 @@
+/* QAQ-Harness WebUI —— 主题范本: macOS 26 Liquid Glass (水感流体玻璃)
+ * 特征:
+ *  1. 悬浮胶囊会话栏与导航药丸 (Floating Fluid Capsule)
+ *  2. 物理光影折射与内嵌入射高光 (Fresnel Inset Specular)
+ *  3. 大弧度圆角体系 (Radius 16-24px) 与通透材质
+ *  4. 深度协同 macOS 原生 Vibrancy 底材
+ */
+
+:root[data-theme-preset="liquid-glass"],
+html.theme-liquid-glass {
+  /* 几何拓扑: 大圆角与柔和浮岛 */
+  --radius-control: 10px;
+  --radius-panel: 16px;
+  --radius-dialog: 22px;
+  --radius-pill: 999px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-input: 20px;
+
+  /* 水感折射与物理光泽参数 */
+  --liquid-refract-light: inset 0 1px 1px 0 rgba(255, 255, 255, 0.55), inset 0 -1px 1px 0 rgba(0, 0, 0, 0.06);
+  --liquid-refract-dark: inset 0 1px 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 1px 0 rgba(0, 0, 0, 0.35);
+  --liquid-shadow: 0 12px 36px -4px rgba(15, 23, 42, 0.12);
+}
+
+/* 浅色水润色板微调 */
+:root[data-theme-preset="liquid-glass"]:not([data-theme="dark"]),
+html.theme-liquid-glass:not([data-theme="dark"]) {
+  --accent: #0071e3;
+  --accent-soft: rgba(0, 113, 227, 0.12);
+  --focus-ring: rgba(0, 113, 227, 0.5);
+  --shadow-panel: 0 16px 40px -6px rgba(15, 23, 42, 0.10);
+  --shadow-soft: 0 4px 16px -2px rgba(15, 23, 42, 0.06);
+}
+
+/* 深色深水黑曜石色板 */
+:root[data-theme-preset="liquid-glass"][data-theme="dark"],
+html.theme-liquid-glass[data-theme="dark"] {
+  --accent: #2997ff;
+  --accent-soft: rgba(41, 151, 255, 0.15);
+  --focus-ring: rgba(41, 151, 255, 0.5);
+  --shadow-panel: 0 18px 48px -6px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 6px 20px -2px rgba(0, 0, 0, 0.30);
+}
+
+/* ── 框架级变形: 标题栏与悬浮胶囊 ───────────────────────────────────── */
+
+/* 1. 顶部标题栏: 更加通透并融合高光线 */
+:root[data-theme-preset="liquid-glass"] #top,
+html.theme-liquid-glass #top {
+  height: 44px;
+  background: color-mix(in srgb, var(--surface) 52%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  box-shadow: var(--liquid-refract-light);
+}
+
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] #top,
+html.theme-liquid-glass[data-theme="dark"] #top {
+  background: color-mix(in srgb, var(--surface) 65%, transparent);
+  box-shadow: var(--liquid-refract-dark);
+}
+
+/* 2. 悬浮胶囊 TabBar (特有的 Liquid Capsule 药丸) */
+:root[data-theme-preset="liquid-glass"] .session-capsule,
+html.theme-liquid-glass .session-capsule {
+  height: 42px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface) 68%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: var(--liquid-refract-light), var(--liquid-shadow);
+  -webkit-backdrop-filter: blur(16px) saturate(145%);
+  backdrop-filter: blur(16px) saturate(145%);
+}
+
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .session-capsule,
+html.theme-liquid-glass[data-theme="dark"] .session-capsule {
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: var(--liquid-refract-dark), var(--liquid-shadow);
+}
+
+:root[data-theme-preset="liquid-glass"] .tab,
+html.theme-liquid-glass .tab {
+  height: 32px;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all var(--dur-fast) var(--ease);
+}
+
+:root[data-theme-preset="liquid-glass"] .tab.active,
+html.theme-liquid-glass .tab.active {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), var(--liquid-refract-light);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .tab.active,
+html.theme-liquid-glass[data-theme="dark"] .tab.active {
+  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), var(--liquid-refract-dark);
+}
+
+/* 3. 左侧导航栏: 流体微浮动 Dock 质感 */
+:root[data-theme-preset="liquid-glass"] .global-nav,
+html.theme-liquid-glass .global-nav {
+  background: color-mix(in srgb, var(--surface) 48%, transparent);
+  border-right-color: color-mix(in srgb, var(--border) 50%, transparent);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.15);
+}
+
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .global-nav,
+html.theme-liquid-glass[data-theme="dark"] .global-nav {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme-preset="liquid-glass"] .global-nav-item,
+html.theme-liquid-glass .global-nav-item {
+  border-radius: 12px;
+  margin-inline: 4px;
+}
+
+:root[data-theme-preset="liquid-glass"] .global-nav-item.active,
+html.theme-liquid-glass .global-nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* 4. 会话侧边栏与条目: 药丸微弧化 */
+:root[data-theme-preset="liquid-glass"] .message-sidebar,
+html.theme-liquid-glass .message-sidebar {
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
+  border-right-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .message-sidebar,
+html.theme-liquid-glass[data-theme="dark"] .message-sidebar {
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+}
+
+:root[data-theme-preset="liquid-glass"] .message-session-item,
+html.theme-liquid-glass .message-session-item {
+  border-radius: 10px;
+  min-height: 34px;
+}
+
+:root[data-theme-preset="liquid-glass"] .message-session-item.active,
+html.theme-liquid-glass .message-session-item.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* 5. 输入区: 水感流动胶囊 (Composer Fluid Capsule) */
+:root[data-theme-preset="liquid-glass"] .composer-surface,
+html.theme-liquid-glass .composer-surface {
+  border-radius: var(--r-input);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: var(--liquid-refract-light), 0 8px 30px rgba(0, 0, 0, 0.05);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .composer-surface,
+html.theme-liquid-glass[data-theme="dark"] .composer-surface {
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: var(--liquid-refract-dark), 0 12px 36px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme-preset="liquid-glass"] .composer-surface:focus-within,
+html.theme-liquid-glass .composer-surface:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring), 0 12px 36px rgba(0, 0, 0, 0.08);
+}
+
+/* 发送按钮: 水滴渐变微光 */
+:root[data-theme-preset="liquid-glass"] #composer .icon-btn.send:not(:disabled),
+html.theme-liquid-glass #composer .icon-btn.send:not(:disabled) {
+  border-radius: var(--radius-pill);
+  background: linear-gradient(135deg, #0071e3 0%, #2997ff 100%);
+  box-shadow: 0 4px 14px rgba(0, 113, 227, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+}
+
+/* 6. 设置面板与卡片: 物理边缘微光 */
+:root[data-theme-preset="liquid-glass"] .tier,
+:root[data-theme-preset="liquid-glass"] .lan-block,
+:root[data-theme-preset="liquid-glass"] .profile-row,
+:root[data-theme-preset="liquid-glass"] .pairing-qr,
+html.theme-liquid-glass .tier,
+html.theme-liquid-glass .lan-block,
+html.theme-liquid-glass .profile-row,
+html.theme-liquid-glass .pairing-qr {
+  border-radius: 12px;
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
+  box-shadow: var(--liquid-refract-light);
+}
+
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .tier,
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .lan-block,
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .profile-row,
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .pairing-qr,
+html.theme-liquid-glass[data-theme="dark"] .tier,
+html.theme-liquid-glass[data-theme="dark"] .lan-block,
+html.theme-liquid-glass[data-theme="dark"] .profile-row,
+html.theme-liquid-glass[data-theme="dark"] .pairing-qr {
+  box-shadow: var(--liquid-refract-dark);
+}

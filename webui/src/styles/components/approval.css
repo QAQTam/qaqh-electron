@@ -1,0 +1,155 @@
+/* QAQ-Harness WebUI —— 授权请求与 AskUser 审批卡片 (Approval & Permissions) */
+
+@layer components {
+  /* 授权/AskUser 对话框(§11):置于视口中央,消息保留为上下文但降低视觉权重。 */
+  #approval-slot {
+    position: fixed; inset: 0; z-index: 80;
+    display: grid; place-items: center;
+    padding: 24px;
+    overflow: auto; overscroll-behavior: contain;
+    background: color-mix(in srgb, var(--bg) 30%, transparent);
+    -webkit-backdrop-filter: blur(.6px);
+    backdrop-filter: blur(.6px);
+    transition: opacity var(--dur) var(--ease);
+  }
+  .approval-wrap {
+    width: min(var(--content-width), 100%);
+    max-height: calc(100vh - 48px);
+    outline: none;
+    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+  }
+  /* 入场走 @starting-style(机制说明见 feedback.css 同名块)。 */
+  @starting-style {
+    #approval-slot { opacity: 0; }
+    .approval-wrap { opacity: 0; transform: translateY(6px) scale(.99); }
+  }
+  @supports not (transition-behavior: allow-discrete) {
+    #approval-slot { animation: approval-fade var(--dur) var(--ease); }
+    .approval-wrap { animation: approval-pop var(--dur) var(--ease); }
+  }
+  @keyframes approval-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes approval-pop { from { opacity: 0; transform: translateY(6px) scale(.99); } to { opacity: 1; transform: none; } }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-lg);
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    box-shadow: var(--shadow-soft);
+  }
+  .card.perm.high { border-color: var(--err); box-shadow: inset 3px 0 0 var(--err), var(--shadow-soft); }
+  /* ask 比另两张卡多一条问题轨,轨道占自己的 auto 行,可滚的仍是卡身。 */
+  .card.ask { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  .card-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px 6px;
+    font-size: var(--fs-md); font-weight: 600;
+  }
+  .card-risk { color: var(--err); font-size: var(--fs-sm); font-weight: 500; }
+  .card-more { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); font-weight: 400; }
+  .card-body {
+    max-height: min(56vh, 560px); overflow: auto;
+    padding: 4px 14px 10px;
+    display: grid; gap: 6px;
+    font-size: var(--fs-sm);
+  }
+  .card-line { display: flex; gap: 6px; }
+  .card-key { color: var(--muted); flex: none; }
+  .card-paths { font-family: var(--font-code); font-size: var(--fs-xs); background: var(--surface-code); border-radius: var(--r-md); padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .card-q-text { white-space: pre-wrap; }
+  .card-error { color: var(--err); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .card-opt { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+  .ask-custom, .card-message {
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    padding: 8px 10px;
+    width: 100%;
+  }
+  .ask-custom:focus-visible, .card-message:focus-visible,
+  .card-opt input:focus-visible {
+    outline: 2px solid var(--focus-ring); outline-offset: 2px;
+  }
+  .ask-custom:focus, .card-message:focus { border-color: var(--focus-ring); }
+
+  /* AskUser:一次一问 + 问题轨。轨是导航(可截断、可点),问题正文永远全量呈现。 */
+  .ask-step, .ask-timer { color: var(--muted); font-size: var(--fs-xs); font-weight: 400; }
+  .ask-timer { font-variant-numeric: tabular-nums; }
+  .ask-timer[data-tone="warn"] { color: var(--warn); }
+  .ask-timer[data-tone="dead"] { color: var(--err); }
+  .ask-rail {
+    display: grid;
+    /* 列必须夹在 0 与 1fr 之间,否则轨按 max-content 撑开:文本被容器裁掉而非省略,
+       还挤出横向滚动条。 */
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    margin: 0 14px; padding: 4px 0 8px;
+    border-bottom: 1px solid var(--border);
+    max-height: 132px; overflow: auto; overscroll-behavior: contain;
+  }
+  .ask-rail-row {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 28px; padding: 0 6px;
+    border: 0; border-radius: var(--r-md);
+    background: none; color: var(--muted);
+    font: inherit; font-size: var(--fs-xs); text-align: left;
+    cursor: pointer;
+    transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .ask-rail-row:hover { background: var(--surface-2); }
+  .ask-rail-row[aria-current="step"] { background: var(--surface-2); color: var(--text); }
+  .ask-rail-row[data-state="done"] { color: var(--text); }
+  .ask-rail-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .ask-rail-n { flex: none; width: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+  .ask-rail-row[data-state="done"] .ask-rail-n { color: var(--ok); }
+  .ask-rail-q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ask-q { display: grid; gap: 8px; }
+  .ask-opts { display: grid; gap: 6px; }
+  .ask-opt-row { display: grid; gap: 4px; }
+  .ask-opt {
+    display: flex; align-items: flex-start; gap: 8px;
+    min-height: var(--control-height); padding: 8px 10px;
+    border: 1px solid var(--border-strong); border-radius: var(--r-md);
+    background: var(--surface); cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  }
+  .ask-opt:hover { background: var(--surface-2); }
+  .ask-opt[data-picked="true"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  }
+  .ask-opt input { flex: none; margin-top: 3px; accent-color: var(--accent); }
+  .ask-opt input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .ask-opt-n { flex: none; min-width: 12px; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+  .ask-opt-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ask-gap { flex: 1 1 auto; }
+  .ask-expired-line { flex: 1 1 auto; margin: 0; align-self: center; }
+  .card.ask[data-state="expired"] .ask-opt { opacity: .6; cursor: default; }
+  .card.ask[data-state="expired"] .ask-opt:hover { background: none; }
+  .card-plan { font-family: var(--font-code); white-space: pre-wrap; font-size: var(--fs-sm); background: var(--surface-code); border-radius: var(--r-md); padding: 8px 10px; max-height: 40vh; overflow: auto; }
+  .card-actions {
+    display: flex; gap: 8px; align-items: center;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 0 0 var(--r-lg) var(--r-lg);
+  }
+  .card-actions .primary {
+    min-height: 40px; padding: 0 16px;
+    border-radius: var(--r-md);
+    background: var(--accent); color: var(--on-accent);
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .card-actions .primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+  .card-actions .primary:disabled { opacity: .55; }
+  .card-actions button:not(.primary) {
+    min-height: 32px; padding: 0 12px;
+    border-radius: var(--r-md);
+    color: var(--text);
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .card-actions button:not(.primary):hover:not(:disabled) { background: var(--surface-2); }
+  .card-actions button:not(.primary):disabled { color: var(--muted); }
+  .card-actions button:not(.primary) { border: 1px solid var(--border-strong); }
+  .card-actions button:disabled { cursor: not-allowed; }
+}

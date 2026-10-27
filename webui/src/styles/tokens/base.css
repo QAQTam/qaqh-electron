@@ -1,0 +1,187 @@
+/* QAQ-Harness WebUI —— Tokens (设计规范常量、默认浅色与深色变量) */
+
+@layer tokens {
+  :root {
+    --bg: #f7f7f8;
+    --surface: #ffffff;
+    --surface-2: #f0f1f3;
+    --surface-user: #f0f1f3;
+    --surface-code: #f1f2f4;
+    --border: #e1e3e7;
+    --border-strong: #7b8aa0;
+    --text: #20242b;
+    --muted: #626975;
+    --accent: #2563eb;
+    --on-accent: #ffffff;
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+    --focus-ring: #2563eb;
+    --ok: #167341;
+    --warn: #925b0b;
+    --err: #b42332;
+    --err-soft: color-mix(in srgb, var(--err) 12%, var(--surface));
+    --shadow-panel: 0 10px 32px rgb(23 43 77 / 12%);
+    --shadow-soft: 0 2px 8px rgb(23 43 77 / 6%);
+    --shadow-glass: 0 7px 24px rgb(23 43 77 / 8%);
+    --glass-bg: rgb(255 255 255 / 82%);
+    --glass-border: rgb(255 255 255 / 72%);
+    --glass-blur: 12px;
+    --diff-add-bg: #e8f5ec;
+    --diff-add-word: #bfe3ca;
+    --diff-del-bg: #fceceb;
+    --diff-del-word: #f3c6c3;
+
+    /* 交互控件与浮层语义 Token（跨平台通用默认基准） */
+    --flyout-bg: var(--surface);
+    --stroke-control: var(--border-strong);
+    --stroke-control-strong: var(--border-strong);
+    --stroke-control-disabled: color-mix(in srgb, var(--border) 60%, transparent);
+    --focus-outer: var(--focus-ring);
+    --focus-inner: var(--surface);
+
+    --radius-control: 8px;
+    --radius-panel: 12px;
+    --radius-dialog: 16px;
+    --radius-pill: 999px;
+    --r-sm: var(--radius-control);
+    --r-md: var(--radius-control);
+    --r-lg: var(--radius-panel);
+    --r-input: var(--radius-dialog);
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --control-height: 36px;
+    --content-gutter: var(--space-6);
+    --workspace-panel-width: 320px;
+    --workspace-panel-collapsed-width: 40px;
+    /* 正文 14px 对齐 Codex 桌面端(实测全角步进 14px);行距写成 24/14 这个无单位
+       比例而不是 1.5,是为了把字号与行距解耦 —— 沿用 1.5 会让 14px 掉到 21px 行距,
+       字和行一起缩,密度不变。
+       比例同时也让 --font-scale 能整体接管:正文乘系数后,行距、标题(em)、代码(85%)
+       全部按比例跟着走,设置页「等比缩放所有字阶」对阅读区同样成立。
+       来源已不再是 Primer 的 16px 基准,见 docs/markdown-typography.md。 */
+    --md-body-size: calc(14px * var(--font-scale));
+    --md-body-leading: calc(24 / 14);
+    --md-heading-leading: 1.25;
+    --md-h1-size: 2em;
+    --md-h2-size: 1.5em;
+    --md-h3-size: 1.25em;
+    --md-h4-size: 1em;
+    --md-h5-size: .875em;
+    --md-h6-size: .85em;
+    --md-code-scale: 85%;
+
+    /* 全局字号缩放基数（默认 100%，由纯前端 typography 模块控制） */
+    --font-scale: 1;
+    --fs-xs: calc(14px * var(--font-scale));
+    --fs-sm: calc(15px * var(--font-scale));
+    --fs-md: calc(16px * var(--font-scale));
+    --fs-lg: calc(18px * var(--font-scale));
+    --fs-body: calc(16px * var(--font-scale));
+
+    /* 4 大核心语义字体槽位 */
+    --font-ui: "PingFang SC", "Segoe UI Variable Text", "QAQH HarmonyOS Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
+    --font-prose: "PingFang SC", "Segoe UI Variable Text", "QAQH HarmonyOS Sans SC", system-ui, sans-serif;
+    --font-code: "QAQH Cascadia Code", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+    --font-terminal: "Menlo", "Consolas", "QAQH Cascadia Code", ui-monospace, monospace;
+
+    /* 兼容历史别名（平滑过渡，确保历史引用零破坏） */
+    --font-main: var(--font-ui);
+    --font-mono: var(--font-code);
+
+    --dur-fast: 120ms;
+    --dur: 180ms;
+    --dur-out: 140ms;
+    --dur-enter: 160ms;
+    --dur-layout: 220ms;
+    --ease: cubic-bezier(.2, 0, 0, 1);
+
+    --tool-shimmer-highlight: color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, 0.6));
+    --tool-shimmer-dur: 1.6s;
+
+    /* 会话行「待响应」卡的语义色(§6.2 侧栏待响应):
+       授权=琥珀(有风险感)、回答=主色、计划评审=紫。深色表同步。 */
+    --pending-permission: #b45309;
+    --pending-ask: var(--accent);
+    --pending-plan: #6d28d9;
+
+    --content-width: 760px;
+    color-scheme: light dark;
+  }
+
+  /* 深色 token 两路消费:JS(theme.ts)在模块加载即设 data-theme,所以
+     :root[data-theme] 是主路径;媒体查询只兜「JS 未运行的首帧」,避免闪白。
+     两处 token 表必须保持一致。 */
+  :root[data-theme="dark"] {
+    --bg: #17181b;
+    --surface: #202226;
+    --surface-2: #292c31;
+    --surface-user: #292c31;
+    --surface-code: #1b1d21;
+    --border: #373b42;
+    --border-strong: #718198;
+    --text: #edeef0;
+    --muted: #abb0b8;
+    --accent: #8ab4ff;
+    --on-accent: #13171d;
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --focus-ring: #8ab4ff;
+    --ok: #75d9a1;
+    --warn: #f5c36d;
+    --err: #ff9aa5;
+    --err-soft: color-mix(in srgb, var(--err) 16%, var(--surface));
+    --shadow-panel: 0 12px 36px rgb(0 0 0 / 32%);
+    --shadow-soft: 0 2px 8px rgb(0 0 0 / 20%);
+    --shadow-glass: 0 7px 24px rgb(0 0 0 / 28%);
+    --glass-bg: rgb(29 35 44 / 90%);
+    --glass-border: rgb(255 255 255 / 12%);
+    --diff-add-bg: #1c3326;
+    --diff-add-word: #2a5a3b;
+    --diff-del-bg: #3a2224;
+    --diff-del-word: #6a3338;
+    --tool-shimmer-highlight: rgba(255, 255, 255, 0.22);
+    --pending-permission: #f5c36d;
+    --pending-ask: var(--accent);
+    --pending-plan: #c4b5fd;
+    color-scheme: dark;
+  }
+
+  :root[data-theme="light"] { color-scheme: light; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]):not([data-theme="dark"]) {
+      --bg: #17181b;
+      --surface: #202226;
+      --surface-2: #292c31;
+      --surface-user: #292c31;
+      --surface-code: #1b1d21;
+      --border: #373b42;
+      --border-strong: #718198;
+      --text: #edeef0;
+      --muted: #abb0b8;
+      --accent: #8ab4ff;
+      --on-accent: #13171d;
+      --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+      --focus-ring: #8ab4ff;
+      --ok: #75d9a1;
+      --warn: #f5c36d;
+      --err: #ff9aa5;
+      --err-soft: color-mix(in srgb, var(--err) 16%, var(--surface));
+      --shadow-panel: 0 12px 36px rgb(0 0 0 / 32%);
+      --shadow-soft: 0 2px 8px rgb(0 0 0 / 20%);
+      --shadow-glass: 0 7px 24px rgb(0 0 0 / 28%);
+      --glass-bg: rgb(29 35 44 / 90%);
+      --glass-border: rgb(255 255 255 / 12%);
+      --diff-add-bg: #1c3326;
+      --diff-add-word: #2a5a3b;
+      --diff-del-bg: #3a2224;
+      --diff-del-word: #6a3338;
+      --tool-shimmer-highlight: rgba(255, 255, 255, 0.22);
+      --pending-permission: #f5c36d;
+      --pending-ask: var(--accent);
+      --pending-plan: #c4b5fd;
+    }
+  }
+}

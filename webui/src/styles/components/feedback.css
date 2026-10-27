@@ -1,0 +1,306 @@
+/* QAQ-Harness WebUI —— 按钮语义、反馈提示、退出弹窗与欢迎首页 (Feedback & Modals) */
+
+@layer components {
+  .settings-foot {
+    display: flex; align-items: center; gap: 12px;
+    min-height: 56px; padding: 10px clamp(20px, 3vw, 36px);
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .settings-foot-state { flex: 1; min-width: 0; font-size: var(--fs-xs); }
+  .settings-error { color: var(--err); overflow-wrap: anywhere; }
+  .settings-note { color: var(--ok); }
+  .settings-muted { color: var(--muted); }
+  .settings-foot-actions { display: flex; align-items: center; gap: 8px; }
+  .settings-discard { display: flex; align-items: center; gap: 6px; color: var(--warn); font-size: var(--fs-xs); }
+  .primary-mini {
+    display: inline-flex; align-items: center; gap: 4px;
+    min-height: 28px; padding: 0 12px;
+    border-radius: var(--r-md);
+    font-size: var(--fs-xs);
+  }
+  /* Shared semantic button rules; components add sizing/layout classes as needed. */
+  .button-primary {
+    background: var(--accent); color: var(--on-accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 84%, var(--text));
+    transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  }
+  .button-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+  .button-primary:active:not(:disabled) { transform: scale(.98); }
+  .button-primary:disabled { opacity: .55; }
+  .button-secondary {
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border-strong);
+    transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  }
+  .button-secondary:hover:not(:disabled) { background: var(--surface-2); }
+  .button-ghost { color: var(--muted); transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
+  .button-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+  .button-danger { color: var(--err) !important; }
+  .button-danger:hover:not(:disabled) { background: var(--err-soft); }
+
+  /* Toast(右下角,命令式反馈面;ui/toast.tsx) */
+  .toast-host {
+    position: fixed; right: 16px; bottom: 16px; z-index: 90;
+    display: grid; gap: 8px; justify-items: end;
+    pointer-events: none;
+  }
+  .toast {
+    display: flex; align-items: flex-start; gap: 8px;
+    max-width: 420px; padding: 8px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    box-shadow: var(--shadow-panel);
+    font-size: var(--fs-sm);
+    pointer-events: auto;
+    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+  }
+  .toast-icon { flex: none; display: inline-grid; place-items: center; padding-top: 2px; }
+  .toast-icon svg { width: 14px; height: 14px; }
+  .toast.ok .toast-icon { color: var(--ok); }
+  .toast.err .toast-icon { color: var(--err); }
+  .toast.info .toast-icon { color: var(--muted); }
+  .toast-text { min-width: 0; overflow-wrap: anywhere; }
+  .toast-close {
+    flex: none; display: inline-grid; place-items: center;
+    width: 20px; height: 20px; border-radius: var(--r-sm);
+    color: var(--muted);
+    transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .toast-close:hover { background: var(--surface-2); color: var(--text); }
+  .toast-close svg { width: 12px; height: 12px; }
+  .connection-notice {
+    position: fixed; right: 16px; bottom: 84px; z-index: 95;
+    display: flex; align-items: center; gap: 12px;
+    width: max-content; max-width: min(420px, calc(100vw - 32px));
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--warn) 52%, var(--border));
+    border-radius: var(--r-md);
+    background: var(--surface); box-shadow: var(--shadow-panel);
+    color: var(--text); font-size: var(--fs-sm);
+    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+  }
+  .connection-notice span { min-width: 0; overflow-wrap: anywhere; }
+  .connection-notice .ghost-mini { flex: none; }
+  .quit-overlay {
+    position: fixed; inset: 0; z-index: 120;
+    display: grid; place-items: center;
+    padding: 24px;
+    background: color-mix(in srgb, var(--bg) 46%, transparent);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    transition: opacity var(--dur) var(--ease);
+  }
+  .quit-dialog {
+    width: min(520px, 100%);
+    overflow: hidden;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-panel);
+    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+  }
+  .quit-dialog-head {
+    display: flex; align-items: center; gap: 12px;
+    min-height: 54px; padding: 8px 14px 8px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-lg);
+  }
+  .quit-dialog-head .icon-btn { margin-left: auto; }
+  .quit-dialog-body { display: grid; gap: 10px; padding: 18px; line-height: 1.6; }
+  .quit-dialog-note { color: var(--muted); font-size: var(--fs-sm); }
+  .quit-dialog-error { color: var(--err); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .quit-stop-confirm {
+    display: grid; gap: 4px; padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--err) 38%, var(--border));
+    border-radius: var(--r-md); background: var(--err-soft);
+  }
+  .quit-stop-confirm p { color: var(--muted); font-size: var(--fs-sm); }
+  .quit-dialog-actions {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px;
+    padding: 12px 18px 16px; border-top: 1px solid var(--border);
+  }
+  .quit-dialog-actions > button {
+    min-height: 36px; padding: 0 12px; border-radius: var(--r-md); font-size: var(--fs-sm);
+  }
+  /* 入场统一走 @starting-style(Safari 17.5+ / Chromium 117+):与后续可能的
+   * 离场过渡同一机制,display 切换也能过渡。老引擎经下面的 @supports not
+   * 回退到原 keyframes,两端观感一致。 */
+  @starting-style {
+    .toast, .connection-notice { opacity: 0; transform: translateY(4px); }
+    .quit-overlay { opacity: 0; }
+    .quit-dialog { opacity: 0; transform: translateY(6px) scale(.99); }
+  }
+  @supports not (transition-behavior: allow-discrete) {
+    .toast, .connection-notice { animation: toast-in var(--dur) var(--ease); }
+    .quit-overlay { animation: approval-fade var(--dur) var(--ease); }
+    .quit-dialog { animation: approval-pop var(--dur) var(--ease); }
+  }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* Startup 首页样式 (延迟创建新会话) */
+  .startup-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* `safe`:窗口装得下就居中;装不下(矮窗口 + 四张卡 + 提示行)就退回起始对齐,
+       否则 flex 居中会把标题顶到滚动区外面,永远滚不到。 */
+    justify-content: safe center;
+    min-height: 100%;
+    width: 100%;
+    padding: var(--space-8) var(--content-gutter);
+    overflow-y: auto;
+  }
+  .startup-hero {
+    /* 撑满一行,辉光才敢用 `min(560px, 100%)`:hero 若按内容收缩,百分比会小到
+       只剩副标题那么宽,而写死 560px 又会在窄窗口里撑出横向滚动条。 */
+    align-self: stretch;
+    /* 空态留白多,纯色背景会显得"没加载完":标题后面垫一层极淡的主色辉光。
+       isolation 把 z-index:-1 关在 hero 自己的层叠上下文里,不会掉到页面背景下面。 */
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 24px;
+    text-align: center;
+  }
+  .startup-hero::before {
+    content: "";
+    position: absolute; left: 50%; top: -72px; translate: -50% 0;
+    width: min(560px, 100%); height: 220px;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, var(--accent-soft), transparent);
+    filter: blur(14px);
+    pointer-events: none;
+    z-index: -1;
+  }
+  .startup-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .startup-subtitle {
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .startup-config-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 24px;
+  }
+  /* 空态的两枚选择器是页面上的控件,不是工具栏里的按钮:给表面色与描边,
+     否则在纯色背景上读起来像两行灰字。输入区里的同款 chip 仍保持透明。 */
+  .startup-config-bar .composer-tool-button {
+    min-height: 34px;
+    color: var(--text);
+    background: var(--surface);
+    border-color: var(--border);
+  }
+  .startup-config-bar .composer-tool-button:hover,
+  .startup-config-bar .composer-tool-button[aria-expanded="true"] {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+  }
+  /* 四张卡片的列数跟着**可用内容宽度**(容器 workspace,不是窗口)走:1 → 2 → 4。
+     不排 3 列:4 张卡排 3 列必然留一张孤儿行,那正是这版之前的样子。 */
+  .startup-suggestions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    width: min(var(--content-width), 100%);
+    margin-bottom: 24px;
+  }
+  /* 2 列的下限放到 460px:窄窗口里四张卡竖着排会把输入框挤到折叠线以下,
+     两列 2×2 既省一半高度,单卡宽度也还撑得住描述行。 */
+  @container workspace (min-width: 460px) {
+    .startup-suggestions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @container workspace (min-width: 1000px) {
+    .startup-suggestions {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      width: min(1040px, 100%);
+    }
+  }
+  .startup-suggestion-card {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    padding: 13px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    text-align: left;
+    cursor: pointer;
+    transition: all var(--dur-fast) var(--ease);
+  }
+  .startup-suggestion-card:hover {
+    border-color: var(--accent);
+    background: var(--surface-2);
+    box-shadow: var(--shadow-soft);
+    transform: translateY(-1px);
+  }
+  .startup-card-icon {
+    display: grid;
+    place-items: center;
+    width: 30px; height: 30px;
+    border-radius: 9px;
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .startup-card-icon svg { width: 16px; height: 16px; }
+  .startup-card-body { display: grid; gap: 3px; min-width: 0; }
+  .startup-card-title {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .startup-card-desc {
+    font-size: calc(13px * var(--font-scale));
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .startup-composer-box {
+    width: min(var(--content-width), 100%);
+  }
+  .startup-composer-box #composer {
+    width: 100%;
+    position: static;
+    bottom: auto;
+  }
+  /* 快捷键提示:原先挤在占位符的括注里,读起来像残句;挪到输入框下方用键帽摆出来。 */
+  .startup-hints {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 16px;
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: calc(11px * var(--font-scale));
+  }
+  .startup-hints > span { display: inline-flex; align-items: center; gap: 4px; }
+  .startup-hints kbd {
+    padding: 1px 5px;
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    color: var(--text);
+    background: var(--surface);
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
+  @keyframes icon-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .icon-spin {
+    animation: icon-spin 1s linear infinite;
+  }
+}

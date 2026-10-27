@@ -1,0 +1,120 @@
+/* QAQ-Harness WebUI —— 开发者控制台与图表仪表盘 (Dev Console) */
+
+@layer components {
+  /* ── 开发者控制台(设置「关于」的连点后门) ───────────────────────────── */
+  .about-version { user-select: none; cursor: default; border-radius: var(--r-md); }
+  .about-version:hover { background: var(--surface-2); }
+  .about-version:active { transform: scale(.995); }
+  .dev-pips { display: inline-flex; gap: 3px; margin-left: 8px; vertical-align: 1px; }
+  .dev-pip {
+    display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent);
+    animation: dev-pip-in var(--dur-fast) var(--ease) both;
+  }
+  @keyframes dev-pip-in { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: none; } }
+  .about-devbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 8px; font-size: var(--fs-xs);
+  }
+
+  /* 盖在设置浮层之上(quit-overlay 是 120),z-index 只在这一层用一次。 */
+  .dev-overlay {
+    position: fixed; inset: 0; z-index: 130;
+    display: grid; place-items: center;
+    padding: 24px;
+    background: color-mix(in srgb, var(--bg) 52%, transparent);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    transition: opacity var(--dur) var(--ease);
+  }
+  .dev-console {
+    display: grid; grid-template-rows: auto minmax(0, 1fr);
+    width: min(980px, 100%); max-height: calc(100vh - 48px);
+    overflow: hidden;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-panel);
+    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+  }
+  @starting-style {
+    .dev-overlay { opacity: 0; }
+    .dev-console { opacity: 0; transform: translateY(6px) scale(.99); }
+  }
+  @supports not (transition-behavior: allow-discrete) {
+    .dev-overlay { animation: approval-fade var(--dur) var(--ease); }
+    .dev-console { animation: approval-pop var(--dur) var(--ease); }
+  }
+  .dev-console-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-sm);
+  }
+  .dev-console-head .icon-btn { margin-left: auto; }
+  .dev-tabs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .dev-tab {
+    min-height: 28px; padding: 0 10px; border-radius: var(--r-md);
+    color: var(--muted); font-size: var(--fs-xs);
+    transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .dev-tab:hover { background: var(--surface-2); color: var(--text); }
+  .dev-tab.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+  .dev-console-body { overflow: auto; padding: 14px 18px 20px; }
+  .dev-panel { display: grid; gap: 10px; align-content: start; }
+  .dev-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs-xs); }
+  .dev-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .dev-sub { margin-top: 6px; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
+  .dev-mem-total { display: flex; align-items: baseline; gap: 8px; margin: 0; }
+  .dev-mem-total b { font-family: var(--font-mono); font-size: var(--fs-lg); font-weight: 600; }
+  .dev-mem-total span { color: var(--muted); font-size: var(--fs-xs); }
+  .dev-muted { color: var(--muted); font-size: var(--fs-xs); }
+  .dev-note { color: var(--ok); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+  .dev-warn { color: var(--warn); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+  .dev-err { color: var(--err); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+  .dev-err-tag { color: var(--err); font-weight: 400; margin-left: 6px; }
+  .dev-state { color: var(--muted); font-size: var(--fs-xs); }
+  .dev-state.is-live { color: var(--ok); }
+  .dev-state.is-live::before {
+    content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px;
+    border-radius: 50%; background: var(--ok);
+    animation: dev-live 1.6s var(--ease) infinite;
+  }
+  @keyframes dev-live { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+  .dev-ring-wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .dev-ring { flex: none; width: 132px; height: 132px; }
+  .dev-ring-track { fill: none; stroke: var(--surface-2); stroke-width: 14; }
+  .dev-ring-seg { fill: none; stroke: var(--dev-slot); stroke-width: 14; }
+  .dev-ring-s0 { --dev-slot: var(--accent); }
+  .dev-ring-s1 { --dev-slot: var(--ok); }
+  .dev-ring-s2 { --dev-slot: var(--warn); }
+  .dev-ring-s3 { --dev-slot: var(--err); }
+  .dev-ring-s4 { --dev-slot: color-mix(in srgb, var(--accent) 55%, var(--ok)); }
+  .dev-ring-s5 { --dev-slot: var(--muted); }
+  .dev-ring-legend { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: var(--fs-xs); }
+  .dev-ring-legend li { display: flex; align-items: center; gap: 6px; }
+  .dev-ring-legend b { font-family: var(--font-mono); font-weight: 500; }
+  .dev-ring-label { color: var(--muted); font-family: var(--font-mono); overflow-wrap: anywhere; }
+  .dev-ring-empty { color: var(--muted); }
+  .dev-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: var(--dev-slot); }
+
+  .dev-spark { position: relative; height: 44px; max-width: 320px; }
+  .dev-spark-svg { width: 100%; height: 44px; overflow: visible; }
+  .dev-spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .dev-spark-empty {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    color: var(--muted); font-size: var(--fs-xs);
+  }
+
+  .dev-json {
+    max-height: 320px; overflow: auto; margin: 0; padding: 10px 12px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
+    font-family: var(--font-terminal); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .dev-json.is-failed { color: var(--err); }
+  .dev-log td { font-family: var(--font-terminal); font-size: var(--fs-xs); }
+  .dev-log-detail { font-family: var(--font-ui); color: var(--muted); }
+  .dev-log-row.is-failed td { color: var(--err); }
+}

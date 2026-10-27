@@ -1,0 +1,55 @@
+/* QAQ-Harness WebUI —— 应用桌面骨架与外壳网格布局 */
+
+@layer components {
+  #app {
+    display: grid; grid-template-columns: 64px minmax(0, 1fr); grid-template-rows: var(--topbar-height, 40px) minmax(0, 1fr);
+    width: 100%; height: 100%; min-width: 0; min-height: 0;
+    background: var(--bg);
+  }
+  /* 标签栏(40px 固定,§4/§5):消息/工具/设置三页共用,切页不产生行高跳动 */
+  #top { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 12px; min-width: 0; padding-left: 16px; border-bottom: 1px solid var(--border); }
+  /* macOS 标题栏融合:交通灯安全边距与窗口拖拽支持 */
+  html.tauri.platform-macos #top {
+    padding-left: 78px;
+    background: color-mix(in srgb, var(--surface) 65%, transparent);
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  html.tauri.platform-macos[data-theme="dark"] #top {
+    background: color-mix(in srgb, var(--surface) 75%, transparent);
+  }
+  html.tauri.platform-macos #top button,
+  html.tauri.platform-macos #top a,
+  html.tauri.platform-macos #top input {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+  .titlebar-back { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-control); color: var(--muted); background: transparent; cursor: pointer; }
+  .titlebar-back:hover { color: var(--text); background: var(--surface-2); }
+  .titlebar-back svg { width: 16px; height: 16px; }
+  .titlebar-brand { flex: none; font-size: var(--fs-sm); font-weight: 650; letter-spacing: .04em; }
+  .titlebar-session-title { min-width: 0; max-width: min(42vw, 520px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--fs-sm); }
+
+  .workspace {
+    grid-column: 2; grid-row: 2; min-width: 0; min-height: 0;
+    display: grid; grid-template-rows: minmax(0, 1fr);
+  }
+  .workspace.workspace-messages { grid-template-columns: 244px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .workspace.workspace-settings { grid-template-rows: minmax(0, 1fr); }
+  .workspace-content { grid-column: 1 / -1; grid-row: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
+  .workspace-content { background: var(--bg); }
+  .workspace-content { container: workspace / inline-size; }
+  .workspace-messages > .workspace-content { grid-column: 2; }
+
+  /* 会话/标签切换的视图过渡(src/ui/viewTransition.ts):默认 UA 交叉淡出收敛
+   * 为本仓节奏;不支持的引擎不会产生这些伪元素,规则自然不生效。 */
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: var(--dur-layout);
+    animation-timing-function: var(--ease);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-old(root),
+    ::view-transition-new(root) { animation: none; }
+  }
+}

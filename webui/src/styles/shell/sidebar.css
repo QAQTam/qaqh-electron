@@ -1,0 +1,255 @@
+/* QAQ-Harness WebUI —— 全局导航与会话侧边栏 */
+
+@layer components {
+  .global-nav {
+    grid-column: 1; grid-row: 2;
+    display: grid; grid-auto-rows: max-content; align-content: start; gap: 4px;
+    padding: 12px 6px; border-right: 1px solid var(--border);
+    background: var(--surface);
+  }
+  html.tauri .global-nav {
+    border-right-color: color-mix(in srgb, var(--border) 72%, transparent);
+    background: color-mix(in srgb, var(--surface) 68%, transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(130%);
+    backdrop-filter: blur(var(--glass-blur)) saturate(130%);
+  }
+  html.tauri[data-theme="dark"] .global-nav { background: color-mix(in srgb, var(--surface) 78%, transparent); }
+  html.tauri.platform-macos .global-nav {
+    border-right-color: color-mix(in srgb, var(--border) 72%, transparent);
+    background: color-mix(in srgb, var(--surface) 58%, transparent);
+    -webkit-backdrop-filter: saturate(135%);
+    backdrop-filter: saturate(135%);
+    box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 45%, transparent);
+  }
+  html.tauri.platform-macos[data-theme="dark"] .global-nav { background: color-mix(in srgb, var(--surface) 72%, transparent); }
+  .global-nav-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+    min-width: 0; min-height: 56px; padding: 6px 2px;
+    border-radius: var(--r-md); color: var(--muted); font-size: 10px; line-height: 1.2;
+    transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  }
+  .global-nav-item svg { width: 18px; height: 18px; }
+  .global-nav-item:hover { color: var(--text); background: var(--surface-2); }
+  .global-nav-item.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+
+  .message-sidebar {
+    grid-column: 1; grid-row: 1; display: grid; grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0; min-height: 0; overflow: hidden;
+    border-right: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 72%, var(--bg));
+  }
+  html.tauri .message-sidebar {
+    border-right-color: color-mix(in srgb, var(--border) 72%, transparent);
+    background: color-mix(in srgb, var(--surface) 68%, transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(130%);
+    backdrop-filter: blur(var(--glass-blur)) saturate(130%);
+  }
+  html.tauri[data-theme="dark"] .message-sidebar { background: color-mix(in srgb, var(--surface) 78%, transparent); }
+  html.tauri.platform-macos .message-sidebar {
+    border-right-color: color-mix(in srgb, var(--border) 72%, transparent);
+    background: color-mix(in srgb, var(--surface) 58%, transparent);
+    -webkit-backdrop-filter: saturate(135%);
+    backdrop-filter: saturate(135%);
+    box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 45%, transparent);
+  }
+  html.tauri.platform-macos[data-theme="dark"] .message-sidebar { background: color-mix(in srgb, var(--surface) 72%, transparent); }
+  .message-sidebar-head { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 14px; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .04em; }
+  .message-sidebar-count { margin-left: auto; color: var(--muted); opacity: .72; font-size: 10px; font-weight: 500; }
+  .message-create { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-control); color: var(--muted); }
+  .message-create svg { width: 16px; height: 16px; }
+  .message-create:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+  .message-create:disabled { opacity: .5; }
+  .message-sidebar-groups { min-height: 0; overflow: auto; padding: 2px 8px 12px; overscroll-behavior: contain; }
+  /* 会话行 = 主体按钮 + 「…」动作钮。动作钮常占位、悬停/聚焦/展开时才显形,
+     所以 hover 只改表面不改布局(spec §悬停)。 */
+  .message-session-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+  .message-session-more {
+    display: grid; place-items: center; flex: none;
+    width: 24px; height: 24px; border-radius: var(--r-sm);
+    color: var(--muted); opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  }
+  .message-session-more svg { width: 14px; height: 14px; }
+  .message-session-row:hover .message-session-more,
+  .message-session-row.active .message-session-more,
+  .message-session-more:focus-visible,
+  .message-session-more[aria-expanded="true"] { opacity: 1; }
+  .message-session-more:hover { background: var(--surface-2); color: var(--text); }
+  /* 菜单在流内展开,不用绝对定位:侧栏是 overflow:auto 的滚动容器,浮层会被裁掉。 */
+  /* 侧栏的「移动到工作区」是**内联**展开的(不像首页那样浮在页面之上),所以尺寸
+     直接吃掉会话列表的高度:条目走共用的单行工作区行(`workspace-row-*`),
+     间距压到 1px、圆角收一档,三条工作区约 100px,不再把列表顶下去半屏。 */
+  .message-session-menu {
+    display: grid; gap: 1px; margin: 2px 0 4px;
+    padding: 4px; border: 1px solid var(--border-strong); border-radius: var(--r-md);
+    background: var(--surface); box-shadow: var(--shadow-soft);
+  }
+  .message-session-menu > strong { padding: 1px 5px 3px; color: var(--muted); font-size: 10px; letter-spacing: .04em; }
+  .message-session-menu > button {
+    position: relative; display: grid; gap: 1px; width: 100%; padding: 4px 6px;
+    border-radius: var(--r-sm); color: var(--text); text-align: left;
+    font-size: calc(13px * var(--font-scale));
+  }
+  /* 选中项的对勾走绝对定位,给它留出右侧空间即可(工作区行自带)。 */
+  .message-session-menu > button[role="menuitemradio"] { padding-right: 22px; }
+  .message-session-menu > button:hover, .message-session-menu > button.selected { background: var(--surface-2); }
+  .message-session-menu > button.message-session-menu-detach {
+    margin-top: 1px; padding-top: 6px;
+    border-top: 1px solid var(--border); border-radius: 0;
+    color: var(--muted);
+  }
+  .message-workspace-group { margin-bottom: 6px; }
+  .message-workspace-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 0 8px; border-radius: var(--r-sm); color: var(--text); text-align: left; font-size: var(--fs-xs); font-weight: 600; }
+  .message-workspace-toggle:hover { background: var(--surface-2); }
+  .message-workspace-toggle > svg { flex: none; width: 14px; height: 14px; color: var(--muted); transition: transform var(--dur-fast) var(--ease); }
+  .message-workspace-toggle > svg.collapsed { transform: rotate(-90deg); }
+  .message-workspace-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .message-workspace-count { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 500; }
+  .message-workspace-sessions { display: grid; gap: 2px; padding: 2px 0 4px 18px; }
+  .message-session-item {
+    position: relative;
+    display: flex; align-items: center; gap: 8px;
+    /* 拉满行宽:悬停/激活的胶囊右缘对齐,不随标题长短伸缩(长短不一观感的根源);
+       超长标题靠 min-width:0 + ellipsis 收敛,宽度恒等。 */
+    flex: 1 1 auto;
+    min-width: 0; min-height: 32px; padding: 0 8px;
+    border: 1px solid transparent; border-radius: var(--r-sm);
+    color: var(--muted); text-align: left; font-size: var(--fs-xs);
+    transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  }
+  .message-session-item::before {
+    content: "";
+    position: absolute; left: 0; top: 50%;
+    width: 3px; height: 0; border-radius: var(--radius-pill);
+    background: var(--accent);
+    opacity: 0; transform: translateY(-50%);
+    transition: height var(--dur-enter) var(--ease), opacity var(--dur-fast) var(--ease);
+  }
+  .message-session-item:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+  .message-session-item:active { background: var(--accent-soft); }
+  .message-session-item.active {
+    color: var(--text); background: var(--accent-soft); border-color: transparent;
+  }
+  .message-session-item.active::before { height: 16px; opacity: 1; }
+  .message-session-item:focus-visible { outline-offset: 1px; }
+  .message-session-item > svg { flex: none; width: 14px; height: 14px; opacity: .72; }
+  .message-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .message-session-running { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .message-sidebar-empty { padding: 8px; color: var(--muted); font-size: var(--fs-xs); }
+
+  /* ── 会话行「待响应」弹出卡(slide-in/out + 跑马灯)────────────────────
+     触发:`SessionRunStatus` ∈ {waiting_permission, waiting_ask, waiting_plan},
+     见 `src/app/session-pending.ts`。形态:**整行覆盖**——卡片撑满会话行,
+     底下那行标题被玻璃糊开并向右渐隐让位,一眼能看出「这个会话在等我」。 */
+  /* 待响应时行内的让步。用 `:has(.session-pending)` 而不是行上的 `is-pending` 类:
+     卡片离场(180ms slide-out)期间它仍在 DOM 里,标题应当保持变暗到最后一刻;
+     类名会先一步翻掉,观感就成了「字先亮回来,卡再滑走」。 */
+  .message-session-item:has(.session-pending) .message-session-title {
+    opacity: .5;
+    -webkit-mask-image: linear-gradient(90deg, #000 50%, transparent 94%);
+    mask-image: linear-gradient(90deg, #000 50%, transparent 94%);
+  }
+  /* 激活条抬到卡片之上:待响应时也必须一眼看出「哪个是我正在看的会话」。 */
+  .message-session-item:has(.session-pending)::before { z-index: 3; }
+
+  /* 卡片盒只负责定位与裁切。overflow:hidden 是 slide-in 的必要条件:
+     body 起始在 translateX(102%),被盒子右缘裁掉,观感才是「从右缘滑进来」,
+     而不是从侧栏外面飞进来。 */
+  .session-pending {
+    position: absolute; inset: 0; z-index: 2;
+    overflow: hidden; border-radius: var(--r-sm);
+    /* 点击穿透到会话按钮:点卡片 = 切到该会话去处理,卡片自己不拦事件。 */
+    pointer-events: none;
+    /* 卡片是纯装饰(aria-hidden):可读名挂在会话按钮的 aria-label 上。 */
+    --pc: var(--pending-ask);
+  }
+  .session-pending[data-kind="permission"] { --pc: var(--pending-permission); }
+  .session-pending[data-kind="ask"] { --pc: var(--pending-ask); }
+  .session-pending[data-kind="plan"] { --pc: var(--pending-plan); }
+  .session-pending-body {
+    position: absolute; inset: 0; z-index: 0;
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 8px;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--pc) 40%, transparent);
+    border-radius: var(--r-sm);
+    /* 半透明玻璃:语义色 16% 叠在 55% 的 surface 上,底下的标题透出来但不抢读。 */
+    background: color-mix(in srgb, var(--pc) 16%, color-mix(in srgb, var(--surface) 55%, transparent));
+    -webkit-backdrop-filter: blur(10px) saturate(150%);
+    backdrop-filter: blur(10px) saturate(150%);
+    color: color-mix(in srgb, var(--pc) 68%, var(--text));
+    font-size: var(--fs-xs); font-weight: 600;
+    /* 左侧语义条:静态,不参与动画(呼吸走下面的 ::before 光晕)。 */
+    box-shadow: inset 2.5px 0 0 var(--pc);
+  }
+  /* 呼吸光晕。动的是 opacity(合成器友好),**不是** box-shadow:这张卡会挂
+     几分钟,每帧重绘阴影是不可接受的常驻成本。z-index 分层保证光晕在文字
+     之下——它只是背景里的一团色,不能糊到字上。 */
+  .session-pending-body::before {
+    content: ""; position: absolute; inset: 0; z-index: 0;
+    border-radius: inherit; pointer-events: none;
+    background: radial-gradient(120% 100% at 0% 50%, color-mix(in srgb, var(--pc) 55%, transparent), transparent 62%);
+    opacity: .3;
+  }
+  .session-pending-icon, .session-pending-marquee { position: relative; z-index: 1; }
+  .session-pending-icon { flex: none; width: 13px; height: 13px; }
+
+  /* 跑马灯:轨道两段等长,位移恰好一个半轨宽(--mq-travel)→ 接缝处无跳变。
+     位移改成别的值就会在循环点闪一下,这是这类动画唯一的坑。 */
+  .session-pending-marquee {
+    position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 7%, #000 93%, transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 7%, #000 93%, transparent 100%);
+  }
+  .session-pending-track {
+    display: inline-flex; white-space: nowrap;
+    animation: session-pending-marquee var(--mq-duration, 5s) linear infinite;
+  }
+  /* 半轨短到不值得动(极窄行/退化尺寸)时静止显示,不空转。 */
+  .session-pending-track[data-run="false"] { animation: none; }
+  .session-pending-half { display: inline-flex; }
+  .session-pending-unit { display: inline-flex; align-items: center; }
+  .session-pending-dot { width: 4px; height: 4px; margin: 0 16px; border-radius: 50%; background: currentColor; opacity: .45; }
+  @keyframes session-pending-marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(calc(-1 * var(--mq-travel, 50%))); }
+  }
+
+  /* slide-in:从卡片盒右缘外侧滑到位。位移 102% 让 scale(.94) 的圆角也完全
+     出界,边缘不露头;opacity 只走前 45%,是「滑进来」不是「淡进来」。 */
+  .session-pending[data-phase="in"] .session-pending-body {
+    animation: session-pending-slide-in 240ms cubic-bezier(.16, .84, .28, 1) both;
+  }
+  @keyframes session-pending-slide-in {
+    0% { opacity: 0; transform: translateX(102%) scale(.94); }
+    45% { opacity: 1; }
+    100% { opacity: 1; transform: none; }
+  }
+  /* 静置:低频呼吸光晕。这张卡不像 toast 会自己消退(它代表一件还挂着的事),
+     所以用呼吸代替倒计时,提示「还等着」但不抢视线。 */
+  .session-pending[data-phase="hold"] .session-pending-body::before {
+    animation: session-pending-breathe 2.6s ease-in-out infinite;
+  }
+  @keyframes session-pending-breathe {
+    0%, 100% { opacity: .22; }
+    50% { opacity: .5; }
+  }
+  /* slide-out:原路滑回右缘,比入场快——响应完成后不留恋。 */
+  .session-pending[data-phase="out"] .session-pending-body {
+    animation: session-pending-slide-out 180ms cubic-bezier(.5, 0, .86, .32) both;
+  }
+  @keyframes session-pending-slide-out {
+    0% { opacity: 1; transform: none; }
+    100% { opacity: 0; transform: translateX(102%) scale(.94); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .session-pending-body, .session-pending-body::before { animation: none !important; }
+    .session-pending-track { animation: none !important; }
+    .session-pending-body::before { opacity: .3; }
+    .session-pending-marquee { -webkit-mask-image: none; mask-image: none; }
+    /* 关掉动画后 animationend 不会来,卡片会永远留在 DOM 里——组件侧有
+       定时器兜底(EXIT_FALLBACK_MS),这里只负责让它保持可见/隐形。 */
+    .session-pending[data-phase="in"] .session-pending-body { opacity: 1; transform: none; }
+    .session-pending[data-phase="out"] .session-pending-body { opacity: 0; transform: none; }
+  }
+}

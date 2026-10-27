@@ -1,0 +1,84 @@
+/* QAQ-Harness WebUI —— Markdown 排版与代码差异对比 (Markdown & Diff) */
+
+@layer components {
+  /* Diff(§9):固定行高 + 虚拟开窗。
+     行高 21px 必须与 DiffView.tsx 的 ROW_HEIGHT=21 严格一致;改一处必改两处。 */
+  .diff-list { display: grid; gap: 8px; }
+  /* clip 而非 hidden:hidden 会成为滚动容器,吞掉文件头 sticky 的滚动参照。 */
+  .diff-file { border: 1px solid var(--border); border-radius: var(--r-md); overflow: clip; }
+  .diff-file-head {
+    position: sticky; top: 0; z-index: 2;
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; min-height: 32px; padding: 0 10px;
+    background: var(--surface);
+    text-align: left;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .diff-file-head:hover { background: var(--surface-2); }
+  .diff-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-code); font-size: var(--fs-sm); }
+  .diff-stat { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-code); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+  .diff-status { color: var(--muted); font-family: var(--font-ui); }
+  .diff-binary { padding: 10px; color: var(--muted); font-size: var(--fs-sm); }
+  .diff-scroll { max-height: min(60vh, 480px); overflow: auto; }
+  .diff-rows { position: relative; font-family: var(--font-code); font-size: var(--fs-sm); tab-size: 4; }
+  /* 虚拟窗口:绝对定位 + translateY;min-width 由行宽估算给出(ch),横向滚动条稳定。 */
+  .diff-rows-window { position: absolute; top: 0; left: 0; }
+  .diff-row {
+    display: grid; grid-template-columns: 44px 44px 18px max-content;
+    height: 21px; line-height: 21px;
+    white-space: pre;
+  }
+  .diff-row.omit, .diff-row.hunkhead {
+    display: block; padding: 0 8px;
+    height: 21px; line-height: 21px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--muted); background: var(--surface); font-size: var(--fs-xs);
+  }
+  .diff-no { padding: 0 8px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; user-select: none; }
+  .diff-sign { text-align: center; color: var(--muted); user-select: none; }
+  .diff-content { padding-right: 8px; white-space: pre; min-width: 0; }
+  .diff-row.add .diff-content { background: var(--diff-add-bg); }
+  .diff-row.del .diff-content { background: var(--diff-del-bg); }
+  .diff-ws { background: var(--diff-add-word); }
+  .diff-row.del .diff-ws, .diff-content.del .diff-ws { background: var(--diff-del-word); }
+  .diff-cr { color: var(--muted); user-select: none; }
+  .diff-word { border-radius: var(--r-sm); }
+  .diff-word.add { background: var(--diff-add-word); }
+  .diff-word.del { background: var(--diff-del-word); }
+
+  /* Markdown(§7.5) */
+  .md-host { font-family: var(--font-prose); font-size: var(--md-body-size); line-height: var(--md-body-leading); font-weight: 400; overflow-wrap: anywhere; }
+  .md-host .md-block, .md-host .md-tail > :first-child { margin-top: 0; }
+  .md-host p { margin: 0 0 var(--space-4); }
+  .md-host h1, .md-host h2, .md-host h3, .md-host h4, .md-host h5, .md-host h6 { margin: var(--space-6) 0 var(--space-4); line-height: var(--md-heading-leading); font-weight: 600; }
+  .md-host h1 { font-size: var(--md-h1-size); }
+  .md-host h2 { font-size: var(--md-h2-size); }
+  .md-host h3 { font-size: var(--md-h3-size); }
+  .md-host h4 { font-size: var(--md-h4-size); }
+  .md-host h5 { font-size: var(--md-h5-size); }
+  .md-host h6 { font-size: var(--md-h6-size); color: var(--muted); }
+  .md-host h1, .md-host h2 { padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+  .md-host strong { font-weight: 600; }
+  .md-host ul, .md-host ol { margin: 6px 0; padding-left: 22px; list-style: disc; }
+  /* content-visibility on .turn clips markers outside its bounds. Reserve enough
+     space for decimal markers in the bundled monospace font, including 100+. */
+  .md-host ol { list-style: decimal; padding-left: max(2.5em, 5ch); }
+  .md-host li { margin: 2px 0; }
+  .md-host code { font-family: var(--font-code); font-size: var(--md-code-scale); background: var(--surface-code); border-radius: var(--r-sm); padding: .2em .4em; }
+  .md-host :is(h1, h2, h3, h4, h5, h6) code { font-size: inherit; }
+  .md-code-block { margin: 8px 0; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-code); overflow: hidden; }
+  .md-code-head { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); }
+  .md-copy-code { min-width: 48px; min-height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-xs); }
+  .md-copy-code:hover { background: var(--surface-2); color: var(--text); }
+  .md-host pre { font-size: var(--md-code-scale); line-height: 1.45; padding: var(--space-4); overflow-x: auto; overflow-wrap: normal; }
+  .md-host .md-code-block > pre { margin: 0; background: transparent; border: 0; border-radius: 0; }
+  .md-host pre code { font-size: 100%; line-height: inherit; background: none; padding: 0; }
+  .md-host blockquote { margin: 8px 0; padding: 2px 12px; border-left: 2px solid var(--border-strong); color: var(--muted); }
+  .md-host table { border-collapse: collapse; margin: 0 0 var(--space-4); font-size: inherit; line-height: inherit; }
+  .md-host th, .md-host td { border: 0; border-bottom: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+  .md-host th { color: var(--muted); font-weight: 600; }
+  .md-host thead tr:last-child th { border-bottom-color: var(--border-strong); }
+  .md-host a { color: var(--accent); text-decoration: underline; }
+  .md-host img { max-width: 100%; border-radius: var(--r-md); }
+  .md-host hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+  .md-image-link { color: var(--accent); font-size: var(--fs-xs); word-break: break-all; }
+}

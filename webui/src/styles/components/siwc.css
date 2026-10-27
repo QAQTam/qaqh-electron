@@ -1,0 +1,178 @@
+/* Sign in with ChatGPT：账户卡 / 套餐标识 / 限流提示。
+ *
+ * 语义与合规判定在 `src/siwc/{brand,state}.ts`（尤其「sharing 为假时不得显示套餐标识」），
+ * 本文件只管外观。官方图形资产**默认不存在**（见 `public/siwc/README.md`），
+ * 缺资产时按钮自动退化为纯文字，样式同样成立。
+ *
+ * 与设置页其它分区共用 token（`tokens/base.css`），不引入新变量。
+ */
+
+@layer components {
+  /* ── 登录按钮与主行动 ────────────────────────────────────────────── */
+  .siwc-signin,
+  .siwc-limit__primary,
+  .siwc-firstrun__primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: var(--control-height);
+    padding: 0 var(--space-4);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-pill);
+    background: var(--text);
+    color: var(--surface);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .siwc-signin:hover,
+  .siwc-limit__primary:hover,
+  .siwc-firstrun__primary:hover {
+    background: color-mix(in srgb, var(--text) 88%, var(--surface));
+  }
+
+  .siwc-signin:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .siwc-signin--block {
+    width: 100%;
+  }
+
+  /* 官方 SVG 自带留白，固定成图标尺寸即可（缺失时整块不渲染）。 */
+  .siwc-signin__mark {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+
+  /* ── 账户卡 ──────────────────────────────────────────────────────── */
+  .siwc-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-panel);
+    background: var(--surface-2);
+  }
+
+  .siwc-card__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .siwc-card__title {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .siwc-card__body {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.92em;
+  }
+
+  .siwc-card__error {
+    margin: 0;
+    color: var(--err);
+    font-size: 0.92em;
+  }
+
+  .siwc-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  /* 用量入口的图标与文案同高对齐。 */
+  .siwc-usage-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  /* ── 套餐标识（只在 sharing 为真时渲染）──────────────────────────── */
+  .siwc-badge {
+    padding: 2px var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    font-size: 0.78em;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  .siwc-badge--plan {
+    color: var(--ok);
+    border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+  }
+
+  .siwc-plan-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--muted);
+    font-size: 0.85em;
+  }
+
+  /* ── 限流态（Manage usage 为主行动）──────────────────────────────── */
+  .siwc-limit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+    border-radius: var(--radius-panel);
+    background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  }
+
+  .siwc-limit__title {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .siwc-limit__body {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.92em;
+  }
+
+  .siwc-limit__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  /* ── 首次启用套餐的一次性欢迎卡 ──────────────────────────────────── */
+  .siwc-firstrun {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-dialog);
+    background: var(--surface);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .siwc-firstrun__title {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .siwc-firstrun__body {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.92em;
+  }
+
+  .siwc-firstrun__primary {
+    align-self: flex-start;
+  }
+}

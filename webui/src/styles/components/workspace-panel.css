@@ -1,0 +1,202 @@
+/* QAQ-Harness WebUI —— 工作区右栏与上下文压缩卡片 (Workspace & Context) */
+
+@layer components {
+  /* ── 压缩:聊天区卡片 + 上下文面板 ─────────────────────────────────────── */
+  .compact-card {
+    display: grid; gap: 6px;
+    width: min(var(--content-width), 100%); margin: 0 auto;
+    padding: 10px 12px;
+    border: 1px solid var(--border); border-top: 0;
+    background: var(--surface-2);
+    color: var(--muted); font-size: var(--fs-xs);
+  }
+  .compact-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .compact-card-head strong { color: var(--text); font-weight: 600; }
+  .compact-card-progress { margin-left: auto; white-space: nowrap; }
+  /* running 用脉冲点示意进行中,避免在正文里塞动画图标 */
+  .compact-card-mark { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+  .compact-card.running .compact-card-mark { animation: compact-pulse 1.2s ease-in-out infinite; }
+  .compact-card.done .compact-card-mark,
+  .compact-card.skipped .compact-card-mark { background: var(--muted); }
+  .compact-card.failed .compact-card-mark { background: var(--err); }
+  .compact-card.failed .compact-card-head strong { color: var(--err); }
+  /* 失败/跳过的具体原因(线上 `CompactFinished.reason`):状态词做标题,原因另起一行。 */
+  .compact-card-reason {
+    margin: 0; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .compact-card.failed .compact-card-reason { color: var(--err); }
+  .compact-card-summary {
+    max-height: 168px; overflow: auto;
+    margin: 0; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: var(--r-sm);
+    background: var(--surface); color: var(--text);
+    font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  @keyframes compact-pulse { 0%, 100% { opacity: .35 } 50% { opacity: 1 } }
+
+  .composer-context-wrap { position: relative; }
+  .composer-context-trigger {
+    padding: 2px 6px; border: 1px solid transparent; border-radius: var(--r-sm);
+    color: inherit; font: inherit; background: transparent;
+    transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  }
+  .composer-context-trigger:hover { background: var(--surface-2); border-color: var(--border); }
+  .composer-context-menu {
+    position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 30;
+    display: grid; gap: 8px;
+    /* 宽度与表面来自 `.composer-menu`(composer.css:260px/260px 上限),这里只管内部排版。 */
+    padding: 12px;
+    text-align: left;
+    /* `.composer-identity > span` 是 `white-space: nowrap`(身份行里的 chip 不许折行),
+       弹层挂在其中一个 chip 里面就会**继承**它:说明文字与按钮于是按整行最小宽度
+       排版,撑出弹层、右侧被裁掉一半。弹层是块状文档流,必须把 nowrap 在这里止住。 */
+    white-space: normal;
+  }
+  /* grid 子项默认 `min-width: auto`,长 token(路径/模型名)会把轨道撑破。 */
+  .composer-context-menu > * { min-width: 0; }
+  .composer-context-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .composer-context-head strong { color: var(--text); font-size: var(--fs-sm); }
+  .composer-context-bar { display: block; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+  .composer-context-bar > span { display: block; height: 100%; background: var(--accent); }
+  .composer-context-note { margin: 0; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+  .composer-context-window { margin: 0; color: var(--muted); font-variant-numeric: tabular-nums; opacity: .9; overflow-wrap: anywhere; }
+  .composer-context-breakdown { display: grid; gap: 2px; padding: 8px 10px; border: 1px dashed var(--border); border-radius: var(--r-sm); }
+  .composer-context-breakdown strong { color: var(--muted); font-weight: 500; }
+  .composer-context-breakdown small { color: var(--muted); opacity: .8; line-height: 1.4; overflow-wrap: anywhere; }
+  .composer-context-compact {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    width: 100%; min-height: 32px; padding: 0 12px;
+    border: 1px solid var(--border-strong); border-radius: var(--r-md);
+    background: var(--surface-2); color: var(--text); font-size: var(--fs-xs);
+  }
+  /* `.composer-menu > button`(composer.css) 是 `display: grid`:图标与文字会被拆成
+     上下两行。这个按钮要的是横排,用同特异度的选择器把它扳回来。 */
+  .composer-menu > button.composer-context-compact {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    width: 100%; min-height: 32px; padding: 0 12px;
+    border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  }
+  .composer-context-compact:hover:not(:disabled) { background: var(--surface); }
+  .composer-context-compact:disabled { opacity: .55; cursor: not-allowed; }
+  .composer-context-compact svg { width: 14px; height: 14px; }
+
+  /* ── 工作区集合右栏:占会话列第 2 列(真实列宽,不覆盖正文) ─────────────── */
+  .workspace-panel {
+    grid-column: 2; grid-row: 1 / -1;
+    justify-self: end; align-self: stretch;
+    display: flex; flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .workspace-panel-surface {
+    flex: 1; min-height: 0;
+    width: var(--workspace-panel-width);
+    height: 100%;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    background: var(--surface);
+    transition: width var(--dur-layout) var(--ease);
+  }
+  /* 收起保留窄栏入口，正文拿回列宽；入口不随内容刷新移动。 */
+  .workspace-panel.collapsed .workspace-panel-surface {
+    width: var(--workspace-panel-collapsed-width, 40px);
+  }
+  .workspace-panel.collapsed .workspace-panel-head > span { display: none; }
+  html.tauri .workspace-panel-surface {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .workspace-panel-head {
+    display: flex; align-items: center; gap: 8px;
+    flex: none; min-height: 40px; padding: 0 var(--space-3);
+    color: var(--muted); font-size: var(--fs-sm);
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+    transition: background-color var(--dur-fast) var(--ease),
+                border-bottom-color var(--dur-fast) var(--ease);
+  }
+  .workspace-panel.collapsed .workspace-panel-head {
+    border-bottom-color: transparent;
+  }
+  .workspace-panel-head:hover { background: var(--surface-2); }
+  .workspace-panel-head svg { width: 14px; height: 14px; }
+  .todo-count {
+    margin-left: auto;
+    color: var(--text); font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+  }
+  .workspace-panel-chevron {
+    margin-left: auto;
+    display: inline-grid; place-items: center;
+  }
+  .workspace-panel-chevron svg {
+    width: 12px; height: 12px;
+    transition: transform var(--dur-layout) var(--ease);
+  }
+  .workspace-panel:not(.collapsed) .workspace-panel-chevron svg { transform: rotate(180deg); }
+  .workspace-panel-body {
+    display: grid; grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden;
+    width: 100%;
+    opacity: 1;
+    transform: translateY(0);
+    transition: grid-template-rows var(--dur-layout) var(--ease),
+                opacity var(--dur-enter) var(--ease),
+                transform var(--dur-enter) var(--ease);
+  }
+  .workspace-panel.collapsed .workspace-panel-body {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: grid-template-rows var(--dur-layout) var(--ease),
+                opacity var(--dur-fast) var(--ease),
+                transform var(--dur-fast) var(--ease);
+  }
+  .workspace-panel-body-inner { min-height: 0; overflow: auto; }
+  .workspace-panel-section-head {
+    display: flex; align-items: center; gap: 8px; padding: 12px 14px 4px;
+    color: var(--muted); font-size: var(--fs-xs); font-weight: 600;
+  }
+  .workspace-panel-section-head svg { width: 14px; height: 14px; }
+  .todo-empty {
+    padding: 14px 12px;
+    color: var(--muted); font-size: var(--fs-sm);
+  }
+  .todo-list {
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px; margin: 0; list-style: none;
+  }
+  .todo-row {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--r-md);
+    font-size: var(--fs-sm); line-height: 1.5;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .todo-row:hover { background: var(--surface-2); }
+  .todo-dot {
+    flex: none; width: 14px; height: 14px;
+    margin-top: 4px;
+    border: 1.5px solid var(--muted); border-radius: 50%;
+  }
+  .todo-title { min-width: 0; overflow-wrap: anywhere; color: var(--text); transition: color var(--dur-fast) var(--ease); }
+  .todo-row.st-completed .todo-dot { display: grid; place-items: center; color: var(--ok); border: 0; }
+  .todo-row.st-completed .todo-dot svg { width: 14px; height: 14px; }
+  .todo-row.st-completed .todo-title { color: var(--muted); }
+  .todo-row.st-cancelled .todo-dot { background: var(--err); border-color: var(--err); opacity: 0.7; }
+  .todo-row.st-cancelled .todo-title { color: var(--muted); }
+  .todo-row.st-in_progress .todo-dot {
+    width: 14px; height: 14px; margin-top: 2px;
+    border: none; color: var(--accent);
+    animation: qaqh-spin 1s linear infinite;
+    display: inline-grid; place-items: center;
+  }
+  .todo-row.st-in_progress .todo-dot svg { width: 12px; height: 12px; }
+  .todo-row.st-in_progress .todo-title { color: var(--text); }
+}

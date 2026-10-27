@@ -1,0 +1,196 @@
+/* 强度卡（Codex 风格）：档位名 + 模型行 + 可拖的分段轨道。
+ *
+ * 视觉对齐 Codex 桌面端截图：白卡 + 轻阴影，档位名居中且按级别上色（普通 = 绿，
+ * Ultra = 紫），轨道是"填充 + 刻度点 + 白色拇指"。Ultra 那一档额外铺星点渐变。
+ *
+ * 颜色只用两档（不是每档一色）：颜色表达"有多猛"，档位名已说清是哪一档；
+ * 每档一个颜色会让"绿=高"在一屏里出现五种绿，反而认不出强弱。
+ */
+
+@layer components {
+  /* ── 触发器（控制条上的 chip）───────────────────────────────────── */
+  .effort-trigger > span {
+    font-weight: 500;
+  }
+  .effort-tone-normal {
+    color: var(--ok);
+  }
+  .effort-tone-ultra {
+    color: #7c3aed;
+  }
+
+  /* ── 卡片 ─────────────────────────────────────────────────────── */
+  /* 复用 `.composer-menu` 的定位（bottom: 100% + 8px / left: 0 / z-index）。 */
+  .effort-card {
+    width: 292px;
+    padding: 12px;
+    gap: 10px;
+    border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-panel);
+  }
+
+  .effort-card__head {
+    display: grid;
+    grid-template-columns: 20px 1fr 20px;
+    align-items: center;
+    gap: 6px;
+  }
+  .effort-card__tier-icon {
+    display: inline-flex;
+    color: var(--muted);
+  }
+  .effort-card__tier-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+  .effort-card__tier {
+    text-align: center;
+    font-size: var(--fs-md);
+    font-weight: 600;
+    /* 档位名换色时不要闪一下：颜色/背景都走同一时长。 */
+    transition: color var(--dur-fast) var(--ease);
+  }
+  .effort-card__reset {
+    justify-self: end;
+    color: var(--muted);
+  }
+  .effort-card__reset svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .effort-card__model {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    padding: 4px 8px;
+    border-radius: var(--radius-control);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .effort-card__model:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .effort-card__model svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  /* ── 模型列表 / 自定义输入 ─────────────────────────────────────── */
+  .effort-card__models {
+    display: grid;
+    gap: 2px;
+    max-height: 42vh;
+    overflow-y: auto;
+    margin: 0 -4px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--surface);
+  }
+  .effort-card__models > button {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: var(--radius-control);
+    text-align: left;
+  }
+  .effort-card__models > button:hover {
+    background: var(--surface-2);
+  }
+  .effort-card__models > button.selected {
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    color: var(--accent);
+  }
+  .effort-card__models > button small {
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+  }
+  .effort-card__custom {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .effort-card__custom .field-input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* ── 轨道 ─────────────────────────────────────────────────────── */
+  .effort-track {
+    position: relative;
+    height: 18px;
+    margin: 2px 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface-2);
+    cursor: pointer;
+    touch-action: none; /* 触屏拖动不要被页面滚动抢走 */
+    outline: none;
+  }
+  .effort-track:focus-visible {
+    box-shadow: 0 0 0 2px var(--focus-ring);
+  }
+
+  .effort-track__fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: var(--radius-pill);
+    background: var(--ok);
+    transition: width var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+  }
+  /* Ultra：紫→深蓝渐变 + 一层星点（截图里那一档的观感）。 */
+  .effort-track.effort-tone-ultra .effort-track__fill {
+    background:
+      radial-gradient(circle at 18% 40%, rgb(255 255 255 / 70%) 0 1px, transparent 1.4px),
+      radial-gradient(circle at 52% 70%, rgb(255 255 255 / 55%) 0 1px, transparent 1.4px),
+      radial-gradient(circle at 78% 30%, rgb(255 255 255 / 60%) 0 1px, transparent 1.4px),
+      linear-gradient(90deg, #4c1d95 0%, #7c3aed 55%, #a855f7 100%);
+  }
+  .effort-track.is-dragging .effort-track__fill,
+  .effort-track.is-dragging .effort-track__thumb {
+    transition: none; /* 拖动跟手：别让过渡把指针甩开 */
+  }
+
+  .effort-track__dot {
+    position: absolute;
+    top: 50%;
+    width: 4px;
+    height: 4px;
+    margin: -2px 0 0 -2px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--text) 18%, transparent);
+    pointer-events: none;
+  }
+  .effort-track.effort-tone-ultra .effort-track__dot {
+    background: rgb(255 255 255 / 45%);
+  }
+
+  .effort-track__thumb {
+    position: absolute;
+    top: 50%;
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgb(0 0 0 / 28%);
+    transition: left var(--dur-fast) var(--ease);
+    pointer-events: none;
+  }
+
+  .effort-card__note {
+    margin: 0;
+    color: var(--muted);
+    font-size: var(--fs-xs);
+  }
+  .effort-card__note.is-error {
+    color: var(--err);
+  }
+}

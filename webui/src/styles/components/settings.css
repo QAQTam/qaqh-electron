@@ -1,0 +1,235 @@
+/* QAQ-Harness WebUI —— 设置页与设备配对面板 (Settings & Pairing) */
+
+@layer components {
+  /* 设置页占满工作区,与消息/工具保持同一层级。 */
+  .settings-page {
+    display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-row: 1; min-width: 0; min-height: 0;
+    background: var(--bg);
+  }
+  .settings-head {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 58px; padding: 10px clamp(20px, 3vw, 36px);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .settings-head h1 { font-size: var(--fs-lg); font-weight: 600; }
+  .settings-sub { color: var(--muted); font-size: var(--fs-xs); }
+
+  .settings-state {
+    display: flex; align-items: center; gap: 8px;
+    padding: 20px 16px; color: var(--muted); font-size: var(--fs-sm);
+  }
+  .settings-state.is-error { color: var(--err); }
+
+  .settings-body {
+    width: min(1020px, 100%); min-height: 0; margin-inline: auto;
+    padding: 24px clamp(20px, 3vw, 36px); overflow: auto;
+    display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 0 32px;
+  }
+  /* 左侧分区导航:分组标题 + 点击切换;pane 内容超长时仍粘在滚动容器顶部。 */
+  .settings-nav { display: grid; gap: 2px; align-content: start; position: sticky; top: 0; align-self: start; }
+  .settings-nav-group {
+    margin: 10px 0 2px; padding: 0 10px;
+    color: var(--muted); font-size: var(--fs-xs); font-weight: 500;
+    letter-spacing: 0.05em;
+  }
+  .settings-nav-group:first-child { margin-top: 0; }
+  .settings-nav-item {
+    text-align: left; padding: 6px 10px; border-radius: var(--r-md);
+    color: var(--muted); font-size: var(--fs-sm);
+    transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .settings-nav-item:hover { background: var(--surface-2); color: var(--text); }
+  .settings-nav-item.active {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent); font-weight: 500;
+  }
+  .settings-content { min-width: 0; max-width: 740px; }
+  .settings-section { padding: 0 0 18px; }
+  .settings-section + .settings-section { padding-top: 2px; }
+  .settings-section h3 { font-size: var(--fs-md); font-weight: 600; }
+  .settings-section-desc { margin-top: 2px; color: var(--muted); font-size: var(--fs-xs); }
+  .settings-fields {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px;
+    margin-top: 10px;
+  }
+  .field { display: grid; gap: 4px; font-size: var(--fs-sm); }
+  .field.wide { grid-column: 1 / -1; }
+  .field-label { color: var(--muted); font-size: var(--fs-xs); font-family: var(--font-mono); }
+  .field-hint { color: var(--muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+  .field-input {
+    min-height: 34px; padding: 5px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-control);
+    font-size: var(--fs-sm);
+    transition: border-color var(--dur-fast) var(--ease);
+  }
+  /* 表单输入控件宽度分层约束:克制工整、杜绝大屏无限拉伸 */
+  .field .field-input { width: 100%; max-width: 380px; }
+  .field.wide .field-input { max-width: 580px; }
+  .field.compact .field-input { max-width: 160px; }
+  .field select.field-input { max-width: 260px; }
+  .field.wide select.field-input { max-width: 380px; }
+  .field .secret-input { width: 100%; max-width: 580px; }
+  .field-input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-color: var(--focus-ring); }
+  .field-input[aria-invalid="true"] { border-color: var(--err); }
+  .field-input:disabled { color: var(--muted); background: var(--surface-2); }
+  .field:has(.field-hint.is-error) .field-input,
+  .field:has(.field-hint.is-error) select,
+  .field:has(.field-hint.is-error) input { border-color: var(--err); }
+  .field:has(.field-hint.is-error) .field-input:focus-visible,
+  .field:has(.field-hint.is-error) select:focus-visible,
+  .field:has(.field-hint.is-error) input:focus-visible { outline-color: var(--err); }
+  .field.switch { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
+
+  .tier-list { grid-column: 1 / -1; display: grid; gap: 8px; max-width: 620px; }
+  .tier {
+    display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--surface);
+    cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  }
+  .tier:hover { background: var(--surface-2); }
+  .tier.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
+  .tier.dangerous.active { border-color: var(--err); background: color-mix(in srgb, var(--err) 5%, var(--surface)); }
+  .tier-name { font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: 600; }
+  .tier-desc { color: var(--muted); font-size: var(--fs-xs); }
+  .bypass-confirm {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    max-width: 620px;
+    margin-top: 10px; padding: 10px 12px;
+    border: 1px solid var(--err);
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--err) 6%, var(--surface));
+    color: var(--err); font-size: var(--fs-sm);
+  }
+  .bypass-ack { width: 120px; color: var(--text); }
+
+  .profile-list { grid-column: 1 / -1; display: grid; gap: 6px; max-width: 580px; }
+  .profile-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--surface);
+    font-size: var(--fs-sm);
+  }
+  .profile-row.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+  .profile-name { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+  .profile-active-tag { flex: none; font-size: var(--fs-xs); color: var(--accent); font-weight: 500; }
+  .profile-row .ghost-mini { margin-left: auto; }
+  .profile-row .ghost-mini.is-danger { margin-left: 0; color: var(--err); }
+  .profile-create { display: flex; align-items: center; gap: 8px; max-width: 380px; width: 100%; }
+  .profile-create .field-input { flex: 1; min-width: 0; max-width: 280px; }
+  .profile-create .ghost-mini { flex: none; height: 34px; padding-inline: 14px; }
+
+  /* 密钥输入 + 显隐切换 */
+  .secret-input { position: relative; display: flex; }
+  .secret-input .field-input { flex: 1; min-width: 0; padding-right: 34px; }
+  .secret-eye { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; }
+  .secret-eye svg { width: 14px; height: 14px; }
+  .field-hint.is-error { color: var(--err); }
+
+  /* 设备配对 */
+  .field-hint.is-warn { color: var(--warn); }
+  /* 局域网模式面板:状态先行,配置表单只在确认态展开,别和二维码抢注意力。 */
+  .lan-block {
+    display: grid; gap: 8px; max-width: 620px;
+    padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-panel);
+    background: var(--surface);
+  }
+  .lan-head { display: flex; align-items: center; gap: 8px; }
+  .lan-title { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
+  .lan-title svg { width: 14px; height: 14px; color: var(--muted); }
+  .lan-head .ghost-mini { margin-left: auto; }
+  .lan-badge {
+    padding: 1px 8px; border-radius: var(--radius-pill);
+    font-family: var(--font-mono); font-size: var(--fs-xs);
+    background: var(--surface-2); color: var(--muted);
+  }
+  .lan-badge.on { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+  .lan-badge.off { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+  .lan-badge.pending { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  .lan-grid {
+    display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px;
+    margin: 0; font-size: var(--fs-xs); color: var(--muted);
+  }
+  .lan-grid dd { margin: 0; overflow-wrap: anywhere; }
+  .lan-grid b { color: var(--text); font-family: var(--font-mono); font-weight: 500; }
+  .lan-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .lan-confirm { display: grid; gap: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+  .lan-confirm-copy { margin: 0; font-size: var(--fs-xs); color: var(--muted); line-height: 1.6; }
+  .lan-confirm-copy.is-warn { color: var(--warn); }
+  .lan-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+  .lan-form .lan-actions { grid-column: 1 / -1; }
+  .scope-list { display: grid; gap: 6px; max-width: 620px; }
+  .scope {
+    display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: var(--radius-control);
+    background: var(--surface); cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  }
+  .scope:hover { background: var(--surface-2); }
+  .scope.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
+  .scope.dangerous.active { border-color: var(--err); background: color-mix(in srgb, var(--err) 5%, var(--surface)); }
+  .scope-name { font-family: var(--font-mono); font-size: var(--fs-sm); }
+  .scope-desc { color: var(--muted); font-size: var(--fs-xs); }
+  .pairing-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; }
+  .pairing-count { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+  .pairing-qr {
+    display: flex; align-items: center; gap: 14px; max-width: 620px;
+    padding: 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-panel);
+    background: var(--surface);
+  }
+  .pairing-qr img { flex: none; border-radius: var(--r-sm); image-rendering: pixelated; }
+  .pairing-qr-note { color: var(--muted); font-size: var(--fs-xs); line-height: 1.6; }
+  .pairing-expired { color: var(--warn); }
+  .devices-block { display: grid; gap: 8px; max-width: 620px; }
+  .devices-head { display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-sm); color: var(--muted); }
+  .devices-table .scope-badge {
+    display: inline-block; padding: 0 6px; border-radius: var(--radius-pill);
+    font-family: var(--font-mono); font-size: var(--fs-xs);
+    background: var(--surface-2); color: var(--muted);
+  }
+  .devices-table .scope-badge.admin { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
+  .devices-table .scope-badge.interact { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  .devices-actions { text-align: right; }
+  .devices-confirm { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); font-size: var(--fs-xs); }
+
+  .readonly-grid {
+    display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px;
+    margin: 10px 0;
+    font-size: var(--fs-xs); color: var(--muted);
+  }
+  /* 只读区自带表格:占满整行,别被两列字段网格挤成半宽。 */
+  .settings-fields > .readonly-grid,
+  .settings-fields > .readonly-table { grid-column: 1 / -1; }
+  .readonly-grid b { color: var(--text); font-family: var(--font-mono); font-weight: 500; }
+  .readonly-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+  .readonly-table th { text-align: left; color: var(--muted); font-weight: 500; padding: 2px 8px 2px 0; }
+  .readonly-table td { padding: 2px 8px 2px 0; overflow-wrap: anywhere; }
+}
+
+/* Section 标题行右侧旁注（`Section` 的 `aside`）。
+ * 未给 aside 时 DOM 里只有 h3，与历史完全一致——这里只补新形状的样式。 */
+.settings-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.settings-section-aside {
+  color: var(--warn);
+  font-size: 0.85em;
+  text-align: right;
+}

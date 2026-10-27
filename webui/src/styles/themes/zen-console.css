@@ -1,0 +1,279 @@
+/* QAQ-Harness WebUI —— 主题范本: Zen Console (极简工业终端 / 零动效 · 显式指示流)
+ * 特征:
+ *  1. 零/微动画：阻断所有旋转(spin)、扫光(shimmer)、跑马灯(marquee)与缩放飞入动画，交互瞬切响应。
+ *  2. 显式指示标志：使用清晰的文本状态标([RUNNING], [DONE], [FAIL])与语义符号，替代依赖动效的状态表达。
+ *  3. 闪动圆点(Hardware LED Pulse)：仅使用低频 1Hz 单色硬闪烁圆点作为“还在工作中”的权威活性指示灯。
+ *  4. 工业工整布局：收紧圆角(2-4px)，移除高斯模糊与扩散阴影，采用高对比实色与纯净线框。
+ */
+
+:root[data-theme-preset="zen-console"],
+html.theme-zen-console {
+  /* 几何拓扑: 收紧圆角为工整微弧度，呈现工业设备/控制台的高秩序感 */
+  --radius-control: 2px;
+  --radius-panel: 4px;
+  --radius-dialog: 4px;
+  --radius-pill: 4px;
+  --r-sm: 2px;
+  --r-md: 3px;
+  --r-lg: 4px;
+  --r-input: 2px;
+
+  /* 动效阻断: 彻底清除缓动插值，实现 0ms 物理瞬切 */
+  --dur-fast: 0s !important;
+  --dur: 0s !important;
+  --dur-out: 0s !important;
+  --dur-enter: 0s !important;
+  --dur-layout: 0s !important;
+  --ease: steps(1) !important;
+
+  /* 移除阴影与模糊，采用清晰纯净实底 */
+  --shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.15) !important;
+  --shadow-soft: none !important;
+  --shadow-glass: none !important;
+  --glass-blur: 0px !important;
+  --glass-bg: var(--surface) !important;
+}
+
+/* 浅色工程白板色板 */
+:root[data-theme-preset="zen-console"]:not([data-theme="dark"]),
+html.theme-zen-console:not([data-theme="dark"]) {
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --surface-2: #eaedf2;
+  --surface-user: #e8ebf0;
+  --surface-code: #f0f2f5;
+  --border: #d4d8e2;
+  --border-strong: #8b93a4;
+  --text: #14171d;
+  --muted: #5e6677;
+  --accent: #0f62fe;
+  --ok: #0e7039;
+  --warn: #8a5700;
+  --err: #ba1a2e;
+}
+
+/* 深色工业黑曜石色板 */
+:root[data-theme-preset="zen-console"][data-theme="dark"],
+html.theme-zen-console[data-theme="dark"] {
+  --bg: #0e1013;
+  --surface: #15181d;
+  --surface-2: #1e2229;
+  --surface-user: #1c2026;
+  --surface-code: #121418;
+  --border: #2d333e;
+  --border-strong: #616c80;
+  --text: #f0f2f5;
+  --muted: #919bb0;
+  --accent: #4589ff;
+  --ok: #24a148;
+  --warn: #f1c21b;
+  --err: #fa4d56;
+}
+
+/* ── 核心动效拦截与阻断 (Zero Animation Enforcement) ────────────────────── */
+
+:root[data-theme-preset="zen-console"] *,
+:root[data-theme-preset="zen-console"] *::before,
+:root[data-theme-preset="zen-console"] *::after,
+html.theme-zen-console *,
+html.theme-zen-console *::before,
+html.theme-zen-console *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transition-duration: 0s !important;
+}
+
+/* 取消所有旋转菊花动效 */
+:root[data-theme-preset="zen-console"] .tools-refresh-icon.spinning,
+:root[data-theme-preset="zen-console"] .tab-dot.run,
+:root[data-theme-preset="zen-console"] .qaqh-spin,
+html.theme-zen-console .tools-refresh-icon.spinning,
+html.theme-zen-console .tab-dot.run,
+html.theme-zen-console .qaqh-spin {
+  animation: none !important;
+  transform: none !important;
+}
+
+/* 取消文字走马灯滚动，转为工整静态展示 */
+:root[data-theme-preset="zen-console"] .session-pending-track,
+:root[data-theme-preset="zen-console"] .session-pending-body,
+:root[data-theme-preset="zen-console"] .session-pending-body::before,
+html.theme-zen-console .session-pending-track,
+html.theme-zen-console .session-pending-body,
+html.theme-zen-console .session-pending-body::before {
+  animation: none !important;
+  transform: none !important;
+}
+
+/* 取消所有浮层/抽屉飞入缩放过渡 */
+:root[data-theme-preset="zen-console"] .select-content,
+:root[data-theme-preset="zen-console"] .fluent-tooltip,
+:root[data-theme-preset="zen-console"] .context-menu,
+:root[data-theme-preset="zen-console"] .toast,
+html.theme-zen-console .select-content,
+html.theme-zen-console .fluent-tooltip,
+html.theme-zen-console .context-menu,
+html.theme-zen-console .toast {
+  animation: none !important;
+  transform: none !important;
+}
+
+/* 折叠区域瞬间就位 */
+:root[data-theme-preset="zen-console"] .collapse,
+html.theme-zen-console .collapse {
+  transition: none !important;
+}
+
+/* ── 闪动的圆点：工作中唯一活跃指示器 (Blinking Status Dot) ──────────────── */
+
+@keyframes zen-dot-blink {
+  0%, 49.9% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* 1. 会话标签栏工作态：移除旋转边框，替换为单色闪烁状态指示灯 */
+:root[data-theme-preset="zen-console"] .tab-dot.run,
+html.theme-zen-console .tab-dot.run {
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 50% !important;
+  border: none !important;
+  background: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--surface);
+  animation: zen-dot-blink 1s steps(1) infinite !important;
+}
+
+/* 2. 流光文本改造：停用 background-clip 渐变动画，追加工作中的闪动圆点 */
+:root[data-theme-preset="zen-console"] .text-shimmer-glow,
+html.theme-zen-console .text-shimmer-glow {
+  animation: none !important;
+  background: none !important;
+  -webkit-background-clip: unset !important;
+  background-clip: unset !important;
+  color: var(--text) !important;
+  opacity: 1 !important;
+}
+
+:root[data-theme-preset="zen-console"] .text-shimmer[data-active="true"]::after,
+html.theme-zen-console .text-shimmer[data-active="true"]::after {
+  content: " ●";
+  display: inline-block;
+  color: var(--accent);
+  font-size: 9px;
+  vertical-align: middle;
+  margin-left: 4px;
+  animation: zen-dot-blink 1s steps(1) infinite;
+}
+
+/* 3. Composer 生成态工作点 */
+:root[data-theme-preset="zen-console"] .composer-live-dot,
+html.theme-zen-console .composer-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: zen-dot-blink 1s steps(1) infinite !important;
+}
+
+/* ── 显式指示标志 (Explicit Status Badges & Glyphs) ─────────────────────── */
+
+/* 1. 工具卡片执行状态：显式方角文本标替代旋转菊花 */
+:root[data-theme-preset="zen-console"] .tool-state,
+html.theme-zen-console .tool-state {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-terminal);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+
+:root[data-theme-preset="zen-console"] .step-row.tool.st-running .tool-state::before,
+html.theme-zen-console .step-row.tool.st-running .tool-state::before {
+  content: "[RUN] ";
+  color: var(--accent);
+  font-weight: 800;
+}
+
+:root[data-theme-preset="zen-console"] .step-row.tool.st-running .tool-elapsed::before,
+html.theme-zen-console .step-row.tool.st-running .tool-elapsed::before {
+  content: "● ";
+  color: var(--accent);
+  font-size: 8px;
+  vertical-align: 1px;
+  animation: zen-dot-blink 1s steps(1) infinite;
+}
+
+:root[data-theme-preset="zen-console"] .tool-state.err,
+html.theme-zen-console .tool-state.err {
+  color: var(--err);
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, var(--surface));
+}
+
+/* 2. 思考中状态：显式 [WORKING] / [THOUGHTS] 终端标识 */
+:root[data-theme-preset="zen-console"] .timeline-row.thinking .timeline-label::before,
+html.theme-zen-console .timeline-row.thinking .timeline-label::before {
+  content: "◼ ";
+  color: var(--accent);
+  font-size: 10px;
+}
+
+/* 3. 待处理审批与卡片：显式方角徽标 */
+:root[data-theme-preset="zen-console"] .session-pending-pill,
+html.theme-zen-console .session-pending-pill {
+  border-radius: 2px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── 工业布局与线框规范 (Industrial Layout & Surface) ──────────────────── */
+
+:root[data-theme-preset="zen-console"] #top,
+html.theme-zen-console #top {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+:root[data-theme-preset="zen-console"] .global-nav,
+html.theme-zen-console .global-nav {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+:root[data-theme-preset="zen-console"] .message-sidebar,
+html.theme-zen-console .message-sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+:root[data-theme-preset="zen-console"] .message-session-item,
+html.theme-zen-console .message-session-item {
+  border-radius: 2px;
+  border-left: 2px solid transparent;
+}
+
+:root[data-theme-preset="zen-console"] .message-session-item.active,
+html.theme-zen-console .message-session-item.active {
+  background: var(--surface-2);
+  border-left-color: var(--accent);
+}
+
+:root[data-theme-preset="zen-console"] .composer-surface,
+html.theme-zen-console .composer-surface {
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="zen-console"] .turn-user .bubble,
+html.theme-zen-console .turn-user .bubble {
+  border-radius: 2px;
+  border: 1px solid var(--border);
+}

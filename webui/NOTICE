@@ -1,0 +1,31 @@
+QAQ-Harness 桌面客户端 / qaqh-desktop-app
+Copyright (c) 2026 QAQTam
+
+本项目由 QAQTam 开发，以 **MIT 或 Apache-2.0** 双许可发布：下游可任选其一
+（MIT 见 `LICENSE-MIT`，Apache-2.0 见 `LICENSE-APACHE`）。
+
+本项目打包/内嵌了第三方开源组件（Rust crates 与 npm 包），各自遵循其原始许可，
+其中相当一部分是 MIT 或 Apache-2.0。按 Apache-2.0 §4 的要求：若某组件随附
+NOTICE 文件，其内容应予保留；若其许可要求随附许可副本，亦应随附。
+（随包分发的完整清单与许可副本仍在补：见本仓/docs 与安装包的许可页。）
+
+────────────────────────────────────────────────────────────────────────
+商标
+
+QAQ-Harness 是独立项目，与 OpenAI、Anthropic、DeepSeek、Google 等公司
+**无隶属、无赞助、无背书**关系。
+
+「ChatGPT」「OpenAI」等名称与图形标识是其各自权利人的商标。本项目中出现这些
+名称**仅用于如实描述用户可登录 / 可接入的对象**（例如按钮固定文案
+`Continue with ChatGPT`、账户名 `ChatGPT 账户`、provider 名 `OpenAI`），
+不构成商标使用许可，也不暗示任何合作或背书。
+
+**本项目的开源许可不授予任何商标权**：Apache-2.0 §6 明文排除商标、服务标记与
+商品名的许可；MIT 全文根本未涉及商标。因此「MIT OR Apache-2.0」与「能不能用
+ChatGPT 标识」是两件互不相干的事——换许可既不会带来商标授权，也不会解决商标问题。
+任何人使用上述商标都需自行取得权利人许可，并遵守其品牌指南。
+
+仓库内 `public/siwc/` 目录**默认不放任何官方图形资产**。若使用者按该目录 README
+的 BYO 方式放入官方 sign-in 图形，那些资产**不适用**本仓的 MIT / Apache-2.0，
+而受其自带许可约束（见 `public/siwc/LICENSE-SIWC-DEVKIT.txt` 与
+`public/siwc/THIRD-PARTY-NOTICES.txt`）。相关口径见 `docs/siwc-brand-posture.md`。

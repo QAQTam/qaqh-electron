@@ -1,0 +1,795 @@
+/* QAQ-Harness WebUI —— Windows 11 / Fluent 2 组件层
+ *
+ * 只在 Windows 上覆盖；macOS 的 vibrancy / Liquid Glass 规则保持原样。
+ * 目标不是"把网页刷成灰色"，而是把 WinUI 的三件事做对：
+ *  1) 字体与密度：14/20 正文、12/16 辅助、32px 控件；
+ *  2) 表面层级：Mica → LayerFill → CardFill，大面板不再叠 backdrop blur；
+ *  3) 交互细节：双色焦点、6% 描边、箭头光标、近似 overlay 滚动条。
+ */
+
+@layer components {
+  /* ── 基础排版与输入设备 ─────────────────────────────────────────── */
+  html[data-platform="windows"] body {
+    font-family: var(--font-ui);
+    font-size: var(--fs-body);
+    line-height: 20px;
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  html[data-platform="windows"] button,
+  html[data-platform="windows"] [role="button"],
+  html[data-platform="windows"] select,
+  html[data-platform="windows"] summary {
+    cursor: default;
+  }
+  html[data-platform="windows"] a,
+  html[data-platform="windows"] [role="link"] {
+    cursor: pointer;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  html[data-platform="windows"] a:hover { text-decoration: underline; }
+
+  html[data-platform="windows"] :focus-visible {
+    outline: 2px solid var(--focus-outer);
+    outline-offset: 1px;
+    box-shadow: 0 0 0 1px var(--focus-inner);
+  }
+  html[data-platform="windows"] ::selection {
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+
+  html[data-platform="windows"] ::-webkit-scrollbar { width: 8px; height: 8px; }
+  html[data-platform="windows"] ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--muted) 42%, transparent);
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+  html[data-platform="windows"] ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--muted) 62%, transparent);
+    background-clip: content-box;
+  }
+  html[data-platform="windows"] ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ── 窗口骨架：48px 命令区 + 48px 导航栏，去掉整宽分隔线 ─────────── */
+  html[data-platform="windows"] #app {
+    --topbar-height: 48px;
+    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-rows: var(--topbar-height) minmax(0, 1fr);
+  }
+  html[data-platform="windows"] #top {
+    padding-left: 12px;
+    gap: 8px;
+    border-bottom: 0;
+    background: transparent;
+  }
+  html[data-platform="windows"] .titlebar-back {
+    width: 32px; height: 32px;
+    border-radius: 4px;
+  }
+  html[data-platform="windows"] .titlebar-session-title {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+  }
+  html[data-platform="windows"] .titlebar-brand {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  html[data-platform="windows"] .global-nav {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 8px 4px;
+    border-right: 1px solid var(--border);
+    background: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  html[data-platform="windows"] .global-nav-item {
+    position: relative;
+    min-height: 40px;
+    padding: 0;
+    gap: 0;
+    border-radius: 4px;
+    color: var(--muted);
+    font-size: 0;
+  }
+  html[data-platform="windows"] .global-nav-item span { display: none; }
+  html[data-platform="windows"] .global-nav-item svg { width: 16px; height: 16px; }
+  html[data-platform="windows"] .global-nav-item:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  html[data-platform="windows"] .global-nav-item.active {
+    color: var(--text);
+    background: transparent;
+    font-weight: 400;
+  }
+  html[data-platform="windows"] .global-nav-item.active::before {
+    content: "";
+    position: absolute;
+    left: -4px;
+    top: 50%;
+    width: 3px;
+    height: 16px;
+    border-radius: 2px;
+    background: var(--accent);
+    transform: translateY(-50%);
+  }
+  html[data-platform="windows"] .global-nav-item:last-child {
+    margin-top: auto;
+  }
+  html[data-platform="windows"] .global-nav-item:last-child::after {
+    content: "";
+    position: absolute;
+    left: 4px; right: 4px; top: -4px;
+    height: 1px;
+    background: var(--border);
+  }
+
+  html[data-platform="windows"] .message-sidebar {
+    border-right: 1px solid var(--border);
+    background: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  html[data-platform="windows"] .message-sidebar-head {
+    min-height: 44px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  html[data-platform="windows"] .message-session-item {
+    min-height: 34px;
+    font-size: 13px;
+    border-radius: 4px;
+  }
+  html[data-platform="windows"] .message-session-item.active {
+    background: var(--surface-2);
+  }
+  html[data-platform="windows"] .message-session-item.active::before {
+    height: 14px;
+  }
+
+  html[data-platform="windows"] .workspace-content,
+  html[data-platform="windows"] .settings-page {
+    background: transparent;
+  }
+  html[data-platform="windows"] .workspace.workspace-messages {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  html[data-platform="windows"] #session {
+    grid-template-rows: 48px minmax(0, 1fr) auto;
+  }
+  html[data-platform="windows"] .session-header {
+    height: 48px;
+    min-height: 48px;
+    padding: 0 16px;
+    border-bottom: 0;
+    background: transparent;
+  }
+  html[data-platform="windows"] .session-header-title {
+    padding: 2px 6px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 4px;
+  }
+  html[data-platform="windows"] .session-header-more-btn {
+    width: 28px; height: 28px;
+    border-radius: 4px;
+  }
+
+  /* ── 设置页：NavigationView + WinUI 设置卡片 ────────────────────── */
+  html[data-platform="windows"] .settings-head {
+    min-height: 48px;
+    padding: 0 24px;
+    border-bottom: 0;
+    background: transparent;
+    justify-content: space-between;
+  }
+  html[data-platform="windows"] .settings-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+  html[data-platform="windows"] .settings-head h1 {
+    font-size: 20px;
+    line-height: 26px;
+    font-weight: 600;
+  }
+  html[data-platform="windows"] .settings-sub {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--muted);
+  }
+  html[data-platform="windows"] .settings-dirty-pill {
+    flex: none;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    line-height: 16px;
+  }
+  html[data-platform="windows"] .settings-confirm {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--warn) 42%, var(--border));
+    border-left: 3px solid var(--warn);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--warn) 8%, var(--card-fill));
+    font-size: 13px;
+  }
+  html[data-platform="windows"] .settings-confirm > span { flex: 1; min-width: 0; }
+  html[data-platform="windows"] .settings-confirm-actions { display: flex; gap: 8px; flex: none; }
+
+  html[data-platform="windows"] .settings-body {
+    width: min(1120px, 100%);
+    padding: 16px 24px 24px;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 0 24px;
+  }
+  html[data-platform="windows"] .settings-nav { gap: 2px; }
+  html[data-platform="windows"] .settings-nav-group {
+    margin: 12px 0 4px;
+    padding: 0 10px;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  html[data-platform="windows"] .settings-nav-group:first-child { margin-top: 0; }
+  html[data-platform="windows"] .settings-nav-item {
+    position: relative;
+    min-height: 36px;
+    padding: 0 12px;
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 14px;
+    text-align: left;
+  }
+  html[data-platform="windows"] .settings-nav-item:hover { background: var(--surface-2); }
+  html[data-platform="windows"] .settings-nav-item.active {
+    background: var(--surface-2);
+    color: var(--text);
+    font-weight: 600;
+  }
+  html[data-platform="windows"] .settings-nav-item.active::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 50%;
+    width: 3px; height: 16px;
+    border-radius: 2px;
+    background: var(--accent);
+    transform: translateY(-50%);
+  }
+
+  html[data-platform="windows"] .settings-content {
+    max-width: 780px;
+    display: grid;
+    gap: 8px;
+    align-content: start;
+  }
+  html[data-platform="windows"] .settings-section {
+    padding: 16px 20px;
+    border: 1px solid var(--stroke-control);
+    border-radius: 8px;
+    background: var(--card-fill);
+  }
+  html[data-platform="windows"] .settings-section + .settings-section { padding-top: 16px; }
+  html[data-platform="windows"] .settings-section h3 {
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 600;
+  }
+  html[data-platform="windows"] .settings-section-desc {
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 16px;
+  }
+  html[data-platform="windows"] .settings-fields {
+    margin-top: 12px;
+    gap: 12px 16px;
+  }
+  html[data-platform="windows"] .field { gap: 4px; font-size: 14px; }
+  html[data-platform="windows"] .field-label {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--muted);
+  }
+  html[data-platform="windows"] .field-hint {
+    font-size: 12px;
+    line-height: 16px;
+  }
+  html[data-platform="windows"] .field-input {
+    min-height: 32px;
+    height: 32px;
+    padding: 0 11px;
+    border: 1px solid var(--stroke-control);
+    border-radius: 4px;
+    background: var(--control-fill);
+    color: var(--text);
+    font-size: 14px;
+    transition: background-color 83ms var(--ease), border-color 83ms var(--ease);
+  }
+  html[data-platform="windows"] .field-input:hover:not(:disabled) {
+    background: var(--control-fill-hover);
+    border-color: var(--border-strong);
+  }
+  html[data-platform="windows"] .field-input:focus-visible {
+    outline: none;
+    border-color: var(--border);
+    box-shadow: inset 0 -2px 0 var(--accent), 0 0 0 1px var(--focus-inner);
+  }
+  html[data-platform="windows"] .field-input:disabled {
+    background: var(--surface-2);
+    color: var(--muted);
+    border-color: var(--stroke-control);
+  }
+  html[data-platform="windows"] .field-input[aria-invalid="true"] { border-color: var(--err); }
+  html[data-platform="windows"] .field .field-input,
+  html[data-platform="windows"] .field.wide .field-input { max-width: 480px; }
+  html[data-platform="windows"] .field.compact .field-input { max-width: 160px; }
+  html[data-platform="windows"] .field select.field-input { max-width: 320px; }
+
+  html[data-platform="windows"] .tier {
+    padding: 12px 14px;
+    border: 1px solid var(--stroke-control);
+    border-radius: 4px;
+    background: var(--control-fill);
+  }
+  html[data-platform="windows"] .tier:hover { background: var(--control-fill-hover); }
+  html[data-platform="windows"] .tier.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  html[data-platform="windows"] .tier.dangerous.active {
+    border-color: var(--err);
+    background: var(--err-soft);
+  }
+  html[data-platform="windows"] .tier-name { font-family: var(--font-code); font-size: 13px; }
+  html[data-platform="windows"] .tier-desc { font-size: 12px; line-height: 16px; }
+
+  html[data-platform="windows"] .profile-row {
+    min-height: 40px;
+    border-radius: 4px;
+    background: var(--control-fill);
+  }
+  html[data-platform="windows"] .profile-row.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  html[data-platform="windows"] .profile-dirty-note {
+    grid-column: 1 / -1;
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border-left: 3px solid var(--warn);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--warn) 8%, var(--card-fill));
+    color: var(--text);
+    font-size: 12px;
+    line-height: 16px;
+  }
+  html[data-platform="windows"] .settings-foot {
+    min-height: 48px;
+    padding: 8px 24px;
+    border-top: 0;
+    background: transparent;
+  }
+
+  /* ── Fluent ToggleSwitch ─────────────────────────────────────────── */
+  html[data-platform="windows"] .switch-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    grid-column: 1 / -1;
+    min-height: 32px;
+    padding: 2px 0;
+  }
+  html[data-platform="windows"] .switch-input {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: 0;
+    opacity: 0;
+  }
+  html[data-platform="windows"] .switch-control {
+    position: relative;
+    flex: none;
+    width: 40px; height: 20px;
+    border: 1px solid var(--stroke-control-strong);
+    border-radius: 10px;
+    background: transparent;
+    transition: background-color 83ms var(--ease), border-color 83ms var(--ease);
+  }
+  html[data-platform="windows"] .switch-thumb {
+    position: absolute;
+    left: 3px; top: 50%;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--muted);
+    transform: translateY(-50%);
+    transition: transform 167ms var(--ease), width 83ms var(--ease), height 83ms var(--ease);
+  }
+  html[data-platform="windows"] .switch-row[data-checked] .switch-control,
+  html[data-platform="windows"] .switch-row[data-state="checked"] .switch-control {
+    background: var(--accent);
+    border-color: transparent;
+  }
+  html[data-platform="windows"] .switch-row[data-checked] .switch-thumb,
+  html[data-platform="windows"] .switch-row[data-state="checked"] .switch-thumb {
+    background: var(--on-accent);
+    transform: translate(20px, -50%);
+  }
+  html[data-platform="windows"] .switch-row:hover .switch-thumb { width: 14px; height: 14px; }
+  html[data-platform="windows"] .switch-row[data-checked]:hover .switch-thumb,
+  html[data-platform="windows"] .switch-row[data-state="checked"]:hover .switch-thumb {
+    transform: translate(18px, -50%);
+  }
+  html[data-platform="windows"] .switch-row:active .switch-thumb { width: 17px; }
+  html[data-platform="windows"] .switch-row[data-checked]:active .switch-thumb,
+  html[data-platform="windows"] .switch-row[data-state="checked"]:active .switch-thumb {
+    transform: translate(15px, -50%);
+  }
+  html[data-platform="windows"] .switch-copy { display: grid; gap: 2px; min-width: 0; }
+  html[data-platform="windows"] .switch-label { font-size: 14px; line-height: 20px; }
+  html[data-platform="windows"] .switch-hint { font-size: 12px; line-height: 16px; color: var(--muted); }
+  html[data-platform="windows"] .switch-input:focus-visible + .switch-control {
+    outline: 2px solid var(--focus-outer);
+    outline-offset: 1px;
+    box-shadow: 0 0 0 1px var(--focus-inner);
+  }
+
+  /* ── Fluent Select（Kobalte 行为层）───────────────────────────────── */
+  html[data-platform="windows"] .select-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+  }
+  html[data-platform="windows"] .select-trigger-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  html[data-platform="windows"] .select-trigger-label[data-placeholder="true"] { color: var(--muted); }
+  html[data-platform="windows"] .select-trigger-icon {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 12px; height: 12px;
+    color: var(--muted);
+  }
+  html[data-platform="windows"] .select-trigger-icon svg { width: 12px; height: 12px; }
+  html[data-platform="windows"] .select-trigger[data-expanded] {
+    border-color: var(--border);
+    box-shadow: inset 0 -2px 0 var(--accent), 0 0 0 1px var(--focus-inner);
+  }
+
+  html[data-platform="windows"] .select-content {
+    z-index: 1000;
+    min-width: var(--kb-popper-anchor-width, 160px);
+    max-height: 320px;
+    overflow: auto;
+    padding: 4px;
+    border: 1px solid var(--stroke-control);
+    border-radius: 8px;
+    background: var(--flyout-bg);
+    -webkit-backdrop-filter: blur(30px) saturate(125%);
+    backdrop-filter: blur(30px) saturate(125%);
+    box-shadow: var(--shadow-panel);
+    animation: fluent-flyout-in 167ms var(--ease);
+  }
+  html[data-platform="windows"] .select-listbox {
+    display: grid;
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  html[data-platform="windows"] .select-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 0 8px;
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 14px;
+    cursor: default;
+    user-select: none;
+    outline: none;
+  }
+  html[data-platform="windows"] .select-item:focus,
+  html[data-platform="windows"] .select-item:focus-visible { outline: none; }
+  html[data-platform="windows"] .select-item[data-highlighted] { background: var(--surface-2); }
+  html[data-platform="windows"] .select-item[data-disabled] { color: var(--muted); opacity: .5; }
+  html[data-platform="windows"] .select-item-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  html[data-platform="windows"] .select-item-indicator {
+    flex: none;
+    width: 16px; height: 16px;
+    color: var(--accent);
+    opacity: 0;
+  }
+  html[data-platform="windows"] .select-item[data-selected] .select-item-indicator { opacity: 1; }
+  @keyframes fluent-flyout-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* ── 按钮：32px、4px 圆角、无缩放按压 ───────────────────────────── */
+  html[data-platform="windows"] .button-primary,
+  html[data-platform="windows"] .button-secondary,
+  html[data-platform="windows"] .primary-mini,
+  html[data-platform="windows"] .ghost-mini {
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  html[data-platform="windows"] .primary-mini,
+  html[data-platform="windows"] .ghost-mini {
+    min-height: 32px;
+    padding: 0 12px;
+  }
+  html[data-platform="windows"] .button-primary {
+    border-color: transparent;
+  }
+  html[data-platform="windows"] .button-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 90%, var(--surface));
+  }
+  html[data-platform="windows"] .button-primary:active:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 80%, var(--surface));
+    transform: none;
+  }
+  html[data-platform="windows"] .button-primary:disabled { opacity: .4; }
+  html[data-platform="windows"] .button-secondary {
+    background: var(--control-fill);
+    border-color: var(--stroke-control);
+  }
+  html[data-platform="windows"] .button-secondary:hover:not(:disabled) {
+    background: var(--control-fill-hover);
+  }
+  html[data-platform="windows"] .ghost-mini {
+    border: 1px solid transparent;
+    color: var(--text);
+  }
+  html[data-platform="windows"] .ghost-mini:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: var(--stroke-control);
+  }
+  html[data-platform="windows"] .ghost-mini:active:not(:disabled) {
+    background: var(--control-fill-pressed);
+  }
+  html[data-platform="windows"] .icon-btn {
+    width: 32px; height: 32px;
+    border-radius: 4px;
+    color: var(--text);
+  }
+  html[data-platform="windows"] .icon-btn:hover:not(:disabled) { background: var(--surface-2); }
+
+  /* ── 浮层：Acrylic 只给菜单，不再糊大面板 ───────────────────────── */
+  html[data-platform="windows"] .composer-menu,
+  html[data-platform="windows"] .context-menu,
+  html[data-platform="windows"] .session-header-dropdown-menu,
+  html[data-platform="windows"] .message-session-menu {
+    padding: 4px;
+    border: 1px solid var(--stroke-control);
+    border-radius: 8px;
+    background: var(--flyout-bg);
+    -webkit-backdrop-filter: blur(30px) saturate(125%);
+    backdrop-filter: blur(30px) saturate(125%);
+    box-shadow: var(--shadow-panel);
+  }
+  html[data-platform="windows"] .composer-menu > button,
+  html[data-platform="windows"] .context-menu > button,
+  html[data-platform="windows"] .session-header-menu-item,
+  html[data-platform="windows"] .message-session-menu > button {
+    min-height: 32px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  html[data-platform="windows"] .composer-menu > button:hover,
+  html[data-platform="windows"] .composer-menu > button.selected,
+  html[data-platform="windows"] .context-menu > button:hover,
+  html[data-platform="windows"] .session-header-menu-item:hover,
+  html[data-platform="windows"] .message-session-menu > button:hover {
+    background: var(--surface-2);
+  }
+  html[data-platform="windows"] .context-menu-separator { margin: 4px; background: var(--border); }
+
+  /* Fluent ToolTip：无箭头、12px 文本、4px 圆角。 */
+  html[data-platform="windows"] .fluent-tooltip {
+    z-index: 1100;
+    max-width: 320px;
+    padding: 6px 10px;
+    border: 1px solid var(--stroke-control);
+    border-radius: 4px;
+    background: var(--flyout-bg);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 16px;
+    box-shadow: var(--shadow-panel);
+    animation: fluent-tooltip-in 83ms var(--ease);
+  }
+  @keyframes fluent-tooltip-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* Toast 移到右上，避免压住输入区右下角的发送/停止。 */
+  html[data-platform="windows"] .toast-host {
+    top: 56px;
+    right: 16px;
+    bottom: auto;
+    justify-items: end;
+  }
+  html[data-platform="windows"] .toast {
+    max-width: 360px;
+    padding: 8px 10px;
+    border: 1px solid var(--stroke-control);
+    border-radius: 8px;
+    background: var(--flyout-bg);
+    -webkit-backdrop-filter: blur(30px) saturate(125%);
+    backdrop-filter: blur(30px) saturate(125%);
+    box-shadow: var(--shadow-panel);
+    font-size: 14px;
+  }
+  html[data-platform="windows"] .toast.ok .toast-icon { color: var(--ok); }
+  html[data-platform="windows"] .toast.err .toast-icon { color: var(--err); }
+
+  /* ── 对话与输入 ─────────────────────────────────────────────────── */
+  html[data-platform="windows"] #composer textarea {
+    min-height: 44px;
+    padding: 10px 12px 6px;
+    font-size: 14px;
+    line-height: 20px;
+  }
+  html[data-platform="windows"] .composer-surface {
+    min-height: 88px;
+    border-color: var(--stroke-control);
+    border-radius: 8px;
+    background: var(--card-fill);
+  }
+  html[data-platform="windows"] .composer-surface:focus-within {
+    border-color: var(--border);
+    box-shadow: inset 0 -2px 0 var(--accent), 0 0 0 1px var(--focus-inner);
+  }
+  html[data-platform="windows"] #composer .icon-btn { width: 32px; height: 32px; }
+  html[data-platform="windows"] .composer-tool-button {
+    min-height: 30px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  html[data-platform="windows"] .composer-identity {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  html[data-platform="windows"] .composer-file-chip {
+    border-radius: 4px;
+    background: var(--surface-2);
+    font-size: 12px;
+  }
+  html[data-platform="windows"] .turn-user .bubble {
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+    line-height: 20px;
+  }
+  html[data-platform="windows"] .turn { padding-bottom: 20px; }
+  html[data-platform="windows"] .collapsed-row { min-height: 32px; font-size: 14px; }
+  html[data-platform="windows"] .session-pending-body { border-radius: 4px; }
+
+  /* ── Mica：有材质时让窗口透出来，没有时退回实底 ─────────────────── */
+  html[data-platform="windows"].tauri body { background: transparent; }
+  html[data-platform="windows"].tauri:not(.has-mica) body { background: var(--bg); }
+  html[data-platform="windows"].has-mica .workspace-content,
+  html[data-platform="windows"].has-mica .settings-page {
+    background: var(--layer-fill);
+  }
+  html[data-platform="windows"]:not(.has-mica) .workspace-content,
+  html[data-platform="windows"]:not(.has-mica) .settings-page {
+    background: var(--bg);
+  }
+  html[data-platform="windows"].has-mica .global-nav,
+  html[data-platform="windows"].has-mica .message-sidebar,
+  html[data-platform="windows"].has-mica #top {
+    background: transparent;
+  }
+  html[data-platform="windows"].has-mica .message-sidebar,
+  html[data-platform="windows"].has-mica .global-nav {
+    border-color: var(--border);
+  }
+
+  /* ── 工具/接入页：标题交给 #top，内容头只留说明与动作 ───────────── */
+  html[data-platform="windows"] .tools-page { padding: 16px 24px 32px; }
+  html[data-platform="windows"] .tools-page-head h1,
+  html[data-platform="windows"] .oauth-page-head h1 {
+    display: none;
+  }
+  html[data-platform="windows"] .tools-page-head p,
+  html[data-platform="windows"] .oauth-page-head p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--muted);
+  }
+  html[data-platform="windows"] .oauth-page-head {
+    min-height: 0;
+    padding: 8px 24px 0;
+    border-bottom: 0;
+  }
+  /* ── 窄窗口：WinUI 的 NavigationView 会收成顶部/底部条，不硬塞 220px── */
+  @media (max-width: 820px) {
+    html[data-platform="windows"] .settings-body {
+      grid-template-columns: minmax(0, 1fr);
+      padding: 12px 16px;
+    }
+    html[data-platform="windows"] .settings-nav {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      grid-auto-flow: column;
+      grid-auto-columns: max-content;
+      gap: 2px;
+      overflow-x: auto;
+      overscroll-behavior-inline: contain;
+      margin: 0 -16px 12px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      scrollbar-width: none;
+    }
+    html[data-platform="windows"] .settings-nav::-webkit-scrollbar { display: none; }
+    html[data-platform="windows"] .settings-nav-item { white-space: nowrap; }
+    html[data-platform="windows"] .settings-content { max-width: none; }
+    html[data-platform="windows"] .settings-section { padding: 14px 16px; }
+    html[data-platform="windows"] .settings-head { padding: 0 16px; }
+  }
+
+  @media (max-width: 720px) {
+    html[data-platform="windows"] #app {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: 48px minmax(0, 1fr) auto;
+    }
+    html[data-platform="windows"] .global-nav {
+      grid-column: 1;
+      grid-row: 3;
+      flex-direction: row;
+      justify-content: space-around;
+      padding: 4px 8px env(safe-area-inset-bottom, 0px);
+      border-right: 0;
+      border-top: 1px solid var(--border);
+    }
+    html[data-platform="windows"] .global-nav-item { flex: 1; min-height: 44px; }
+    html[data-platform="windows"] .global-nav-item:last-child { margin-top: 0; }
+    html[data-platform="windows"] .global-nav-item:last-child::after { display: none; }
+    html[data-platform="windows"] .global-nav-item.active::before { display: none; }
+    html[data-platform="windows"] .workspace { grid-column: 1; grid-row: 2; }
+    html[data-platform="windows"] .workspace.workspace-messages {
+      grid-template-columns: 160px minmax(0, 1fr);
+    }
+    html[data-platform="windows"] .settings-fields { grid-template-columns: minmax(0, 1fr); }
+  }
+}
