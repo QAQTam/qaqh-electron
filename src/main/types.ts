@@ -26,6 +26,16 @@ export interface TimelineStatusWire {
   [key: string]: unknown;
 }
 
+/** Scheduled SSE reconnect after a transport drop (conn://reconnect). */
+export interface ReconnectStatusWire {
+  session_id: string;
+  /** 1-based attempt number for the next reconnect. */
+  attempt: number;
+  delay_ms: number;
+  /** Host clock at scheduling time, so the renderer can age the notice. */
+  at: number;
+}
+
 export interface UserSkillRoot {
   path: string;
   label: string;

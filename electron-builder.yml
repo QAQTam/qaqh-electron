@@ -8,7 +8,12 @@ directories:
 files:
   - dist/**/*
   - renderer/**/*
+  - build/icons/**/*
   - package.json
+  - "!dist/**/*.map"
+
+asar: true
+afterPack: scripts/verify-package.cjs
 
 extraResources:
   - from: resources/bin/
@@ -17,6 +22,8 @@ extraResources:
       - "**/*"
 
 linux:
+  icon: build/icons
+  syncDesktopName: true
   executableArgs:
     - "--enable-features=UseOzonePlatform"
     - "--ozone-platform-hint=auto"

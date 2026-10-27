@@ -151,13 +151,16 @@ export class DaemonManager {
     }
 
     console.log(`[daemon] Spawning daemon: ${exe} run`);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      RUST_LOG: process.env.RUST_LOG || "info",
+    };
+    // The ordinary loopback `run` mode must never inherit a LAN-only server token.
+    delete env.QAQH_SERVER_TOKEN;
     const child = spawn(exe, ["run"], {
       detached: true,
       stdio: "ignore",
-      env: {
-        ...process.env,
-        RUST_LOG: process.env.RUST_LOG || "info",
-      },
+      env,
     });
 
     child.unref();
@@ -177,6 +180,23 @@ export class DaemonManager {
   }
 
   getSpawnedPid(): number | null {
+    return this.spawnedPid;
+  }
+
+  noteSpawned(pid: number): void {
+    this.spawnedPid = pid;
+  }
+
+  startDaemon(args: string[], token?: string): number | null {
+    const exe = resolveDaemonExecutable();
+    if (!exe) throw new Error("Could not find qaqh-daemon executable.");
+    const env: NodeJS.ProcessEnv = { ...process.env, RUST_LOG: process.env.RUST_LOG || "info" };
+    if (token) env.QAQH_SERVER_TOKEN = token;
+    else delete env.QAQH_SERVER_TOKEN;
+    delete env.QAQH_ADMIN_TOKEN;
+    const child = spawn(exe, args, { detached: true, stdio: "ignore", env });
+    child.unref();
+    this.spawnedPid = child.pid ?? null;
     return this.spawnedPid;
   }
 }

@@ -27,7 +27,7 @@ export async function pickAttachments(win?: BrowserWindow | null): Promise<strin
 
 export async function openExternalUrl(urlStr: string): Promise<void> {
   if (!urlStr || typeof urlStr !== "string") return;
-  if (/^https?:\/\//i.test(urlStr)) {
+  if (/^https?:\/\//i.test(urlStr) || /^x-apple\.systempreferences:/i.test(urlStr)) {
     await shell.openExternal(urlStr);
   } else {
     console.warn(`[native] Refusing to open unsafe URL: ${urlStr}`);

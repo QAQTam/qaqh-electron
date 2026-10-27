@@ -1,95 +1,129 @@
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, mkdirSync, cpSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, cpSync, chmodSync, rmSync, renameSync, mkdtempSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const electronRoot = resolve(__dirname, "..");
-const backendRoot = resolve(electronRoot, "../qaqh-backend");
-const desktopAppRoot = resolve(electronRoot, "../qaqh-desktop-app");
+const require = createRequire(import.meta.url);
+const { parseArgs, assertInputs } = require("./packaging.cjs");
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const sdk = resolve(root, "../qaqh-sdk");
+const backend = resolve(root, "../qaqh-backend");
+const frontend = resolve(root, "../qaqh-desktop-app");
 
-console.log("====================================================");
-console.log("   QAQ-Harness Electron Linux Full Pipeline Build   ");
-console.log("====================================================");
-
-// 1. 构建后端 qaqh-backend (qaqh-daemon release)
-console.log("\n[1/4] Building qaqh-backend daemon (release)...");
-try {
-  execSync("cargo build --release -p qaqh-daemon", {
-    cwd: backendRoot,
-    stdio: "inherit",
-    env: process.env,
+function run(command, args, cwd = root, capture = false, env = process.env) {
+  console.log(`\n> ${command} ${args.join(" ")}`);
+  const result = spawnSync(command, args, {
+    cwd,
+    env,
+    stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
   });
-} catch (err) {
-  console.error("Failed to build qaqh-backend:", err);
-  process.exit(1);
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${command} failed (${result.signal || result.status})`);
+  return result.stdout;
 }
 
-// 拷贝二进制到 resources/bin
-const binDir = join(electronRoot, "resources", "bin");
-mkdirSync(binDir, { recursive: true });
-
-const daemonSrc = join(backendRoot, "target", "release", "qaqh-daemon");
-const daemonDest = join(binDir, "qaqh-daemon");
-
-if (!existsSync(daemonSrc)) {
-  console.error(`Target daemon binary not found at ${daemonSrc}`);
-  process.exit(1);
+function install(cwd) {
+  run("pnpm", ["install", "--frozen-lockfile"], cwd);
 }
 
-console.log(`Copying daemon binary to ${daemonDest}...`);
-cpSync(daemonSrc, daemonDest);
-chmodSync(daemonDest, 0o755);
-
-// 2. 构建前端 qaqh-desktop-app (Vite + SolidJS)
-console.log("\n[2/4] Building qaqh-desktop-app renderer...");
-try {
-  execSync("pnpm run build", {
-    cwd: desktopAppRoot,
-    stdio: "inherit",
-    env: process.env,
-  });
-} catch (err) {
-  console.error("Failed to build qaqh-desktop-app:", err);
-  process.exit(1);
+function syncDir(source, destination) {
+  // 仅清理由流水线管理的产物，避免上次前端的旧 hash 文件混入本次安装包。
+  rmSync(destination, { recursive: true, force: true });
+  cpSync(source, destination, { recursive: true });
 }
 
-const rendererSrc = join(desktopAppRoot, "out", "renderer");
-const rendererDest = join(electronRoot, "renderer");
-if (!existsSync(rendererSrc)) {
-  console.error(`Renderer dist not found at ${rendererSrc}`);
-  process.exit(1);
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    console.log("Usage: just build [all|dir|AppImage|deb|tar.gz] [--skip-install] [--skip-backend]\n" +
+      "Default: full Linux x64 pipeline. --skip-backend explicitly reuses resources/bin/qaqh-daemon.");
+    return;
+  }
+  if (process.platform !== "linux" || process.arch !== "x64") {
+    throw new Error("This pipeline currently supports native Linux x64 only (no implicit cross-compilation).");
+  }
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 22 || (major === 22 && minor < 12)) throw new Error("Node.js >=22.12 is required.");
+  for (const file of [join(sdk, "package.json"), join(sdk, "pnpm-lock.yaml"), join(sdk, "src/core/index.ts"),
+    join(frontend, "package.json"), join(frontend, "pnpm-lock.yaml"),
+    join(backend, "Cargo.toml"), join(backend, "Cargo.lock")]) {
+    if (!existsSync(file)) throw new Error(`Required sibling repository/lockfile missing: ${file}`);
+  }
+  run("pnpm", ["--version"]);
+  if (!options.skipBackend) run("cargo", ["--version"]);
+
+  console.log("\n[1/5] SDK and dependency preparation");
+  if (!options.skipInstall) install(sdk);
+  run("pnpm", ["run", "build"], sdk);
+  if (!existsSync(join(sdk, "dist/core/index.js"))) throw new Error("qaqh-sdk build did not produce dist/core/index.js");
+  if (!options.skipInstall) {
+    install(frontend);
+    install(root);
+  }
+
+  console.log("\n[2/5] Backend daemon");
+  if (!options.skipBackend) {
+    // Cargo 报告真实 executable 路径，兼容 CARGO_TARGET_DIR/后端 .cargo 配置。
+    const output = run("cargo", ["build", "--locked", "--release", "-p", "qaqh-daemon",
+      "--message-format=json-render-diagnostics"], backend, true);
+    const artifacts = output.split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const artifact = artifacts.findLast(item => item.reason === "compiler-artifact" &&
+      item.target?.name === "qaqh-daemon" && item.target.kind.includes("bin") && item.executable);
+    if (!artifact) throw new Error("Cargo did not report a qaqh-daemon executable.");
+    const bin = join(root, "resources/bin");
+    rmSync(bin, { recursive: true, force: true });
+    mkdirSync(bin, { recursive: true });
+    cpSync(artifact.executable, join(bin, "qaqh-daemon"));
+    chmodSync(join(bin, "qaqh-daemon"), 0o755);
+  } else {
+    console.warn("Explicit --skip-backend: reusing staged daemon; its source freshness is NOT guaranteed.");
+  }
+
+  console.log("\n[3/5] Renderer");
+  run("pnpm", ["run", "typecheck"], frontend);
+  run("pnpm", ["run", "build"], frontend);
+  syncDir(join(frontend, "out/renderer"), join(root, "renderer"));
+
+  console.log("\n[4/5] Electron shell");
+  run("pnpm", ["run", "typecheck"]);
+  rmSync(join(root, "dist"), { recursive: true, force: true });
+  run(process.execPath, ["scripts/bundle.mjs", "all"]);
+  assertInputs(root);
+
+  console.log("\n[5/5] Package and verify");
+  // 复用已安装、与当前依赖版本一致的 Electron，避免 builder 再下载同一份运行时。
+  const electronExecutable = require("electron");
+  if (!existsSync(electronExecutable)) throw new Error("Installed Electron binary missing; reinstall electron with build scripts enabled.");
+  mkdirSync(join(root, ".tmp"), { recursive: true });
+  const staging = mkdtempSync(join(root, ".tmp/package-"));
+  try {
+    const targets = options.target === "all" ? [] : [options.target];
+    run("pnpm", ["exec", "electron-builder", "--linux", ...targets, "--x64", "--publish", "never",
+      `--config.directories.output=${staging}`, `--config.electronDist=${dirname(electronExecutable)}`], root, false,
+      { ...process.env, ELECTRON_BUILDER_COMPRESSION_LEVEL: process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL || "1" });
+    const expected = options.target === "all" ? ["AppImage", "deb", "tar.gz"] : [options.target];
+    const files = readdirSync(staging);
+    for (const target of expected) {
+      if (target !== "dir" && !files.some(file => file.endsWith(`.${target}`))) {
+        throw new Error(`electron-builder did not produce a .${target} artifact.`);
+      }
+    }
+    if (!existsSync(join(staging, "linux-unpacked/resources/app.asar"))) {
+      throw new Error("Packaged app.asar missing.");
+    }
+    // 成功才替换 release；失败不把旧安装包冒充成本次产物。
+    rmSync(join(root, "release"), { recursive: true, force: true });
+    renameSync(staging, join(root, "release"));
+    console.log(`\nBuild succeeded: ${join(root, "release")}\n${files.join("\n")}`);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 
-console.log(`Syncing renderer files to ${rendererDest}...`);
-mkdirSync(rendererDest, { recursive: true });
-cpSync(rendererSrc, rendererDest, { recursive: true });
-
-// 3. 构建 Electron 主进程与 Preload 脚本
-console.log("\n[3/4] Bundling Electron main and preload scripts...");
-try {
-  execSync("node scripts/bundle.mjs all", {
-    cwd: electronRoot,
-    stdio: "inherit",
-  });
-} catch (err) {
-  console.error("Failed to bundle Electron scripts:", err);
-  process.exit(1);
-}
-
-// 4. 调用 electron-builder 生成 Linux 安装包
-console.log("\n[4/4] Packaging with electron-builder for Linux...");
-const targetArg = process.argv[2] ? ` ${process.argv[2]}` : " --linux";
-try {
-  execSync(`pnpm exec electron-builder${targetArg}`, {
-    cwd: electronRoot,
-    stdio: "inherit",
-  });
-} catch (err) {
-  console.error("electron-builder packaging failed:", err);
-  process.exit(1);
-}
-
-console.log("\n====================================================");
-console.log("   Full build completed! Output in release/        ");
-console.log("====================================================");
+main().catch(error => {
+  console.error(`\nBuild FAILED: ${error.message}\nNo new release published; any existing release/ is from a previous build.`);
+  process.exitCode = 1;
+});

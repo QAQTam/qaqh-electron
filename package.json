@@ -5,16 +5,19 @@
   "description": "QAQ-Harness Linux/Cross-platform Electron Shell for qaqh-backend and qaqh-desktop-app",
   "main": "dist/main/index.cjs",
   "type": "module",
+  "desktopName": "com.qaqh.desktop.desktop",
   "scripts": {
     "build:main": "node scripts/bundle.mjs main",
     "build:preload": "node scripts/bundle.mjs preload",
     "build": "node scripts/bundle.mjs all",
     "dev": "node scripts/dev.mjs",
-    "package:linux": "pnpm run build && electron-builder --linux",
-    "package:appimage": "pnpm run build && electron-builder --linux AppImage",
-    "package:deb": "pnpm run build && electron-builder --linux deb",
-    "package:dir": "pnpm run build && electron-builder --linux dir",
+    "package:linux": "node scripts/build-all.mjs",
+    "package:appimage": "node scripts/build-all.mjs AppImage",
+    "package:deb": "node scripts/build-all.mjs deb",
+    "package:dir": "node scripts/build-all.mjs dir",
+    "package:tar": "node scripts/build-all.mjs tar.gz",
     "build:all": "node scripts/build-all.mjs",
+    "test": "node --test scripts/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -24,16 +27,22 @@
     "linux",
     "ai"
   ],
-  "author": "QAQ-Harness Team",
+  "author": {
+    "name": "QAQTam",
+    "email": "tsy3minso@gmail.com"
+  },
+  "homepage": "https://github.com/qaqtam/qaqh-electron",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qaqtam/qaqh-electron.git"
+  },
   "license": "MIT OR Apache-2.0",
   "devDependencies": {
+    "@qaqh/sdk": "link:../qaqh-sdk",
     "@types/node": "^22.13.0",
     "electron": "^45.0.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
-  },
-  "dependencies": {
-    "@qaqh/sdk": "file:../qaqh-sdk"
   }
 }

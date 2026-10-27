@@ -1,193 +1,57 @@
-# QAQ-Harness Electron 客户端定制方案与构建指南
+# QAQ-Harness Electron (canonical desktop host)
 
-针对 Linux 环境下 Tauri 2 的不稳定问题（WebKitGTK 渲染器崩溃、DMA-BUF 闪烁、中文输入法支持欠缺、发行版动态库依赖碎片化），本项目为 **`qaqh-backend`** 与 **`qaqh-desktop-app`** 定制了一套完整的 **Electron** 宿主与构建流水线。
+`qaqh-electron` is the first-class and only supported desktop shell. It hosts the SolidJS renderer from `../qaqh-desktop-app`, owns all OS privileges, daemon discovery credentials and lifecycle, and uses `@qaqh/sdk` for Ringing v2 communication. The renderer receives a narrow `window.qaqhHost` API; Node, Electron primitives, daemon bearer tokens, and unrestricted IPC are not exposed to it.
 
-- **核心运行栈**：**Electron 45.0.0 (最新稳定版)** + **Node.js 22+** + **TypeScript 7.0.2**
-- **打包工具链**：**electron-builder 26.15.3** + **esbuild 0.28.2**
-- **针对硬件**：针对双核双线程受限平台（如 Intel Pentium G2020）深度调优，包含 V8 堆内存硬约束与 Chromium 降负配置。
-
----
-
-## 目录
-1. [背景：为什么 Tauri 在 Linux 下不稳定？](#1-背景为什么-tauri-在-linux-下不稳定)
-2. [架构设计：Electron 替换方案](#2-架构设计electron-替换方案)
-   - [进程模型与安全隔离](#进程模型与安全隔离)
-   - [前端零改动 Preload 虚拟化适配](#前端零改动-preload-虚拟化适配)
-   - [Ringing v2 客户端与 SSE 事件流转发](#ringing-v2-客户端与-sse-事件流转发)
-   - [Daemon 生命周期与多开防护](#daemon-生命周期与多开防护)
-3. [构建流水线设计 (CI/CD Pipeline)](#3-构建流水线设计-cicd-pipeline)
-4. [项目结构说明](#4-项目结构说明)
-5. [常用命令与使用指南](#5-常用命令与使用指南)
-
----
-
-## 1. 背景：为什么 Tauri 在 Linux 下不稳定？
-
-Tauri 2 在 Windows (WebView2) 和 macOS (WKWebView) 表现良好，但在 Linux 上基于系统的 **WebKitGTK** (`webkit2gtk-4.1`)，存在以下固有缺陷：
-
-| 痛点维度 | Tauri 2 (Linux WebKitGTK) | Electron (Chromium + Node.js) |
-|---|---|---|
-| **渲染内核版本** | 取决于操作系统安装的库版本，老版本系统无法支持现代 CSS（如 `:has()`, `color-mix()`） | 自包含固定、现代版本的 Chromium，渲染表现 100% 确定一致 |
-| **GPU / DMA-BUF 渲染稳定性** | NVIDIA 专有驱动/Intel 新集显/Wayland 下高频出现 DMA-BUF 崩溃、白屏、黑屏、窗口闪烁 | 经过 Chromium 成熟的沙盒与硬件加速调优，Wayland/X11 支持极佳 |
-| **输入法 (IME) 体验** | fcitx5 / ibus 候选框经常脱离光标甚至无法调起，输入法回车上屏事件常被吞噬 | 原生级别的 IME 支持，输入法候选框定位精确 |
-| **打包与系统依赖** | 打包出来的 deb/AppImage 依然动态链接系统 `libwebkit2gtk-4.1.so.0`，缺少库则无法运行 | 真正的自包含二进制打包（AppImage/deb 开箱即用，零额外环境依赖） |
-
----
-
-## 2. 架构设计：Electron 替换方案
-
-### 进程模型与安全隔离
+## Architecture
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                    Electron 渲染进程 (Chromium)             │
-│   SolidJS 2.0 WebUI (来自 qaqh-desktop-app/out/renderer)    │
-│   调用 @tauri-apps/api (invoke / listen)                    │
-└──────────────────────────────▲──────────────────────────────┘
-                               │ IPC (contextBridge)
-┌──────────────────────────────▼──────────────────────────────┐
-│                    Preload 脚本 (Preload Bridge)            │
-│   注入 window.__TAURI_INTERNALS__ (完全模拟 Tauri 2 IPC 契约) │
-│   拦截 plugin:event|listen 并维护 callback 表               │
-└──────────────────────────────▲──────────────────────────────┘
-                               │ Electron IPC (tauri:invoke / tauri:event)
-┌──────────────────────────────▼──────────────────────────────┐
-│                    Electron 主进程 (Node.js)                │
-│   1. DaemonManager (读写 daemon.json、探活、按需拉起 sidecar)  │
-│   2. RingingClient (HTTP/SSE Ringing v2 握手、Lease 续租)   │
-│   3. ChallengeManager (审批 challenge 64位十六进制隔离)      │
-│   4. 原生对话框 (pickDirectory, pickAttachments, openExternal)│
-│   5. 托盘图标与单实例锁 (requestSingleInstanceLock)          │
-└──────────────────────────────▲──────────────────────────────┘
-                               │ HTTP / SSE (Ringing v2 单流)
-┌──────────────────────────────▼──────────────────────────────┐
-│                    qaqh-daemon (Rust 后台进程)              │
-│   Axum HTTP/SSE 服务、多会话 Agent 循环、沙箱、工具执行     │
-└─────────────────────────────────────────────────────────────┘
+qaqh-desktop-app renderer (Chromium)
+  → contextBridge window.qaqhHost (fixed command + event contract)
+  → Electron main process (runtime sender checks, service allowlist, native OS work)
+  → @qaqh/sdk (Ringing v2, leases, commands, streams, pairing, graceful stop)
+  → qaqh-daemon
 ```
 
-### 前端零改动 Preload 虚拟化适配
-`qaqh-desktop-app` 内部原本调用 `@tauri-apps/api/core` 的 `invoke` 以及 `@tauri-apps/api/event` 的 `listen`。
-在 Electron 的 `src/preload/index.ts` 中：
-- 暴露 `window.__TAURI_INTERNALS__.invoke`：将命令透传给 Electron 主进程的 `ipcRenderer.invoke('tauri:invoke', cmd, args)`；
-- 拦截 `plugin:event|listen` 与 `plugin:event|unlisten`：在 Preload 中管理回调 ID，并将主进程推送的 `tauri:event` 包装为 Tauri 规范的 `{ event, id, payload }` 回调给前端组件；
-- **效果**：`qaqh-desktop-app` 的编译产物 `out/renderer` **无需修改任何一行业务代码**，直接无缝跑在 Electron 中！
+There is no Tauri compatibility runtime. Main IPC is sender-validated and accepts an enumerated set of host commands; the service RPC bridge has a runtime allowlist and active-session scoping. Model-picker IPC is separately restricted to its native picker window. Electron keeps the daemon client and credentials in main.
 
-### Ringing v2 客户端与 SSE 事件流转发
+The SDK owns protocol work: Ringing handshake/lease renewal, service methods, command idempotency, SSE bootstrap/resumption, content transfer, device management and stop semantics. Electron owns windows, tray, lifecycle, dialogs, external URL policy, local discovery, process launch/restart, user skills scanning and renderer IPC.
 
-传输层由本仓 `src/main/ringing-client.ts` 适配 **`@qaqh/sdk`**（`file:../qaqh-sdk`，随主进程 bundle 打包）实现，手写 HTTP/SSE 客户端已移除。适配器保持渲染层事件契约不变：
-- **握手与 Lease 维护**：SDK `connect` 协商 Lease 并按 daemon 下发的 `renew_interval_ms` 续约；续约失败进入 recovering，先经 `refreshCredentials` 重读 `daemon.json`（daemon 重启换端口/凭据自动跟随），再重开客户端；
-- **单活动流 (Active Seed Stream)**：前端 `attach(seed)` 时切换活动流；投影走 SDK `watchSession`（bootstrap + `?since_cursor=` 断线无缝续传、指数退避重连、`reset_required`/`stream_terminated` 显式暂停），timeline 走 SDK `watchTimeline`（SSE `Last-Event-ID: {epoch}:timeline:{seq}` 续传）；
-- **命令语义**：SDK `submit` 携带幂等 `command_id`，超时以 `outcome_unknown` 暴露（可凭同 id 重发/查询，daemon 幂等回执）；内容上传走后端 multipart 契约（`session_id`/`media_type`/`content` 三段），下载支持 `sha256:` 前缀与单区间 Range；
-- **事件转发**：解析收到的 SSE 数据包并实时发送至渲染进程：
-  - `timeline://entry`（时间线增量）
-  - `timeline://status`（连接状态 open / closed / reconnecting）
-  - `timeline://snapshot`（快照数据）
-  - `projection://event`（投影事件）
-  - `projection://reset`（投影重置）
-  - `conn://liveness`（心跳探活）
+## Development
 
----
-
-## 3. 构建流水线设计 (CI/CD Pipeline)
-
-全流水线构建分为四个严格衔接的阶段：
+Requirements: Node.js >=22.12, pnpm, Rust/Cargo, and sibling repositories `qaqh-sdk`, `qaqh-backend`, and `qaqh-desktop-app`.
 
 ```bash
-[阶段 1: qaqh-backend]
-  cargo build --release -p qaqh-daemon
-  -> 拷贝产物至 resources/bin/qaqh-daemon
-
-[阶段 2: qaqh-desktop-app]
-  pnpm run build (Vite + SolidJS)
-  -> 拷贝 out/renderer/ 到 renderer/
-
-[阶段 3: qaqh-electron]
-  esbuild 打包 main (src/main/index.ts -> dist/main/index.cjs)
-  esbuild 打包 preload (src/preload/index.ts -> dist/preload/index.cjs)
-
-[阶段 4: electron-builder]
-  打包为 Linux AppImage / deb / tar.gz
-  产出目录: release/
-```
-
-使用 `node scripts/build-all.mjs` 或 `pnpm run build:all` 即可一键完成跨仓全流程编译打包。
-
----
-
-## 4. 项目结构说明
-
-```text
-qaqh-electron/
-├── package.json              # 项目依赖与打包脚本
-├── tsconfig.json             # TypeScript 配置
-├── electron-builder.yml      # Linux 产物打包配置（AppImage, deb, extraResources 等）
-├── .npmrc / pnpm-workspace.yaml # pnpm 构建安全策略配置
-├── scripts/
-│   ├── bundle.mjs            # esbuild 高性能多目标 bundle 脚本
-│   ├── build-all.mjs         # 跨仓全流程一键构建脚本
-│   └── dev.mjs               # 本地开发与调试启动器
-├── src/
-│   ├── main/
-│   │   ├── index.ts          # 主进程生命周期、窗口管理、Wayland/IME 调优
-│   │   ├── daemon.ts         # qaqh-daemon 自动发现、健康探测与子进程拉起
-│   │   ├── ringing-client.ts # Node 原生 Ringing v2 HTTP/SSE 客户端
-│   │   ├── challenges.ts     # 审批安全隔离 Challenge 管理
-│   │   ├── native-dialogs.ts # 原生系统对话框、外部链接与附件上传
-│   │   ├── skills-scanner.ts # 本地 ~/.qaqh/skills 扫描
-│   │   ├── ipc-handlers.ts   # IPC 命令路由与 session_list 格式对齐
-│   │   └── types.ts          # 类型定义
-│   └── preload/
-│       └── index.ts          # Tauri 2 虚拟化适配与 Electron 暴露网关
-└── build/
-    └── icons/                # 跨平台图标资源
-```
-
----
-
-## 5. 极端受限硬件（双核老奔腾/弱核显）极致轻量化调优
-
-针对类似 **Intel Pentium G2020（双核双线程、无超线程、Ivy Bridge 老集显）** 这类极端受限环境，本项目实施了深度轻量化调优策略：
-
-| 调优维度 | 优化措施 | 收益与作用 |
-|---|---|---|
-| **并发与进程数收敛** | 注入 `--renderer-process-limit=1` 与 `--disable-site-isolation-trials` | 杜绝 Chromium 为多标签/跨站派生多进程，消除双核软中断卡死 |
-| **V8 堆内存硬约束** | 注入 `--max-old-space-size=256 --optimize-for-size --expose-gc` | 限制老生代堆内存最大 256MB，以字节码紧凑换取低内存常驻 |
-| **功能剥离降负** | 禁用 3D/WebGL (`--disable-3d-apis`)、语音 (`--disable-speech-api`)、拼写检查 (`spellcheck: false`) | 纯代码文本应用无需 3D，关掉拼写检查直接减少 40MB+ 词库常驻并消除打字 CPU 峰值 |
-| **I/O 与缓存节流** | 严格限制磁盘缓存 16MB (`--disk-cache-size=16777216`)、多媒体缓存 8MB | 避免磁盘密集 I/O 导致系统 Swap 剧烈颠簸 |
-| **后台挂起与主动 GC** | 开启 `backgroundThrottling: true`，监听 `minimize` 主动清理缓存并执行 `global.gc()` | 最小化或切后台时挂起非必要动画与定时器，空闲 CPU 占用趋近于 0% |
-| **SSE 长流安全保护** | 单帧数据设定 4MB 防御式安全上限 | 阻断大流量消息累积导致的内存突发暴涨 |
-
----
-
-## 6. 常用命令与使用指南
-
-### 开发模式
-```bash
-# 启动本地开发（自动注入低内存环境）
-pnpm run dev
-```
-
-### 仅编译主进程与预加载脚本
-```bash
-pnpm run build
+pnpm install --frozen-lockfile
+pnpm run dev             # Vite renderer + Electron main/preload, live development window
 pnpm run typecheck
+pnpm test
 ```
 
-### 全流程跨仓一键构建与打包
+The renderer is loaded from Vite at `http://127.0.0.1:5173` in development. `app://localhost` serves packaged resources in production. The Electron main process starts/reuses the backend daemon and initializes the SDK client before loading the renderer so IPC routes exist at frontend boot.
+
+## Canonical build (currently Linux x64)
+
 ```bash
-# 执行完整流程（编译后端 daemon -> 编译前端 webui -> 编译 electron -> 打包 Linux 安装包）
-pnpm run build:all
+just build                # daemon + SDK + renderer + Electron, then AppImage/deb/tar.gz
+just build dir            # unpacked app, no installer archive
+just check                # Electron typecheck/tests and renderer typecheck/tests
 ```
 
-### 单独打包指定格式
-```bash
-# 打包 Linux 免安装解压目录
-pnpm run package:dir
+The packaging script rejects unsupported host architectures rather than silently cross-compiling. It validates the packaged ASAR content and daemon resources before replacing `release/`. A successful package check is not a GUI smoke test; start the packaged app on each target distribution before publishing.
 
-# 打包 Linux 通用 AppImage
-pnpm run package:appimage
+## Runtime behavior
 
-# 打包 Debian / Ubuntu deb 安装包
-pnpm run package:deb
-```
+- Closing the window hides it to the tray on Linux/Windows; macOS keeps normal application-window behavior. Tray/menu exit opens the renderer's quit-confirmation flow.
+- Ordinary shell exit leaves the daemon alive. If the user explicitly asks to stop it, the SDK stop-if-idle operation protects active work; only an explicit force-confirmed choice uses unconditional stop.
+- LAN mode restarts the daemon via the Electron host, waits for the new discovery/endpoint, then reconnects and restores the active seed. Pairing tokens are requested and assembled in main; token material is returned only inside the one-time QR payload for the user.
+- Native screenshot capture and native window materials are not currently implemented in Electron; the UI hides the screenshot action and falls back to CSS themes. Process-tree memory enumeration is explicitly reported unsupported rather than fabricated.
+
+## User interactions
+
+Ask, tool permission requests and plan reviews share the renderer approval surface but use distinct Ringing commands. The host owns the one-shot challenges, validates decisions and payloads, and explicitly targets the session that issued the challenge. See [interaction semantics and acceptance](docs/interaction-semantics.md) for the decision matrix, trust/autonomous boundaries, recovery policy and remaining GUI checks.
+
+`pnpm test` includes host IPC regressions and real-SDK serialization/SSE tests over an in-memory fetch transport, in addition to packaging guards. These tests do not replace a live-daemon or GUI acceptance run.
+
+## Security notes
+
+The renderer uses context isolation and no Node integration. `app://` responses carry a restrictive CSP; external links are limited to `http(s)` plus the specific macOS screen-recording preference deep link. The preload exposes no raw `ipcRenderer`, arbitrary event channel, or arbitrary invoke API. Main validates the calling frame and service method names.

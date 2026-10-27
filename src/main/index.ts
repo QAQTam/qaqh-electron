@@ -1,11 +1,13 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net } from "electron";
-import { join, resolve } from "node:path";
+import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { existsSync } from "node:fs";
+import { readDiscovery } from "./daemon.js";
 import { pathToFileURL } from "node:url";
 import { DaemonManager } from "./daemon.js";
 import { RingingClient } from "./ringing-client.js";
 import { ChallengeManager } from "./challenges.js";
-import { registerIpcHandlers } from "./ipc-handlers.js";
+import { registerIpcHandlers, registerQuitIpcHandler } from "./ipc-handlers.js";
+import { MODEL_PICKER_HTML, openModelPicker } from "./model-picker.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
 protocol.registerSchemesAsPrivileged([
@@ -58,8 +60,17 @@ app.commandLine.appendSwitch(
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let client: RingingClient | null = null;
+let allowWindowClose = false;
 const daemonMgr = new DaemonManager();
 const challenges = new ChallengeManager();
+let connecting: Promise<RingingClient> | null = null;
+
+function showMainWindow(): void {
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createMainWindow();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
 
 // 单实例锁保护
 const gotLock = app.requestSingleInstanceLock();
@@ -68,16 +79,34 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
-    }
+    showMainWindow();
   });
 
   app.whenReady().then(async () => {
     await bootstrapApp();
   });
+}
+
+registerQuitIpcHandler(() => client);
+
+function ensureClient(): Promise<RingingClient> {
+  if (client) return Promise.resolve(client);
+  if (connecting) return connecting;
+  connecting = (async () => {
+    const discovery = await daemonMgr.ensureDaemonRunning(15000);
+    const next = new RingingClient(discovery, (eventName, payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(`qaqh:event:${eventName}`, payload);
+    });
+    try {
+      await next.init();
+    } catch (error) {
+      next.destroy();
+      throw error;
+    }
+    client = next;
+    return next;
+  })().finally(() => { connecting = null; });
+  return connecting;
 }
 
 async function bootstrapApp(): Promise<void> {
@@ -86,36 +115,18 @@ async function bootstrapApp(): Promise<void> {
   // 0. 注册 app:// 协议处理器，使 /assets 等 SPA 绝对路径无缝映射到本地文件
   registerAppProtocol();
 
-  // 1. 确保 daemon 在运行
-  let discovery;
+  // 1. Start/reuse daemon and establish the SDK client before the renderer loads,
+  // so every IPC handler exists before frontend boot invokes anything.
+  registerIpcHandlers(ensureClient, daemonMgr, challenges);
   try {
-    discovery = await daemonMgr.ensureDaemonRunning(15000);
+    await ensureClient();
   } catch (err) {
     console.error("[app] Failed to connect or start qaqh-daemon:", err);
   }
 
-  // 2. 创建主窗口
+  // 2. Create renderer after IPC registration.
   createMainWindow();
-
-  // 3. 初始化 Ringing 客户端并建立连接
-  if (discovery) {
-    client = new RingingClient(discovery, (eventName, payload) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("tauri:event", { eventName, payload });
-      }
-    });
-
-    try {
-      await client.init();
-      console.log("[app] Ringing v2 client connected successfully.");
-    } catch (err) {
-      console.warn("[app] Ringing client init failed:", err);
-    }
-
-    registerIpcHandlers(client, daemonMgr, challenges);
-  }
-
-  // 4. 创建系统托盘
+  // 3. Install tray.
   setupTray();
 }
 
@@ -136,9 +147,18 @@ function resolveRendererDir(): string {
 }
 
 function registerAppProtocol(): void {
-  protocol.handle("app", (request) => {
+  protocol.handle("app", async (request) => {
     try {
       const parsedUrl = new URL(request.url);
+      if (parsedUrl.pathname === "/model-picker") {
+        return new Response(MODEL_PICKER_HTML, {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'",
+            "x-content-type-options": "nosniff",
+          },
+        });
+      }
       let pathname = decodeURIComponent(parsedUrl.pathname);
       if (pathname === "/" || pathname === "") {
         pathname = "/index.html";
@@ -147,13 +167,18 @@ function registerAppProtocol(): void {
       const rendererDir = resolveRendererDir();
       const cleanPath = pathname.replace(/^\/+/, "");
       const filePath = resolve(rendererDir, cleanPath);
+      const relativePath = relative(rendererDir, filePath);
 
-      if (!filePath.startsWith(rendererDir) || !existsSync(filePath)) {
+      if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath) || !existsSync(filePath)) {
         console.warn(`[protocol] 404: ${pathname} (resolved: ${filePath})`);
         return new Response("Not Found", { status: 404 });
       }
 
-      return net.fetch(pathToFileURL(filePath).toString());
+      const response = await net.fetch(pathToFileURL(filePath).toString());
+      const headers = new Headers(response.headers);
+      headers.set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https: http://127.0.0.1:* http://localhost:*; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'");
+      headers.set("X-Content-Type-Options", "nosniff");
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
     } catch (err) {
       console.error("[protocol] Failed to serve app request:", err);
       return new Response("Internal Server Error", { status: 500 });
@@ -161,7 +186,7 @@ function registerAppProtocol(): void {
   });
 }
 
-function createMainWindow(): void {
+function createMainWindow(): BrowserWindow {
   const preloadPath = join(__dirname, "../preload/index.cjs");
 
   mainWindow = new BrowserWindow({
@@ -196,6 +221,12 @@ function createMainWindow(): void {
     mainWindow?.show();
   });
 
+  mainWindow.on("close", (event) => {
+    if (allowWindowClose) return;
+    event.preventDefault();
+    mainWindow?.hide();
+  });
+
   if (process.env.QAQH_DEV_URL && process.env.QAQH_DEV_URL.trim() !== "") {
     console.log(`[app] Loading renderer from Dev URL: ${process.env.QAQH_DEV_URL}`);
     mainWindow.loadURL(process.env.QAQH_DEV_URL);
@@ -207,60 +238,118 @@ function createMainWindow(): void {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+  return mainWindow;
 }
 
 function setupTray(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    {
+      label: "QAQ-Harness",
+      submenu: [
+        { label: "关于 QAQ-Harness", role: "about" },
+        { type: "separator" },
+        { label: "退出…", accelerator: "CommandOrControl+Q", click: () => requestRendererQuit() },
+      ],
+    },
+    {
+      label: "模型",
+      submenu: [
+        {
+          label: "选择新会话默认模型…",
+          accelerator: "CommandOrControl+Shift+M",
+          click: () => { if (client) openModelPicker(client, null); },
+        },
+        {
+          label: "更改当前会话模型…",
+          click: () => {
+            const seed = client?.getActiveSeed();
+            if (client && seed) openModelPicker(client, seed);
+            else console.info("[model-picker] no active session is attached");
+          },
+        },
+      ],
+    },
+  ]));
+
   try {
-    const icon = nativeImage.createEmpty();
+    const iconPath = app.isPackaged
+      ? join(app.getAppPath(), "build/icons/32x32.png")
+      : join(app.getAppPath(), "build/icons/32x32.png");
+    const icon = nativeImage.createFromPath(iconPath);
     tray = new Tray(icon);
     tray.setToolTip("QAQ-Harness");
 
     const contextMenu = Menu.buildFromTemplate([
       {
-        label: "打开 QAQH",
+        label: "选择新会话默认模型…",
         click: () => {
-          if (mainWindow) {
-            mainWindow.show();
-            mainWindow.focus();
-          } else {
-            createMainWindow();
-          }
+          if (client) openModelPicker(client, null);
         },
+      },
+      {
+        label: "更改当前会话模型…",
+        click: () => {
+          const seed = client?.getActiveSeed();
+          if (client && seed) openModelPicker(client, seed);
+        },
+      },
+      { type: "separator" },
+      {
+        label: "打开 QAQH",
+        click: () => showMainWindow(),
       },
       { type: "separator" },
       {
         label: "退出 QAQH",
         click: () => {
-          app.quit();
+          requestRendererQuit();
         },
       },
     ]);
 
     tray.setContextMenu(contextMenu);
-    tray.on("click", () => {
-      if (mainWindow) {
-        if (mainWindow.isVisible()) {
-          mainWindow.focus();
-        } else {
-          mainWindow.show();
-        }
-      }
-    });
+    tray.on("click", showMainWindow);
   } catch (err) {
     console.warn("[tray] Tray setup skipped or failed:", err);
   }
 }
 
-app.on("window-all-closed", () => {
-  // 遵循契约：Linux / Windows 窗口全部关闭时退出主程序，但后台 daemon 保留存活
-  if (process.platform !== "darwin") {
-    app.quit();
+function requestRendererQuit(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow();
+    if (mainWindow) {
+      const target = mainWindow;
+      target.once("ready-to-show", () => {
+        target.show();
+        target.webContents.send("qaqh:event:app://quit-requested", null);
+      });
+    }
+    return;
   }
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send("qaqh:event:app://quit-requested", null);
+}
+
+app.on("window-all-closed", () => {
+  // Closing the window hides it on Linux/Windows; on macOS the app remains active.
 });
 
 app.on("before-quit", () => {
+  allowWindowClose = true;
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
   if (client) {
     client.destroy();
     client = null;
   }
+  // Daemon is intentionally detached and survives shell exit.
+});
+
+app.on("activate", () => {
+  if (!mainWindow) createMainWindow();
+  mainWindow?.show();
+  mainWindow?.focus();
 });
