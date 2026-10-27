@@ -12,6 +12,7 @@ import { For, Show, createSignal, onSettled, type Component } from "solid-js";
 import { Section } from "./controls";
 import { loadBuildInfo, type BuildInfo } from "../lib/version";
 import { transport } from "../lib/transport";
+import { daemonLanStatus } from "../lib/pairing";
 import { toast } from "../ui/toast";
 import { devConsoleOpen, devMode, openDevConsole, pushUnlockClick } from "../lib/devmode";
 import { DevConsole } from "./dev/DevConsole";
@@ -19,23 +20,30 @@ import { DevConsole } from "./dev/DevConsole";
 export const AboutSection: Component = () => {
   const [build, setBuild] = createSignal<BuildInfo | null>(null);
   const [failed, setFailed] = createSignal(false);
-  const [daemon, setDaemon] = createSignal<Record<string, unknown> | null>(null);
+  const [daemonVersion, setDaemonVersion] = createSignal<string | null>(null);
+  const [daemonBuildId, setDaemonBuildId] = createSignal<string | null>(null);
+  const [daemonProtocol, setDaemonProtocol] = createSignal<string | null>(null);
   /** 连点时间戳;解锁或超窗即清空,不残留半程进度。 */
   const [stamps, setStamps] = createSignal<number[]>([]);
 
   // 只读一次:构建标识不随配置变,没有刷新语义。
   loadBuildInfo().then(setBuild, () => { setFailed(true); });
   onSettled(() => {
-    void transport.rpc<Record<string, unknown>>("daemon.version", {}).then(setDaemon).catch(() => {});
+    // daemon.version is a JSON string (`CARGO_PKG_VERSION`), not an object.
+    void transport.rpc<unknown>("daemon.version", {}).then((value) => {
+      setDaemonVersion(typeof value === "string" && value.trim() !== "" ? value : null);
+    }).catch(() => {});
+    // Discovery carries the control protocol version; it is optional when the
+    // daemon has not published a discovery document yet.
+    void daemonLanStatus().then((status) => {
+      const discovered = status.daemon_version;
+      if (discovered != null && discovered !== "") {
+        setDaemonVersion((current) => current ?? discovered);
+      }
+      setDaemonBuildId(status.build_id ?? null);
+      setDaemonProtocol(status.protocol_version == null ? null : String(status.protocol_version));
+    }).catch(() => {});
   });
-
-  const daemonValue = (...keys: string[]): string => {
-    for (const key of keys) {
-      const value = daemon()?.[key];
-      if (typeof value === "string" || typeof value === "number") return String(value);
-    }
-    return "—";
-  };
 
   const version = (): string => {
     if (failed()) return "壳未提供 app_version";
@@ -47,6 +55,13 @@ export const AboutSection: Component = () => {
   const commit = (): string => {
     const info = build();
     return info == null || info.unavailable ? "—" : info.commit;
+  };
+
+  const daemonDisplay = (): string => {
+    const base = daemonVersion();
+    if (base == null) return "未连接";
+    const hash = daemonBuildId();
+    return hash == null || hash === "" ? base : `${base}+${hash.slice(0, 8)}`;
   };
 
   const tapVersion = (): void => {
@@ -66,10 +81,10 @@ export const AboutSection: Component = () => {
     <Section
       id="section-about"
       title="关于"
-      desc="桌面壳自身的构建标识;daemon 是独立 sidecar,版本随包一起出。"
+      desc="前端 Electron 壳与后端 daemon 的构建标识;两侧版本可以独立核对。"
     >
       <div class="readonly-grid">
-        <span>版本</span>
+        <span>前端版本</span>
         <b
           class="about-version"
           onClick={tapVersion}
@@ -82,12 +97,12 @@ export const AboutSection: Component = () => {
             </span>
           </Show>
         </b>
-        <span>commit</span>
-        <b>{commit()}</b>
-        <span>daemon 版本</span>
-        <b>{daemonValue("version", "daemon_version")}</b>
-        <span>daemon 协议</span>
-        <b>{daemonValue("protocol_version", "protocolVersion")}</b>
+        <span>前端 commit</span>
+        <b title={commit()}>{commit() === "—" ? "—" : commit().slice(0, 12)}</b>
+        <span>后端版本</span>
+        <b>{daemonDisplay()}</b>
+        <span>后端协议</span>
+        <b>{daemonProtocol() ?? "—"}</b>
       </div>
       <Show when={devMode()}>
         <div class="about-devbar">

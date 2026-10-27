@@ -39,6 +39,8 @@ export interface DaemonLanStatus {
   tls_fingerprint: string | null;
   pid: number | null;
   daemon_version?: string | null;
+  /** Full git commit hash embedded into the daemon build (`QAQH_BUILD_ID`). */
+  build_id?: string | null;
   protocol_version?: number | null;
   app_protocol_version?: number | null;
 }

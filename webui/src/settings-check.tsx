@@ -216,7 +216,7 @@ function serviceRpc(method: string, params: Record<string, unknown>): unknown {
     // 与宿主白名单同调(commands.rs:SERVICE_METHODS):这几条现在是真的放行的方法,
     // 夹具不接就等于替真宿主放行它不曾放行过的东西——快照用 memwatch-sim 造。
     case "daemon.version":
-      return "0.0.0-fixture";
+      return "2.0.20261028";
     case "session.list":
       return [];
     case "workspace.list":
@@ -266,7 +266,8 @@ const lan = {
 
 const lanView = (): Record<string, unknown> => ({
   ...lan,
-  daemon_version: "2.0.0-beta.3",
+  daemon_version: "2.0.20261028",
+  build_id: "389a070cf7732256978ab3851e1c841edde24a24",
   protocol_version: 1,
   app_protocol_version: 1,
 });
@@ -336,7 +337,7 @@ const internals = {
     if (cmd === "daemon_lan_disable") return lanDisable();
     if (cmd === "pairing_create") return pairingTicket();
     if (cmd === "app_version") {
-      return { version: "2.0.0-beta.4", commit: "fixture0", display: "2.0.0-beta.4-fixture0" };
+      return { version: "2.0.20261028", commit: "fixture0", display: "2.0.20261028+fixture0" };
     }
     // 界面进程组(commands.rs::host_process_group 的替身)。形状照 procgroup.rs:
     // 角色由「引擎」自报、字节量逐成员给;最后那条 utility 故意读不到,用来验

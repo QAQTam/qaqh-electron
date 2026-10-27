@@ -1,4 +1,5 @@
 import * as esbuild from "esbuild";
+import { execFileSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +7,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
 
 const mode = process.argv[2] || "all";
+
+function readGitInfo() {
+  try {
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim();
+    return { commit, dirty: status !== "" };
+  } catch {
+    return { commit: "unknown", dirty: false };
+  }
+}
+
+const git = readGitInfo();
 
 /** @type {esbuild.BuildOptions} */
 const commonOptions = {
@@ -15,6 +28,10 @@ const commonOptions = {
   sourcemap: true,
   external: ["electron"],
   logLevel: "info",
+  define: {
+    "process.env.QAQH_GIT_COMMIT": JSON.stringify(git.commit),
+    "process.env.QAQH_GIT_DIRTY": JSON.stringify(git.dirty ? "1" : "0"),
+  },
 };
 
 async function buildMain() {

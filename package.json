@@ -1,6 +1,6 @@
 {
   "name": "qaqh-electron",
-  "version": "2.0.0",
+  "version": "2.0.20261028",
   "private": true,
   "description": "QAQ-Harness Linux/Cross-platform Electron Shell for qaqh-backend with an in-repo SolidJS webui",
   "main": "dist/main/index.cjs",

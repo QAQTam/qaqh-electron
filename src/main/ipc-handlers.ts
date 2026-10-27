@@ -74,11 +74,12 @@ function lanView(discovery: Awaited<ReturnType<typeof readDiscovery>>) {
     tls_fingerprint: discovery.tls_fingerprint,
     pid: discovery.pid,
     daemon_version: discovery.daemon_version,
+    build_id: discovery.build_id,
     protocol_version: discovery.protocol_version,
     app_protocol_version: discovery.protocol_version,
   } : {
     running: false, active: false, endpoint: null, lan_endpoint: null,
-    tls_fingerprint: null, pid: null, daemon_version: null,
+    tls_fingerprint: null, pid: null, daemon_version: null, build_id: null,
     protocol_version: null, app_protocol_version: null,
   };
 }
@@ -445,7 +446,11 @@ async function handleCommand(
     case "app_version": {
       const version = app.getVersion();
       const commit = process.env.QAQH_GIT_COMMIT || "unknown";
-      const display = `${version}-${commit.slice(0, 8)}${process.env.QAQH_GIT_DIRTY === "1" ? "-dirty" : ""}`;
+      // The package version is the date base (`2.0.YYYYMMDD`); the build
+      // metadata is the commit hash captured at bundle time, so the displayed
+      // version does not go stale when the version commit itself changes.
+      const shortCommit = commit === "unknown" ? "unknown" : commit.slice(0, 8);
+      const display = `${version}+${shortCommit}${process.env.QAQH_GIT_DIRTY === "1" ? "-dirty" : ""}`;
       return { display, version, commit };
     }
 

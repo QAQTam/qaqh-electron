@@ -33,7 +33,7 @@ const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.me
 
 export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) => {
   const [build, setBuild] = createSignal<BuildInfo | null>(null);
-  const [daemon, setDaemon] = createSignal<Record<string, unknown> | null>(null);
+  const [daemonVersion, setDaemonVersion] = createSignal<string | null>(null);
   const [lan, setLan] = createSignal<DaemonLanStatus | null>(null);
   const [memory, setMemory] = createSignal<Awaited<ReturnType<typeof loadHostMemory>>>(null);
   const [group, setGroup] = createSignal<ProcessGroup | null>(null);
@@ -43,12 +43,14 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
   const windowState = (): WindowState | null => hostWindowState();
   const trayReady = (): boolean => windowState()?.tray === true;
   const effectiveCloseToTray = (): boolean => windowState()?.closeToTray === true && trayReady();
-  const daemonVersion = (): string => {
-    const value = daemon()?.version ?? daemon()?.daemon_version;
-    return typeof value === "string" && value !== "" ? value : "—";
+  const daemonVersionLabel = (): string => {
+    const base = daemonVersion() ?? lan()?.daemon_version;
+    if (base == null || base === "") return "—";
+    const hash = lan()?.build_id;
+    return hash == null || hash === "" ? base : `${base}+${hash.slice(0, 8)}`;
   };
   const protocolVersion = (): string => {
-    const value = daemon()?.protocol_version ?? daemon()?.protocolVersion;
+    const value = lan()?.protocol_version ?? lan()?.app_protocol_version;
     return typeof value === "number" || typeof value === "string" ? String(value) : "—";
   };
 
@@ -64,7 +66,9 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
     };
     await Promise.all([
       attempt("壳版本", loadBuildInfo, setBuild),
-      attempt("daemon 版本", () => transport.rpc<Record<string, unknown>>("daemon.version", {}), setDaemon),
+      attempt("daemon 版本", () => transport.rpc<unknown>("daemon.version", {}), (value) => {
+        setDaemonVersion(typeof value === "string" && value !== "" ? value : null);
+      }),
       attempt("局域网状态", daemonLanStatus, setLan),
       attempt("壳内存", loadHostMemory, setMemory),
       attempt("界面进程组", loadProcessGroup, setGroup),
@@ -159,10 +163,10 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
         <span>壳版本</span>
         <b>{build()?.display ?? (build()?.unavailable ? "浏览器环境（无壳）" : "读取中…")}</b>
         <span>commit</span>
-        <b>{build()?.commit ?? "—"}</b>
-        <span>daemon 版本</span>
-        <b>{daemonVersion()}</b>
-        <span>daemon 协议</span>
+        <b title={build()?.commit ?? ""}>{build()?.commit?.slice(0, 12) ?? "—"}</b>
+        <span>后端版本</span>
+        <b>{daemonVersionLabel()}</b>
+        <span>后端协议</span>
         <b>{protocolVersion()}</b>
         <span>局域网</span>
         <b>{lan()?.active === true ? (lan()?.lan_endpoint ?? "已开启") : lan()?.running === true ? "未开启" : "daemon 未运行"}</b>
