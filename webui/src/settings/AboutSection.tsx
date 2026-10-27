@@ -8,9 +8,10 @@
  * 文案——它是排查用的后门,不是功能;真打开过一次后,版本串就退化成「再点一下
  * 就开」的快捷键,连点进度也就此作废(见 `lib/devmode.ts`)。
  */
-import { For, Show, createSignal, type Component } from "solid-js";
+import { For, Show, createSignal, onSettled, type Component } from "solid-js";
 import { Section } from "./controls";
 import { loadBuildInfo, type BuildInfo } from "../lib/version";
+import { transport } from "../lib/transport";
 import { toast } from "../ui/toast";
 import { devConsoleOpen, devMode, openDevConsole, pushUnlockClick } from "../lib/devmode";
 import { DevConsole } from "./dev/DevConsole";
@@ -18,11 +19,23 @@ import { DevConsole } from "./dev/DevConsole";
 export const AboutSection: Component = () => {
   const [build, setBuild] = createSignal<BuildInfo | null>(null);
   const [failed, setFailed] = createSignal(false);
+  const [daemon, setDaemon] = createSignal<Record<string, unknown> | null>(null);
   /** 连点时间戳;解锁或超窗即清空,不残留半程进度。 */
   const [stamps, setStamps] = createSignal<number[]>([]);
 
   // 只读一次:构建标识不随配置变,没有刷新语义。
   loadBuildInfo().then(setBuild, () => { setFailed(true); });
+  onSettled(() => {
+    void transport.rpc<Record<string, unknown>>("daemon.version", {}).then(setDaemon).catch(() => {});
+  });
+
+  const daemonValue = (...keys: string[]): string => {
+    for (const key of keys) {
+      const value = daemon()?.[key];
+      if (typeof value === "string" || typeof value === "number") return String(value);
+    }
+    return "—";
+  };
 
   const version = (): string => {
     if (failed()) return "壳未提供 app_version";
@@ -71,6 +84,10 @@ export const AboutSection: Component = () => {
         </b>
         <span>commit</span>
         <b>{commit()}</b>
+        <span>daemon 版本</span>
+        <b>{daemonValue("version", "daemon_version")}</b>
+        <span>daemon 协议</span>
+        <b>{daemonValue("protocol_version", "protocolVersion")}</b>
       </div>
       <Show when={devMode()}>
         <div class="about-devbar">

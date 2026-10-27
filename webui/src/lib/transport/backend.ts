@@ -11,6 +11,8 @@ import type { RingingCommandAck } from "../../api/qaqh/RingingCommandAck";
 import type { TimelineSnapshot } from "../../api/qaqh/TimelineSnapshot";
 import { isDesktopRuntime } from "../desktop-host";
 
+export { isDesktopRuntime };
+
 export const RINGING_SCHEMA = "qaqh.Ringing";
 /** Ringing v2 单一信封版本:历史 v1 兼容已拆除。 */
 export const RINGING_VERSION = 2;
@@ -40,7 +42,7 @@ export type TimelinePageResponse = {
   truncated_before?: boolean;
 };
 
-/** Tauri 宿主转发的 timeline 状态(timeline://status,serde tagged)。 */
+/** Electron 宿主转发的 timeline 状态(timeline://status,serde tagged)。 */
 export type TimelineStatusWire = {
   status: "connecting" | "open" | "reconnecting" | "closed";
   session_id?: string;
@@ -83,7 +85,7 @@ export type ScreenshotWire = { path: string; name: string; size: number };
  * 截图范围。`selection` = 系统十字准星拉一块(快捷键走这条,"就指这里");
  * `fullscreen` = 整屏一张,适合抓一闪即逝的状态。
  *
- * 没有 `window` 档是有意的:Tauri 侧拿窗口号要下 Objective-C 消息,而"截错窗口"
+ * 没有 `window` 档是有意的:宿主侧拿窗口号需要平台特定 API,而"截错窗口"
  * 与"截错范围"一样难查——先给两个确定能截对的范围。
  */
 export type ShotMode = "selection" | "fullscreen";
@@ -188,8 +190,8 @@ export type UserSkillsWire = {
   diagnostics: UserSkillDiagnostic[];
 };
 
-/** 桌面壳专属面。 */
-export interface TauriHostSurface {
+/** Electron 桌面壳专属面。 */
+export interface DesktopHostSurface {
   /** 订阅宿主转发事件;返回反订阅函数。 */
   subscribe(handlers: StreamHandlers): Promise<() => void>;
   /** 查询宿主 timeline 流当前状态(null = 从未激活;兜底订阅晚于事件的竞态)。 */
@@ -202,13 +204,9 @@ export interface TauriHostSurface {
   stopStaleDaemon(): Promise<"stopping" | "busy" | "unsupported">;
 }
 
-/** 若当前后端是桌面壳宿主,返回其专属面;否则 null。 */
-export function tauriHost(backend: TransportBackend): TauriHostSurface | null {
+/** 若当前后端是 Electron 桌面壳宿主,返回其专属面;否则 null。 */
+export function desktopHostSurface(backend: TransportBackend): DesktopHostSurface | null {
   return backend instanceof Object && "subscribe" in backend
-    ? (backend as TransportBackend & TauriHostSurface)
+    ? (backend as TransportBackend & DesktopHostSurface)
     : null;
-}
-
-export function isTauriRuntime(): boolean {
-  return isDesktopRuntime();
 }

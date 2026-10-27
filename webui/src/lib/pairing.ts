@@ -1,13 +1,13 @@
 /**
  * 设备配对(daemon ringing v2)的壳命令封装:HTTP 与 admin token 都留在
  * Rust 侧,前端只拿 QR payload 字符串与设备列表(设备视图不含任何 token 材料)。
- * 非 Tauri 环境(浏览器 dev harness)不可用,调用方以 isTauriRuntime() 判定。
+ * 非 Electron 环境(浏览器 dev harness)不可用,调用方以 isDesktopRuntime() 判定。
  *
  * 局域网模式:daemon 绑非回环地址后才会写 `lan_endpoint`(TLS 面)+ `tls_fingerprint`。
  * 手机必须连那个面;壳自己的管理请求走回环 `endpoint`,两条路互不干扰。
  */
 import { invoke } from "./host";
-import { isTauriRuntime } from "./transport/backend";
+import { isDesktopRuntime } from "./transport/backend";
 
 export type PairingScope = "view" | "interact" | "admin";
 
@@ -28,7 +28,7 @@ export interface DeviceEntry {
   last_seen_ms: number;
 }
 
-/** daemon 局域网面状态;字段与 `src-tauri/src/lan.rs` 的 lan_view 对齐。 */
+/** daemon 局域网面状态;字段与 `qaqh-electron/src/main/ipc-handlers.ts` 的 lanView 对齐。 */
 export interface DaemonLanStatus {
   /** discovery 存在且 pid 存活。 */
   running: boolean;
@@ -65,7 +65,7 @@ export function pairingCreate(
   deviceName: string,
   platform?: string,
 ): Promise<PairingTicket> {
-  if (!isTauriRuntime()) return Promise.reject(new Error("设备配对仅在桌面壳内可用"));
+  if (!isDesktopRuntime()) return Promise.reject(new Error("设备配对仅在桌面壳内可用"));
   return invoke<PairingTicket>("pairing_create", {
     scopeGrant,
     deviceName,
@@ -74,17 +74,17 @@ export function pairingCreate(
 }
 
 export function devicesList(): Promise<{ devices: DeviceEntry[] }> {
-  if (!isTauriRuntime()) return Promise.reject(new Error("设备配对仅在桌面壳内可用"));
+  if (!isDesktopRuntime()) return Promise.reject(new Error("设备配对仅在桌面壳内可用"));
   return invoke<{ devices: DeviceEntry[] }>("devices_list");
 }
 
 export function deviceRevoke(deviceId: string): Promise<void> {
-  if (!isTauriRuntime()) return Promise.reject(new Error("设备配对仅在桌面壳内可用"));
+  if (!isDesktopRuntime()) return Promise.reject(new Error("设备配对仅在桌面壳内可用"));
   return invoke<void>("device_revoke", { deviceId });
 }
 
 export function daemonLanStatus(): Promise<DaemonLanStatus> {
-  if (!isTauriRuntime()) return Promise.reject(new Error("局域网模式仅在桌面壳内可用"));
+  if (!isDesktopRuntime()) return Promise.reject(new Error("局域网模式仅在桌面壳内可用"));
   return invoke<DaemonLanStatus>("daemon_lan_status");
 }
 
@@ -93,7 +93,7 @@ export function daemonLanStatus(): Promise<DaemonLanStatus> {
  * 会短暂中断会话;Busy 时抛 `daemon_busy`,确认后带 `force` 重试。
  */
 export function daemonLanEnable(options: LanEnableOptions = {}): Promise<DaemonLanStatus> {
-  if (!isTauriRuntime()) return Promise.reject(new Error("局域网模式仅在桌面壳内可用"));
+  if (!isDesktopRuntime()) return Promise.reject(new Error("局域网模式仅在桌面壳内可用"));
   return invoke<DaemonLanStatus>("daemon_lan_enable", {
     bindIp: options.bindIp?.trim() ? options.bindIp.trim() : null,
     port: options.port && options.port > 0 ? options.port : null,
@@ -103,7 +103,7 @@ export function daemonLanEnable(options: LanEnableOptions = {}): Promise<DaemonL
 
 /** 关掉局域网面,回到默认的回环明文 daemon(同样要重启)。 */
 export function daemonLanDisable(force = false): Promise<DaemonLanStatus> {
-  if (!isTauriRuntime()) return Promise.reject(new Error("局域网模式仅在桌面壳内可用"));
+  if (!isDesktopRuntime()) return Promise.reject(new Error("局域网模式仅在桌面壳内可用"));
   return invoke<DaemonLanStatus>("daemon_lan_disable", { force });
 }
 

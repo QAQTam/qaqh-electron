@@ -33,7 +33,7 @@
  *    `low|medium|high|xhigh|max|ultra`；前端 16:43 那次"与后端六档同序"是对它的镜像。
  *  - 本地那份 `../qaqh-backend` checkout 停在 `6a0e282`（10-10 冻结基线，落后上游
  *    12 个提交且已分叉），那里还是五档 —— **拿它当权威会得出相反的错误结论**。
- *  - 已知裂缝：随仓 sidecar `src-tauri/binaries/qaqh-daemon-*` 是 `2.0.0-beta.3`
+ *  - 已知裂缝：随包 daemon `qaqh-electron/resources/bin/qaqh-daemon` 是 `2.0.0-beta.3`
  *    （10-11 构建，比 aa7f2b3 早三天），字符串里没有 `ultra`。也就是说**当前这个
  *    二进制会拒 ultra**，而它该被重新构建到 RC1。见 README「推理强度档位」。
  */

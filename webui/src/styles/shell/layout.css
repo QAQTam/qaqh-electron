@@ -9,18 +9,18 @@
   /* 标签栏(40px 固定,§4/§5):消息/工具/设置三页共用,切页不产生行高跳动 */
   #top { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 12px; min-width: 0; padding-left: 16px; border-bottom: 1px solid var(--border); }
   /* macOS 标题栏融合:交通灯安全边距与窗口拖拽支持 */
-  html.tauri.platform-macos #top {
+  html.desktop.platform-macos #top {
     padding-left: 78px;
     background: color-mix(in srgb, var(--surface) 65%, transparent);
     -webkit-app-region: drag;
     app-region: drag;
   }
-  html.tauri.platform-macos[data-theme="dark"] #top {
+  html.desktop.platform-macos[data-theme="dark"] #top {
     background: color-mix(in srgb, var(--surface) 75%, transparent);
   }
-  html.tauri.platform-macos #top button,
-  html.tauri.platform-macos #top a,
-  html.tauri.platform-macos #top input {
+  html.desktop.platform-macos #top button,
+  html.desktop.platform-macos #top a,
+  html.desktop.platform-macos #top input {
     -webkit-app-region: no-drag;
     app-region: no-drag;
   }

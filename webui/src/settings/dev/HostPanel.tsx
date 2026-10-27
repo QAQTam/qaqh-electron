@@ -7,7 +7,7 @@
  * 需要的正是未经加工的那份。
  */
 import { For, Show, createSignal, type Component } from "solid-js";
-import { isTauriRuntime, transport } from "../../lib/transport";
+import { isDesktopRuntime, transport } from "../../lib/transport";
 import { errorTextOf, isScopeError, loadMemorySnapshot } from "../../lib/memwatch";
 
 type Call = { id: string; label: string; hint: string; run: () => Promise<unknown> };
@@ -23,9 +23,6 @@ export const HostPanel: Component = () => {
   const [busy, setBusy] = createSignal<string | null>(null);
   const [result, setResult] = createSignal<{ label: string; text: string; failed: boolean } | null>(null);
   const [scopeNote, setScopeNote] = createSignal<string | null>(null);
-
-  const previewMode = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).get("preview") === "tauri";
 
   const run = async (call: Call): Promise<void> => {
     setBusy(call.id);
@@ -59,7 +56,7 @@ export const HostPanel: Component = () => {
     <div class="dev-panel">
       <div class="readonly-grid">
         <span>运行时</span>
-        <b>{isTauriRuntime() ? "Tauri 壳" : previewMode ? "浏览器预览替身" : "纯浏览器(无壳)"}</b>
+        <b>{isDesktopRuntime() ? "Electron 壳" : "纯浏览器(无壳)"}</b>
         <span>传输后端</span>
         <b>{transport.constructor.name}</b>
       </div>

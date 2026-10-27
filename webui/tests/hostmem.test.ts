@@ -132,7 +132,7 @@ describe("summarizeMachineMemory", () => {
     const view = summarizeMachineMemory(null, process({ resident_bytes: 50 }), null, null);
     expect(view.rows).toHaveLength(1);
     expect(view.totalBytes).toBe(50);
-    expect(view.excluded).toContain("壳进程(未读到)");
+    expect(view.excluded).toContain("Electron 主进程(未读到)");
     expect(view.excluded).toContain("界面进程组(壳未提供)");
     expect(view.excluded).toContain("页面 JS 堆");
   });

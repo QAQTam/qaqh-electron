@@ -16,9 +16,9 @@ if (!process.env.TMPDIR || process.env.TMPDIR === "/tmp") {
   process.env.TMPDIR = localTmp;
 }
 
-// C3 起,本仓的唯一构建产物是 Tauri 壳的 renderer 资源
-// (`out/renderer`,由 `tauri.conf.json > build.frontendDist` 消费)。
-// CSP 由 `tauri.conf.json > app.security.csp` 一处接管,构建期不再注入,
+// C3 起,本仓的唯一构建产物是 Electron 壳的 renderer 资源
+// (`out/renderer`,同步到 qaqh-electron/renderer)。
+// CSP 由 Electron 主进程的 app:// 协议处理器一处接管,构建期不再注入,
 // 也不存在浏览器直连的 gateway 代理。
 
 export default defineConfig({

@@ -1,6 +1,6 @@
 /**
  * 内存探测客户端 —— daemon `diagnostics.memory.*` 的读面(宿主白名单见
- * `src-tauri/src/commands.rs:SERVICE_METHODS`)。
+ * `qaqh-electron/src/main/ipc-handlers.ts:SERVICE_METHODS`)。
  *
  * 三条来自后端的硬约束在类型上有直接体现:
  *  - 采集是 **opt-in**:`start` 之前不采样,`snapshot` 只读环形缓冲

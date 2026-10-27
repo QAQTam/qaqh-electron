@@ -702,8 +702,8 @@
   html[data-platform="windows"] .session-pending-body { border-radius: 4px; }
 
   /* ── Mica：有材质时让窗口透出来，没有时退回实底 ─────────────────── */
-  html[data-platform="windows"].tauri body { background: transparent; }
-  html[data-platform="windows"].tauri:not(.has-mica) body { background: var(--bg); }
+  html[data-platform="windows"].desktop body { background: transparent; }
+  html[data-platform="windows"].desktop:not(.has-mica) body { background: var(--bg); }
   html[data-platform="windows"].has-mica .workspace-content,
   html[data-platform="windows"].has-mica .settings-page {
     background: var(--layer-fill);

@@ -3,7 +3,8 @@ import { contextBridge, ipcRenderer } from "electron";
 const events = new Set([
   "timeline://entry", "timeline://status", "timeline://snapshot",
   "projection://event", "projection://reset", "conn://incompatible",
-  "conn://error", "conn://liveness", "conn://reconnect", "app://quit-requested",
+  "conn://error", "conn://liveness", "conn://reconnect",
+  "model-picker:changed", "app://window-state", "app://quit-requested",
 ]);
 const pendingQuitEvents: unknown[] = [];
 const quitCallbacks = new Set<(payload: unknown) => void>();
@@ -30,6 +31,14 @@ contextBridge.exposeInMainWorld("qaqhHost", {
   modelPicker: {
     load: (args: { sessionId?: string | null } = {}) => ipcRenderer.invoke("model-picker:load", args),
     save: (args: { sessionId?: string | null; selection: unknown; alsoDefault?: boolean }) => ipcRenderer.invoke("model-picker:save", args),
+    open: (args: { sessionId?: string | null } = {}) => ipcRenderer.invoke("model-picker:open", args),
+  },
+  windowControls: {
+    state: () => ipcRenderer.invoke("qaqh:window-state"),
+    hide: () => ipcRenderer.invoke("qaqh:window-hide"),
+    show: () => ipcRenderer.invoke("qaqh:window-show"),
+    setCloseToTray: (value: boolean) => ipcRenderer.invoke("qaqh:window-close-to-tray", value),
+    setTrayStatus: (text: string) => ipcRenderer.invoke("qaqh:tray-status", text),
   },
   requestQuit: (options: { stopDaemon: boolean; stopActiveWork: boolean }) => ipcRenderer.invoke("qaqh:request-quit", options),
 });

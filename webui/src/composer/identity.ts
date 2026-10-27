@@ -6,7 +6,7 @@
  */
 import { createSignal } from "solid-js";
 import { daemonLanStatus } from "../lib/pairing";
-import { isTauriRuntime } from "../lib/transport/backend";
+import { isDesktopRuntime } from "../lib/transport/backend";
 import { sessionCatalog, workspaceCatalog } from "../tabs/store";
 
 /** 局域网面是否开着;null = 未知(非桌面壳或还没读到),身份行不显示这一项。 */
@@ -18,7 +18,7 @@ export { lanActive };
  * 从设置页发起——那里的开关自己会回读状态。
  */
 export async function refreshLanStatus(): Promise<void> {
-  if (!isTauriRuntime()) return;
+  if (!isDesktopRuntime()) return;
   try {
     const status = await daemonLanStatus();
     setLanActive(status.active === true);

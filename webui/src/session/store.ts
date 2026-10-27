@@ -1,7 +1,7 @@
 /**
  * 一个标签页 = 一个会话的客户端状态机。
  *
- * 宿主契约(webui-tauri):所有 per-seed 面(命令/审批/RPC/timeline 流/快照)
+ * 宿主契约(electron):所有 per-seed 面(命令/审批/RPC/timeline 流/快照)
  * 经 Rust 宿主的类型化 IPC 转发,宿主维护「单一 active seed 持流」(plan D4);
  * 切标签 = attach(宿主切 active + 重建流)+ 快照重建(权威对齐)。后台标签
  * 不收流,状态由标签页轮询 sessions 列表(turn_count/running,后端事实)驱动
@@ -12,7 +12,7 @@
  * 刷新信号);自动标题由 v2 Meta SSE 推送,会话目录与运行态由 sessions 列表对齐。
  */
 import { createSignal, createStore } from "solid-js";
-import { transport, tauriHost, type ApprovalView, type StreamHandlers, type TimelineStatusWire, type TodoItemWire } from "../lib/transport";
+import { transport, desktopHostSurface, type ApprovalView, type StreamHandlers, type TimelineStatusWire, type TodoItemWire } from "../lib/transport";
 import { now } from "../lib/time";
 import { onConfigChanged } from "../lib/config-events";
 import { applyEntry, applySnapshot, emptySession, forceSealTurn, prependPage } from "./reducer";
@@ -297,9 +297,9 @@ export class SessionStore {
     this.state[1](fn);
   }
 
-  private host(): NonNullable<ReturnType<typeof tauriHost>> {
-    const host = tauriHost(transport);
-    if (host == null) throw new Error("宿主传输后端不可用(应在 Tauri 壳内运行)");
+  private host(): NonNullable<ReturnType<typeof desktopHostSurface>> {
+    const host = desktopHostSurface(transport);
+    if (host == null) throw new Error("宿主传输后端不可用(应在 Electron 壳内运行)");
     return host;
   }
 
@@ -422,7 +422,7 @@ export class SessionStore {
       this.setConnection("offline");
       return;
     }
-    // 兜底事件竞态:宿主可能在订阅完成前已发出 open(Tauri 事件不保留给晚到
+    // 兜底事件竞态:宿主可能在订阅完成前已发出 open(Electron 事件不保留给晚到
     // 订阅者),订阅成功后主动查询一次宿主侧当前状态对齐。
     try {
       const status = await this.host().timelineStatus(this.seed);

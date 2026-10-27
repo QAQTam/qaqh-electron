@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { SessionStore } from "../src/session/store";
-import { transport, tauriHost, type StreamHandlers } from "../src/lib/transport";
+import { transport, desktopHostSurface, type StreamHandlers } from "../src/lib/transport";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -12,7 +12,7 @@ function deferred<T>() {
 }
 
 test("real host projection dispatch refreshes todos after tool completion without legacy dashboard events", async () => {
-  const host = tauriHost(transport)!;
+  const host = desktopHostSurface(transport)!;
   let handlers!: StreamHandlers;
   const unlisten = vi.fn();
   vi.spyOn(host, "subscribe").mockImplementation(async (value) => { handlers = value; return unlisten; });

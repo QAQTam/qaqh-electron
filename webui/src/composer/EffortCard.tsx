@@ -62,6 +62,7 @@ const TIER_LABEL: Record<ReasoningTier, string> = {
 export const EffortCard: Component<{
   open: boolean;
   onToggle: () => void;
+  onOpenNativePicker?: () => void;
 }> = (props) => {
   const [pickingModel, setPickingModel] = createSignal(false);
   const [customModel, setCustomModel] = createSignal("");
@@ -264,6 +265,20 @@ export const EffortCard: Component<{
                 </For>
               </Show>
             </div>
+          </Show>
+
+          <Show when={props.onOpenNativePicker != null}>
+            <button
+              type="button"
+              class="ghost-mini effort-card__native-picker"
+              title="在 Electron 原生窗口中选择 Provider / 模型 / 推理强度"
+              onClick={() => {
+                props.onOpenNativePicker?.();
+                setPickingModel(false);
+              }}
+            >
+              在原生窗口中选择模型…
+            </button>
           </Show>
 
           <div

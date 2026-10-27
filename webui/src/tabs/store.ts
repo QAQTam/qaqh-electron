@@ -31,8 +31,8 @@ const [bootError, setBootErrorSignal] = createSignal<string | null>(null);
 // setBootError 由本模块内部与 App 兜底路径共用;导出名见文件底部。
 const [creating, setCreating] = createSignal(false);
 /**
- * 侧栏卡片字段 = 宿主 `SidebarSession`(src-tauri/src/commands.rs)的同名镜像:
- * 两边改一边,`commands.rs` 的 sidebar_projection_* 会红。
+ * 侧栏卡片字段 = 宿主 `SidebarSession`(qaqh-electron/src/main/ipc-handlers.ts)的同名镜像:
+ * 两边改一边,`ipc-handlers.ts` 的 sidebar_projection_* 会红。
  */
 export type SidebarSession = {
   session_id: string;

@@ -50,7 +50,7 @@ import {
   siwcStatus,
 } from "../lib/siwc";
 import { transport } from "../lib/transport";
-import { isTauriRuntime } from "../lib/transport/backend";
+import { isDesktopRuntime } from "../lib/transport/backend";
 import { notifyConfigChanged } from "../lib/config-events";
 import { modelSpec, type SpecBucket } from "../models/specs";
 import { siwcApiBase, siwcPlanBadgeVisible, type SiwcSessionStatus } from "../siwc/brand";
@@ -428,7 +428,7 @@ const ProviderRow: Component<{
 };
 
 export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => {
-  const available = isTauriRuntime();
+  const available = isDesktopRuntime();
   /** 已保存事实（`config.load` 的整份读模型）：切换要快照它，所以留整份。 */
   const [config, setConfig] = createSignal<ConfigDto | null>(null);
   /** 每 provider 记住的状态（前端代管）。 */

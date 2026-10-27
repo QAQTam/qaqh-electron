@@ -3,7 +3,7 @@
  *
  * 为什么单独一个模块而不是塞进 `lib/dsaccount.ts`：轮询最容易出的问题是
  * **静默挂死**（等一个永远不会来的终态），而那段逻辑在 UI 里没法测。这里不 import
- * 任何壳 API（tauri/transport 都不碰），所以单测可以直接跑真驱动。
+ * 任何壳 API（shell/transport 都不碰），所以单测可以直接跑真驱动。
  */
 
 /** 开工返回（与 daemon `dsaccount.sign_in.start` 的响应一致）。 */

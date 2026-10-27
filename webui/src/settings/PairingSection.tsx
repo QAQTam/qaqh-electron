@@ -11,7 +11,7 @@ import IconQrCode from "~icons/lucide/qr-code";
 import IconRefreshCw from "~icons/lucide/refresh-cw";
 import IconRadioTower from "~icons/lucide/radio-tower";
 import { toast } from "../ui/toast";
-import { isTauriRuntime, tauriHost, transport } from "../lib/transport";
+import { isDesktopRuntime, desktopHostSurface, transport } from "../lib/transport";
 import {
   daemonLanDisable,
   daemonLanEnable,
@@ -54,7 +54,7 @@ const shortFingerprint = (fp: string | null): string | null => {
 };
 
 export const PairingSection: Component = () => {
-  const available = isTauriRuntime();
+  const available = isDesktopRuntime();
   const [scope, setScope] = createSignal<PairingScope>("interact");
   const [deviceName, setDeviceName] = createSignal("");
   const [qrDataUrl, setQrDataUrl] = createSignal<string | null>(null);
@@ -132,7 +132,7 @@ export const PairingSection: Component = () => {
   // daemon 刚换过实例:宿主连接在壳侧已重建,这里把活动标签的流重新挂上去,
   // 无活动标签(no_active_seed)时静默即可。
   const reattachStreams = (): void => {
-    const host = tauriHost(transport);
+    const host = desktopHostSurface(transport);
     if (host == null) return;
     void host.streamsRetry().catch(() => {});
   };

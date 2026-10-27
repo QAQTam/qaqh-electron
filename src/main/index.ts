@@ -1,12 +1,12 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, type IpcMainInvokeEvent } from "electron";
 import { join, resolve, relative, isAbsolute, sep } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readDiscovery } from "./daemon.js";
 import { pathToFileURL } from "node:url";
 import { DaemonManager } from "./daemon.js";
 import { RingingClient } from "./ringing-client.js";
 import { ChallengeManager } from "./challenges.js";
-import { registerIpcHandlers, registerQuitIpcHandler } from "./ipc-handlers.js";
+import { registerIpcHandlers, registerQuitIpcHandler, isTrustedRenderer } from "./ipc-handlers.js";
 import { MODEL_PICKER_HTML, openModelPicker } from "./model-picker.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
@@ -61,6 +61,7 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let client: RingingClient | null = null;
 let allowWindowClose = false;
+let closeToTray = true;
 const daemonMgr = new DaemonManager();
 const challenges = new ChallengeManager();
 let connecting: Promise<RingingClient> | null = null;
@@ -89,6 +90,86 @@ if (!gotLock) {
 
 registerQuitIpcHandler(() => client);
 
+interface WindowState {
+  visible: boolean;
+  maximized: boolean;
+  fullscreen: boolean;
+  closeToTray: boolean;
+  tray: boolean;
+}
+
+function currentWindowState(): WindowState {
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  return {
+    visible: window?.isVisible() ?? false,
+    maximized: window?.isMaximized() ?? false,
+    fullscreen: window?.isFullScreen() ?? false,
+    closeToTray,
+    tray: tray != null,
+  };
+}
+
+function sendWindowState(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("qaqh:event:app://window-state", currentWindowState());
+}
+
+function windowPrefsPath(): string {
+  return join(app.getPath("userData"), "window-prefs.json");
+}
+
+function loadWindowPrefs(): void {
+  try {
+    const parsed = JSON.parse(readFileSync(windowPrefsPath(), "utf8")) as { closeToTray?: unknown };
+    if (typeof parsed.closeToTray === "boolean") closeToTray = parsed.closeToTray;
+  } catch {
+    // first run / malformed prefs: keep the tray-friendly default.
+  }
+}
+
+function persistWindowPrefs(): void {
+  try {
+    writeFileSync(windowPrefsPath(), JSON.stringify({ closeToTray }), "utf8");
+  } catch (error) {
+    console.warn("[window] failed to persist window prefs:", error);
+  }
+}
+
+function canControlWindow(event: IpcMainInvokeEvent): boolean {
+  return event.senderFrame === event.sender.mainFrame && isTrustedRenderer(event.senderFrame?.url ?? "");
+}
+
+ipcMain.handle("qaqh:window-state", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  return currentWindowState();
+});
+
+ipcMain.handle("qaqh:window-show", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  showMainWindow();
+  return null;
+});
+
+ipcMain.handle("qaqh:window-hide", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  mainWindow?.hide();
+  return null;
+});
+
+ipcMain.handle("qaqh:window-close-to-tray", (event, value: unknown) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  closeToTray = value !== false;
+  persistWindowPrefs();
+  sendWindowState();
+  return currentWindowState();
+});
+
+ipcMain.handle("qaqh:tray-status", (event, text: unknown) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  tray?.setToolTip(String(text ?? "").slice(0, 160));
+  return null;
+});
+
 function ensureClient(): Promise<RingingClient> {
   if (client) return Promise.resolve(client);
   if (connecting) return connecting;
@@ -111,6 +192,7 @@ function ensureClient(): Promise<RingingClient> {
 
 async function bootstrapApp(): Promise<void> {
   console.log("[app] Bootstrapping QAQ-Harness Electron shell...");
+  loadWindowPrefs();
 
   // 0. 注册 app:// 协议处理器，使 /assets 等 SPA 绝对路径无缝映射到本地文件
   registerAppProtocol();
@@ -139,8 +221,8 @@ function resolveRendererDir(): string {
   const localRenderer = resolve(process.cwd(), "renderer");
   if (existsSync(localRenderer)) return localRenderer;
 
-  // 3. 同级开发项目 qaqh-desktop-app 产物
-  const devRenderer = resolve(process.cwd(), "../qaqh-desktop-app/out/renderer");
+  // 3. 本仓 webui 的开发构建产物
+  const devRenderer = resolve(process.cwd(), "webui/out/renderer");
   if (existsSync(devRenderer)) return devRenderer;
 
   return asarRenderer;
@@ -224,8 +306,20 @@ function createMainWindow(): BrowserWindow {
   mainWindow.on("close", (event) => {
     if (allowWindowClose) return;
     event.preventDefault();
-    mainWindow?.hide();
+    if (closeToTray && tray != null) {
+      mainWindow?.hide();
+      return;
+    }
+    // The renderer owns the quit confirmation (stop daemon / stop active work).
+    requestRendererQuit();
   });
+
+  mainWindow.on("maximize", sendWindowState);
+  mainWindow.on("unmaximize", sendWindowState);
+  mainWindow.on("enter-full-screen", sendWindowState);
+  mainWindow.on("leave-full-screen", sendWindowState);
+  mainWindow.on("show", sendWindowState);
+  mainWindow.on("hide", sendWindowState);
 
   if (process.env.QAQH_DEV_URL && process.env.QAQH_DEV_URL.trim() !== "") {
     console.log(`[app] Loading renderer from Dev URL: ${process.env.QAQH_DEV_URL}`);

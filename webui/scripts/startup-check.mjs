@@ -93,7 +93,23 @@ try {
 
   await send("Page.enable");
   await send("Page.addScriptToEvaluateOnNewDocument", {
-    source: "document.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add('tauri'));",
+    source: `
+      window.__qaqhInternals = { invoke: async () => null, transformCallback: (callback) => callback };
+      window.qaqhHost = {
+        platform: "electron",
+        invoke: (cmd, args) => window.__qaqhInternals.invoke(cmd, args),
+        listen: () => () => {},
+        requestQuit: async () => {},
+        windowControls: {
+          state: async () => ({ visible: true, maximized: false, fullscreen: false, closeToTray: true, tray: false }),
+          hide: async () => {},
+          show: async () => {},
+          setCloseToTray: async () => ({ visible: true, maximized: false, fullscreen: false, closeToTray: true, tray: false }),
+          setTrayStatus: async () => {},
+        },
+      };
+      document.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add('desktop'));
+    `,
   });
 
   const probe = `(() => {
@@ -273,7 +289,7 @@ try {
   await send("Page.navigate", { url: BASE });
   await waitFor("Boolean(document.querySelector('#composer textarea'))");
   await evaluate(`(() => {
-    const internals = window.__TAURI_INTERNALS__;
+    const internals = window.__qaqhInternals;
     const original = internals.invoke.bind(internals);
     // 开局必须**空**:createSessionWithCwd 靠「轮询 session_list 找新 seed」判定
     // 建好了,先摆一条同名会话会让它一直等不到新条目、六秒后抛「会话创建超时」。

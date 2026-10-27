@@ -3,7 +3,7 @@
  *
  * 前端能调哪些 daemon 方法由**两层**决定，两处都要加才通：
  *  1. daemon 的方法表（`qaqh-runtime/src/ringing/service_methods.rs`，含 scope 档）；
- *  2. 桌面壳的白名单（`src-tauri/src/commands.rs::SERVICE_METHODS`）——它的存在是为了
+ *  2. 桌面壳的白名单（`qaqh-electron/src/main/ipc-handlers.ts::SERVICE_METHODS`）——它的存在是为了
  *     让「前端能调哪些 daemon 方法」可审计，而不是靠约定。
  *
  * 抽到这里的原因：`siwc.ts` 与 `dsaccount.ts` 各自写一份 `invoke` 包装，迟早会出现
@@ -11,7 +11,7 @@
  */
 import { invoke } from "./host";
 
-import { isTauriRuntime } from "./transport/backend";
+import { isDesktopRuntime } from "./transport/backend";
 
 /** 发一条服务面请求。`feature` 只用于浏览器预览下的错误文案。 */
 export function serviceRpc<T>(
@@ -19,7 +19,7 @@ export function serviceRpc<T>(
   method: string,
   params: Record<string, unknown> = {},
 ): Promise<T> {
-  if (!isTauriRuntime()) {
+  if (!isDesktopRuntime()) {
     throw new Error(`${feature} 需要桌面壳：浏览器预览下不可用`);
   }
   return invoke<T>("service_rpc", { method, params });

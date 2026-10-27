@@ -326,7 +326,7 @@ export function applyEntry(draft: SessionState, entry: TimelineEntryWire): Sessi
         if (isTerminalToolStatus(nextState)) {
           // 终态一到就换权威数字:估算槽清零,不留一个"约等于"在真值旁边。
           step.streamEstimate = null;
-          // 终态时刻优先用后端发射时盖的 epoch ms(Tauri 侧 daemon 与 webview 同机,
+          // 终态时刻优先用后端发射时盖的 epoch ms(Electron 侧 daemon 与 webview 同机,
           // 比「客户端收到」准);归档 rebuild 不带该槽 → 回退本地采样。
           step.endedAt = rawTool.completed_at_ms ?? ts;
         }

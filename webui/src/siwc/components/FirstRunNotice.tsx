@@ -3,7 +3,7 @@
  *
  * 文档：`You're using your ChatGPT plan` + `Got it`，**只在第一次**展示，
  * 之后不再出现。持久化「已看过」由调用方负责（本组件不做存储决策：
- * 它可能是 localStorage、Tauri store 或后端设置，属宿主选择）。
+ * 它可能是 localStorage、宿主 store 或后端设置，属宿主选择）。
  */
 import type { Component } from "solid-js";
 

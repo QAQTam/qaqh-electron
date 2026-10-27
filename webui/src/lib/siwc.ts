@@ -5,13 +5,13 @@
  * 前端只拿状态投影（结构上不含 token）与一个需要交给系统浏览器打开的授权 URL。
  *
  * 八个方法的清单是 daemon 服务面（`qaqh_siwc::methods::ALL`）的镜像；
- * 壳侧另有一份白名单（`src-tauri/src/commands.rs::SERVICE_METHODS`），
+ * 壳侧另有一份白名单（`qaqh-electron/src/main/ipc-handlers.ts::SERVICE_METHODS`），
  * 两处都要加才通——白名单的存在是为了让「前端能调哪些 daemon 方法」可审计。
  */
 import { invoke } from "./host";
 
 import type { SiwcSessionStatus } from "../siwc/brand";
-import { isTauriRuntime } from "./transport/backend";
+import { isDesktopRuntime } from "./transport/backend";
 
 export interface SiwcModelEntry {
   slug: string;
@@ -52,7 +52,7 @@ export interface SiwcSignOutResult {
 }
 
 async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  if (!isTauriRuntime()) {
+  if (!isDesktopRuntime()) {
     throw new Error("Sign in with ChatGPT 需要桌面壳：浏览器预览下不可用");
   }
   return invoke<T>("service_rpc", { method, params });

@@ -1,4 +1,4 @@
-/** Tauri-shaped invoke/listen shim backed by the Electron preload bridge. */
+/** Host invoke/listen shim backed by the Electron preload bridge. */
 import { desktopHost, type HostCommand, type HostEvent } from "../desktop-host";
 
 export type Event<T> = { payload: T };

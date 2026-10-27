@@ -2,19 +2,18 @@
  * 「本机」内存面:壳进程 + 渲染层自己。daemon 那一行仍走 `memwatch.ts` 的 RPC。
  *
  * 为什么壳要单独读:桌面端一共三个进程,daemon 的 `diagnostics.memory` 只看得见
- * daemon 自己。普通用户问的「这软件吃不吃内存」,答案大头其实在壳和 WebView2 上。
- * 壳侧复用 `qaqh-memwatch` 的 `global().snapshot()`(读的是调用方进程),所以 DTO
- * 与 daemon 完全同形,前端一张表能拼两行——见 `commands.rs::host_memory`。
+ * daemon 自己。普通用户问的「这软件吃不吃内存」,答案大头其实在 Electron 主进程
+ * 和 Chromium 子进程组上。壳侧读取 `process.memoryUsage()`,DTO 与 daemon 同形,
+ * 前端一张表能拼两行——见 `qaqh-electron/src/main/ipc-handlers.ts::host_memory`。
  *
- * 一条诚实边界:WebView2 的 renderer/GPU 子进程**没有**被算进来(COM 侧要
- * `ICoreWebView2ProcessInfo2::MemoryUsage`,本仓 lock 里的 webview2-com-sys 0.39.1
- * 还没有那个接口)。所以合计一律标成「已覆盖部分」,别让人当成交换机占用。
+ * 子进程组由 Electron `app.getAppMetrics()` 提供,按 Electron 自己认领的进程角色
+ * 聚合;读不到的成员会进 `excluded`,不静默漏加。
  */
 import { invoke } from "./host";
-import { isTauriRuntime } from "./transport";
+import { isDesktopRuntime } from "./transport";
 import type { ProcessMemory } from "./memwatch";
 
-/** 渲染层自报的数字;`performance.memory` 只有 Chromium(WebView2)有。 */
+/** 渲染层自报的数字;`performance.memory` 只有 Chromium 渲染进程有。 */
 export interface RendererMemory {
   usedJsHeapBytes: number | null;
   totalJsHeapBytes: number | null;
@@ -71,7 +70,7 @@ export interface GroupRow {
 
 /** 角色标签来自引擎自己认领的 Kind,不是我们按进程名猜的。 */
 const KIND_LABEL: Record<string, string> = {
-  browser: "browser(引擎主进程)",
+  browser: "browser(Chromium 主进程)",
   renderer: "renderer(页面)",
   gpu: "gpu",
   utility: "utility",
@@ -83,9 +82,9 @@ const KIND_LABEL: Record<string, string> = {
   unknown: "unknown",
 };
 
-/** 壳未提供该命令(旧壳 / 非 Tauri)时返回 null。 */
+/** 壳未提供该命令(旧壳 / 非 Electron)时返回 null。 */
 export const loadProcessGroup = (): Promise<ProcessGroup | null> =>
-  isTauriRuntime() ? invoke<ProcessGroup | null>("host_process_group") : Promise.resolve(null);
+  isDesktopRuntime() ? invoke<ProcessGroup | null>("host_process_group") : Promise.resolve(null);
 
 /** 按角色聚合;保持首次出现的顺序,免得每秒重排一次表格。 */
 export function groupRowsByKind(group: ProcessGroup | null): GroupRow[] {
@@ -113,7 +112,7 @@ export function groupRowsByKind(group: ProcessGroup | null): GroupRow[] {
 
 /** 壳未提供该命令(纯浏览器 / 旧壳)时返回 null,由面板显式缺。 */
 export async function loadHostMemory(): Promise<ProcessMemory | null> {
-  if (!isTauriRuntime()) return null;
+  if (!isDesktopRuntime()) return null;
   const value = await invoke<ProcessMemory | null>("host_memory");
   return value == null ? null : value;
 }
@@ -186,7 +185,7 @@ const rowOf = (id: MachineProcessRow["id"], label: string, process: ProcessMemor
  * 数量级——所以**读不到的那一块也要进 `excluded`**,让 UI 把话说全,而不是悄悄少加
  * 一个数还照样显示合计。
  *
- * 界面进程组与壳/daemon 不会重复计数:那是 WebView2 引擎自己起的子进程
+ * 界面进程组与壳/daemon 不会重复计数:那是 Electron/Chromium 自己起的子进程
  * (browser/renderer/gpu),既不是壳也不是 sidecar。
  */
 export function summarizeMachineMemory(
@@ -197,7 +196,7 @@ export function summarizeMachineMemory(
 ): MachineMemoryView {
   const rows: MachineProcessRow[] = [];
   const excluded: string[] = [];
-  for (const [id, label, process] of [["shell", "壳进程", host], ["daemon", "daemon 进程", daemon]] as const) {
+  for (const [id, label, process] of [["shell", "Electron 主进程", host], ["daemon", "daemon 进程", daemon]] as const) {
     const entry = rowOf(id, label, process);
     if (entry == null) excluded.push(`${label}(未读到)`);
     else rows.push(entry);

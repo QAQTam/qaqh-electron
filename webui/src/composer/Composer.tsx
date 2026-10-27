@@ -93,6 +93,8 @@ export const Composer: Component<{
    * 非 mac 平台都拿不到系统截图,摆出来只会变成一个坏控件。
    */
   onScreenshot?: () => void;
+  /** 原生模型选择器(Electron 独立窗口);不传则不渲染入口。 */
+  onOpenModelPicker?: () => void;
 }> = (props) => {
   let textarea: HTMLTextAreaElement | undefined;
   let root: HTMLDivElement | undefined;
@@ -302,6 +304,7 @@ export const Composer: Component<{
             <EffortCard
               open={openMenu() === "effort"}
               onToggle={() => setOpenMenu(openMenu() === "effort" ? null : "effort")}
+              onOpenNativePicker={props.onOpenModelPicker}
             />
             <Show when={props.onWorkspace != null}>
               <div class="composer-control-wrap">

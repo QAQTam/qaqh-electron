@@ -13,7 +13,7 @@
   }
   /* 仅在 Windows 且成功拿到 Mica 材质时才允许透明穿透；
      Linux (WebKitGTK) 或无材质环境下必须保持实底，防止 X11 产生黑屏穿底或缩放黑边 */
-  html.tauri.has-mica body { background: transparent; }
+  html.desktop.has-mica body { background: transparent; }
   :focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;

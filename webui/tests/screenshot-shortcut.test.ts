@@ -88,13 +88,13 @@ describe("可用性（决定按钮出不出）", () => {
   it("Electron 宿主当前没有原生截图面", () => {
     // The Electron host reports capture_screenshot as unsupported until native
     // capture lands, so the action stays hidden on every platform.
-    expect(screenshotSupported({ inTauri: true, userAgent: mac })).toBe(false);
-    expect(screenshotSupported({ inTauri: true, userAgent: windows })).toBe(false);
-    expect(screenshotSupported({ inTauri: false, userAgent: mac })).toBe(false);
+    expect(screenshotSupported({ desktop: true, userAgent: mac })).toBe(false);
+    expect(screenshotSupported({ desktop: true, userAgent: windows })).toBe(false);
+    expect(screenshotSupported({ desktop: false, userAgent: mac })).toBe(false);
   });
 
   it("拿不到 UA（非浏览器环境）按不可用处理，而不是猜一个", () => {
-    expect(screenshotSupported({ inTauri: true, userAgent: "" })).toBe(false);
+    expect(screenshotSupported({ desktop: true, userAgent: "" })).toBe(false);
   });
 });
 

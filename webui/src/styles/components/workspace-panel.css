@@ -106,7 +106,7 @@
     width: var(--workspace-panel-collapsed-width, 40px);
   }
   .workspace-panel.collapsed .workspace-panel-head > span { display: none; }
-  html.tauri .workspace-panel-surface {
+  html.desktop .workspace-panel-surface {
     background: var(--surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;

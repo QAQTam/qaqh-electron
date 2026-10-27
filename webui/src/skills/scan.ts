@@ -4,7 +4,7 @@
  * 两层的读盘面不同,因为 daemon 的白名单不同:
  *
  * 1. **项目级**(workspace/.qaqh|.agents|skills/名字/SKILL.md)
- *    走 transport.rpc → Tauri 宿主 SERVICE_METHODS 白名单(已放行 fs.list/fs.read)
+ *    走 transport.rpc → Electron 宿主 SERVICE_METHODS 白名单(已放行 fs.list/fs.read)
  *    → daemon 的 fs.list/fs.read(service.rs:421-434;fs.* 是 daemon MethodInfo 表里的
  *    READ,requires_session=false——路径守卫全在 allowed_roots:数据根 + UI 注册工作区 +
  *    各会话 cwd,fs_git.rs:28-48)。所以:
@@ -20,7 +20,7 @@
  *    FORBIDDEN。daemon 自己扫得到(qaqh-skills 的 discovery roots),但那份 catalog
  *    只经 Ringing 控制事件 `SkillsUpdated` 出去,而它在 v2 投影里没有对应 fact
  *    (ringing/pending_store.rs:310),webview 收不到。于是改走宿主命令
- *    `skills_user_scan`(src-tauri/src/skills.rs,同一份规则),这里只做解析与展示。
+ *    `skills_user_scan`(qaqh-electron/src/main/skills-scanner.ts,同一份规则),这里只做解析与展示。
  *
  * 两层的目录名与优先级都与 qaqh-skills 对齐:项目 `.qaqh` > `.agents` > `skills`,
  * 用户 `.qaqh` > `.agents`,同名 skill 只保留优先级最高者(项目优先于用户,
@@ -196,7 +196,7 @@ async function scanUserSkills(
     wire = await transport.userSkills();
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    // 旧壳没有这条命令(Tauri 的报错是 `Command skills_user_scan not found`)→ 说清楚
+    // 旧壳没有这条命令(Electron 的报错是 `Command skills_user_scan not found`)→ 说清楚
     // 「这一版壳读不了用户级」,不当成扫描失败。不按命令名匹配:真失败的消息里也会
     // 带命令名,那会把「读盘炸了」误报成「壳太旧」。
     if (/not allowed|not found|unknown command/i.test(message)) return false;
@@ -302,7 +302,7 @@ export async function rescanSkills(): Promise<void> {
   // 用户级与项目级互不依赖:一个读宿主、一个读 daemon,并行发。
   const userScan = scanUserSkills(user, issues, userRoots);
 
-  // 宿主不可达(Tauri 之外 / daemon 未连):整个 rpc 面都会抛——转演示数据。
+  // 宿主不可达(Electron 之外 / daemon 未连):整个 rpc 面都会抛——转演示数据。
   let daemonUnreachable = false;
   try {
     await transport.rpc("daemon.version", {});

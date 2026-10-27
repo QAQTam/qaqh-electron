@@ -2,20 +2,17 @@
  * 传输单例 — Electron 桌面壳后端。
  *
  * 浏览器 gateway 部署形态已随 `qaqh-webui-gateway` 移除:webui 的唯一运行形态
- * 是 Tauri 壳,Rust 宿主经 `qaqh-client` 直连 daemon,daemon token 不进 webview。
+ * 是 Electron 壳,主进程经 `@qaqh/sdk` 直连 daemon,daemon token 不进 webview。
  * 类型与接口见 `./backend`。
  */
 import { ElectronTransport, listenHostDiagnostics, openExternalUrl } from "./electron";
 import {
-  BrowserPreviewTransport,
-  listenBrowserPreviewDiagnostics,
-  openBrowserPreviewUrl,
-} from "./browser-preview";
-import {
+  desktopHostSurface,
   type Ack,
   type ApprovalKind,
   type ApprovalView,
   type AttachmentUploadWire,
+  type ReconnectStatusWire,
   type ScreenshotWire,
   type ShotMode,
   type StreamHandlers,
@@ -27,29 +24,20 @@ import {
   type UserSkillFile,
   type UserSkillRoot,
   type UserSkillsWire,
-  isTauriRuntime,
-  tauriHost,
 } from "./backend";
 
-const browserPreview = typeof window !== "undefined"
-  && new URLSearchParams(window.location.search).get("preview") === "tauri";
+export const transport: TransportBackend = new ElectronTransport();
 
-export const transport: TransportBackend = browserPreview
-  ? new BrowserPreviewTransport()
-  : new ElectronTransport();
-
-const hostDiagnostics = browserPreview ? listenBrowserPreviewDiagnostics : listenHostDiagnostics;
-const externalUrl = browserPreview ? openBrowserPreviewUrl : openExternalUrl;
-
-export { externalUrl as openExternalUrl, hostDiagnostics as listenHostDiagnostics };
+export { listenHostDiagnostics, openExternalUrl, desktopHostSurface };
 
 export { RINGING_SCHEMA, RINGING_VERSION } from "./backend";
-export { tauriHost, isTauriRuntime };
+export { isDesktopRuntime } from "../desktop-host";
 export type {
   Ack,
   ApprovalKind,
   ApprovalView,
   AttachmentUploadWire,
+  ReconnectStatusWire,
   ScreenshotWire,
   ShotMode,
   StreamHandlers,

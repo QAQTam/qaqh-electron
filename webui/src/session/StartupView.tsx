@@ -29,6 +29,7 @@ import {
   clearStartupAttachments,
 } from "../tabs/store";
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
+import { toast } from "../ui/toast";
 
 const SUGGESTIONS = [
   {
@@ -60,6 +61,8 @@ const SUGGESTIONS = [
 export const StartupView: Component<{
   /** 应用内截图（⌘⇧S 同一份实现）；缺省 = 宿主不提供，按钮不出现。 */
   onScreenshot?: () => void;
+  /** 原生模型选择器;缺省 = 当前形态没有独立窗口。 */
+  onOpenModelPicker?: () => void;
 }> = (props) => {
   let textarea: HTMLTextAreaElement | undefined;
   const [draftText, setDraftText] = createSignal("");
@@ -110,8 +113,8 @@ export const StartupView: Component<{
   const handlePickAttachments = async (): Promise<void> => {
     try {
       stageStartupAttachments(await transport.pickAttachments());
-    } catch {
-      // 静默处理
+    } catch (cause) {
+      toast(`添加附件失败：${cause instanceof Error ? cause.message : String(cause)}`, "err");
     }
   };
 
@@ -318,6 +321,17 @@ export const StartupView: Component<{
                     onClick={() => props.onScreenshot?.()}
                   >
                     <IconCamera />
+                  </button>
+                </Show>
+                <Show when={props.onOpenModelPicker != null}>
+                  <button
+                    type="button"
+                    class="composer-tool-button"
+                    aria-label="选择新会话默认模型"
+                    title="在原生窗口中选择新会话默认模型"
+                    onClick={() => props.onOpenModelPicker?.()}
+                  >
+                    <IconSparkles />
                   </button>
                 </Show>
               </div>

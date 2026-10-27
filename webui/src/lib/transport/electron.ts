@@ -30,6 +30,8 @@ import {
 type HostDiagnostics = {
   onIncompatible?: (details: Record<string, any>) => void;
   onHostError?: (message: string) => void;
+  onLiveness?: (at: number) => void;
+  onReconnect?: (info: ReconnectStatusWire) => void;
 };
 
 function rejectAck(ack: Ack): Error {
@@ -198,7 +200,7 @@ export async function openExternalUrl(url: string): Promise<void> {
   await invoke("open_external", { url });
 }
 
-/** 宿主级诊断事件(App 装配期订阅,与具体标签无关)。非 Tauri 环境返回空操作。 */
+/** 宿主级诊断事件(App 装配期订阅,与具体标签无关)。非 Electron 环境返回空操作。 */
 export async function listenHostDiagnostics(handlers: HostDiagnostics): Promise<() => void> {
   if (!isDesktopRuntime()) return () => {};
   const unlistens: UnlistenFn[] = [];
@@ -212,6 +214,16 @@ export async function listenHostDiagnostics(handlers: HostDiagnostics): Promise<
       await listen<{ message?: string }>("conn://error", (event) =>
         handlers.onHostError!(String(event.payload?.message ?? "host error")),
       ),
+    );
+  }
+  if (handlers.onLiveness) {
+    unlistens.push(
+      await listen<Record<string, never>>("conn://liveness", () => handlers.onLiveness!(Date.now())),
+    );
+  }
+  if (handlers.onReconnect) {
+    unlistens.push(
+      await listen<ReconnectStatusWire>("conn://reconnect", (event) => handlers.onReconnect!(event.payload)),
     );
   }
   return () => {

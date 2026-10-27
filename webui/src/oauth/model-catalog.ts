@@ -36,7 +36,7 @@ export function catalogKindOf(kind: ProviderKind): CatalogKind | null {
   return kind === "plan" || kind === "account" ? kind : null;
 }
 
-/** 取数依赖注入（脱壳可测；默认那份才碰 Tauri）。 */
+/** 取数依赖注入（脱壳可测；默认那份才碰 Electron 壳）。 */
 export type CatalogDeps = {
   plan: () => Promise<ModelEntry[]>;
   account: () => Promise<ModelEntry[]>;

@@ -205,9 +205,27 @@ export function registerIpcHandlers(
     if (args.alsoDefault || !args.sessionId) {
       if (!args.selection) {
         await clearDefaultModelSelection(app.getPath("userData"));
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed() && !isModelPickerWindow(window.webContents.id)) {
+            window.webContents.send("qaqh:event:model-picker:changed", {
+              sessionId: args.sessionId ?? null,
+              selection: null,
+              alsoDefault: args.alsoDefault === true,
+            });
+          }
+        }
         return null;
       }
       await applyConfiguredDefault(client, app.getPath("userData"), args.selection);
+    }
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !isModelPickerWindow(window.webContents.id)) {
+        window.webContents.send("qaqh:event:model-picker:changed", {
+          sessionId: args.sessionId ?? null,
+          selection: args.selection,
+          alsoDefault: args.alsoDefault === true,
+        });
+      }
     }
     return null;
   });
@@ -219,7 +237,7 @@ export function registerIpcHandlers(
   });
 }
 
-function isTrustedRenderer(rawUrl: string): boolean {
+export function isTrustedRenderer(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
     return (url.protocol === "app:" && url.hostname === "localhost")

@@ -6,7 +6,7 @@
  * 弹一张卡,其余五态(`not_running` / `idle` / `working` / `canceled` / `error`)
  * 一律不弹——`canceled`/`error` 是上一回合的终态驻留,不是待办。
  *
- * 判据与宿主 `session_is_busy`(`src-tauri/src/commands.rs:155`)同源但**不等价**:
+ * 判据与宿主 `session_is_busy`(`qaqh-electron/src/main/ipc-handlers.ts:155`)同源但**不等价**:
  * 那边多算一个 `working`(「还挂着事」),这边只取要人动手的三个。
  */
 import type { SessionRunStatus } from "../api/qaqh/SessionRunStatus";
@@ -33,7 +33,7 @@ export interface PendingPresentation {
  * `running: bool` / `busy`。两者都缺时按 `idle` 处理(不弹卡)。
  *
  * 注意 `busy === true` 无法区分「在跑」与「等人」——这正是把 `status` 加进
- * 侧栏投影的原因,见 `src-tauri/src/commands.rs` 的 `SidebarSession`。
+ * 侧栏投影的原因,见 `qaqh-electron/src/main/ipc-handlers.ts` 的 `SidebarSession`。
  */
 export function runStatusOf(session: Pick<SidebarSession, "status" | "busy">): SessionRunStatus {
   if (session.status != null) return session.status;

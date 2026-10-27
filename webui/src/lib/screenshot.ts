@@ -3,8 +3,8 @@
  *
  * ## 为什么这么切
  *
- * 截图本身在宿主（`src-tauri/src/commands.rs::capture_screenshot`，macOS 走系统
- * `screencapture`）。这一层只管三件前端的事：
+ * 截图本身在宿主（`qaqh-electron/src/main/native-dialogs.ts::captureScreenshot`；
+ * 当前 Electron 实现明确返回不支持）。这一层只管三件前端的事：
  *
  * 1. **哪个键**触发（`isScreenshotShortcut`）——纯判定，写成函数而不是在 `onKey`
  *    里现编条件：那个处理器已经有 quit 遮罩 / 设置浮层 / ESC 三层优先级，条件
@@ -57,7 +57,7 @@ export type ShotDeps = {
   capture: (mode: ShotMode) => Promise<ScreenshotWire | null>;
   /**
    * 屏幕「屏幕录制」授权预检：true = 已授权可截。缺省 = **跳过门控**（测试与
-   * 非 Tauri 环境不接插件）；运行时由 defaultDeps 接插件实现。
+   * 非 Electron 环境不接插件）；运行时由 defaultDeps 接插件实现。
    */
   ensureScreenRecording?: () => Promise<boolean>;
 };
@@ -76,7 +76,7 @@ const messageOf = (cause: unknown): string =>
  * 加一条 `platform` 命令：多一个 IPC 面只为一个 bool 不值，而这里猜错的后果只是
  * "按钮没出现"（用户仍能用系统的截图键 + 「添加附件」），不是坏功能。
  */
-export function screenshotSupported(_options: { inTauri: boolean; userAgent: string }): boolean {
+export function screenshotSupported(_options: { desktop: boolean; userAgent: string }): boolean {
   // Electron host currently reports capture_screenshot as unsupported; keep the
   // action hidden until native capture is implemented.
   return false;

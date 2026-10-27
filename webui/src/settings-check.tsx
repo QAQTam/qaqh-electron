@@ -1,7 +1,7 @@
 /**
  * 开发夹具:真实 `App` + 假宿主 IPC,在浏览器里跑设置浮层的读写语义。
  *
- * 为什么要有它:设置页的唯一通路是 Tauri 的 `service_rpc` 白名单,浏览器里既没有
+ * 为什么要有它:设置页的唯一通路是 Electron 的 `service_rpc` 白名单,浏览器里既没有
  * daemon 也没有宿主。这里把宿主替身做成「白名单式」的——只认宿主真允许的方法,
  * 其余抛错,于是 fixture 里能验的是语义而不是便利:`config.save` 收到什么 patch,
  * 就是 webview 真的发出去了什么。
@@ -137,7 +137,7 @@ const projectFiles: Record<string, string> = {
 };
 
 /**
- * 用户级 skills 夹具(`skills_user_scan` 的回包形状,见 `src-tauri/src/skills.rs`)。
+ * 用户级 skills 夹具(`skills_user_scan` 的回包形状,见 `qaqh-electron/src/main/skills-scanner.ts`)。
  *
  * 这里是**宿主命令**而不是 daemon rpc:用户级那两个根不在 daemon `fs.*` 的
  * allowed_roots 里,布局回归要验的正是「宿主这一层真的被接上」——所以夹具给的
@@ -252,7 +252,7 @@ function serviceRpc(method: string, params: Record<string, unknown>): unknown {
 }
 
 /**
- * 假宿主的 daemon 局域网面:字段与 `src-tauri/src/lan.rs` 的 lan_view 同形。
+ * 假宿主的 daemon 局域网面:字段与 `qaqh-electron/src/main/ipc-handlers.ts` 的 lanView 同形。
  * 夹具验的是前端语义与观感,所以「重启」只翻转内存状态,不真起进程。
  */
 const lan = {
@@ -410,7 +410,7 @@ if (root != null) render(() => <App />, root);
 /**
  * `?dev=1`:给开发者控制台铺一层「可拍的真状态」——开一个假会话标签(活动面板就
  * 有 store 可读)、打开设置、并解锁控制台。默认不开:既有断言与基线都不受影响。
- * 走的是真 `App` + 真 `TauriTransport`,所以事件流面板在这里能看到埋点真的记到了
+ * 走的是真 `App` + 真 `ElectronTransport`,所以事件流面板在这里能看到埋点真的记到了
  * 收发(stress.tsx 那条路把 `transport.rpc` 整个替掉了,绕过埋点)。
  */
 const devHarness = new URLSearchParams(window.location.search).get("dev") === "1";

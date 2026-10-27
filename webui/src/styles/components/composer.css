@@ -20,7 +20,7 @@
     transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
   }
   /* Reading and writing surfaces stay solid; Mica belongs to the outer shell. */
-  html.tauri .composer-surface {
+  html.desktop .composer-surface {
     background: var(--surface);
     border-color: var(--border);
     box-shadow: none;
@@ -29,7 +29,7 @@
     border-color: var(--focus-ring);
     box-shadow: none;
   }
-  html.tauri .composer-surface:focus-within { border-color: var(--focus-ring); box-shadow: none; }
+  html.desktop .composer-surface:focus-within { border-color: var(--focus-ring); box-shadow: none; }
   .composer-surface:has(textarea:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   #composer textarea {
     display: block; width: 100%; flex: 1 0 auto;

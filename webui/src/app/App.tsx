@@ -2,7 +2,7 @@
  * 应用壳:标签栏 + 会话视图 + 授权卡 + 输入区(spec §4 布局);
  * 全局快捷键(§5.3)与后台会话轮询。
  *
- * Tauri 桌面壳:
+ * Electron 桌面壳:
  *  - 使用系统标题栏与窗口控制,不让 WebView 内的 Ask 遮罩覆盖窗口按钮;
  *  - 外链经宿主 `open_external` 走系统浏览器(webview 内不导航外站);
  *  - daemon 兼容性失败(D1)渲染明确文案 + 「停止旧实例并连接」动作,
@@ -68,7 +68,19 @@ import {
 } from "../settings/store";
 import { STR } from "../lib/strings";
 import { isScreenshotShortcut, screenshotSupported, takeScreenshot } from "../lib/screenshot";
-import { isTauriRuntime, listenHostDiagnostics, openExternalUrl, transport, tauriHost } from "../lib/transport";
+import { isDesktopRuntime, openExternalUrl, transport, desktopHostSurface } from "../lib/transport";
+import { desktopHost } from "../lib/desktop-host";
+import {
+  hostActionNote,
+  hostError,
+  hostIncompatible,
+  initHostStatus,
+  modelPickerRevision,
+  setHostActionNote,
+  setHostError,
+  setHostIncompatible,
+} from "../lib/host-status";
+import { nativeModelPickerAvailable, openNativeModelPicker } from "../lib/model-picker";
 import { applyTheme, storedTheme } from "../lib/theme";
 import { notifyConfigChanged } from "../lib/config-events";
 import { toast, ToastHost } from "../ui/toast";
@@ -76,27 +88,24 @@ import { buildContextMenu, ContextMenuHost, openContextMenu } from "../ui/contex
 import { DiffReviewDrawer } from "../diff/DiffReviewDrawer";
 import "../styles/app.css";
 
-const inTauri = isTauriRuntime();
+const isDesktop = isDesktopRuntime();
 
 /**
  * 应用内截图可用性(宿主形态 + 平台)。按钮出不出、快捷键响不响都读这一句,
  * 免得出现"按了没反应"那种最难查的坏控件。
  */
 const shotSupported = screenshotSupported({
-  inTauri,
+  desktop: isDesktop,
   userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
 });
 
-/** D1 兼容性失败详情(conn://incompatible);null = 正常。 */
-const [hostIncompatible, setHostIncompatible] = createSignal<Record<string, unknown> | null>(null);
-const [hostActionNote, setHostActionNote] = createSignal<string | null>(null);
 /** 「设置」刻意不在这个信号里：它是浮层页（见 `settings/store`）。 */
 const [section, setSection] = createSignal<Exclude<GlobalSection, "settings">>("messages");
 const [emptyDraft, setEmptyDraft] = createSignal("");
 
 /** 一键停止旧 daemon(不静默杀:Busy 时给动作文案)→ 重启标签引导。 */
 async function stopStaleAndReconnect(): Promise<void> {
-  const host = tauriHost(transport);
+  const host = desktopHostSurface(transport);
   if (host == null) return;
   setHostActionNote(STR.incompatibleStopping);
   try {
@@ -212,11 +221,11 @@ const App: Component = () => {
         .catch(() => {});
     }
 
-    // Tauri:外链一律走系统浏览器;宿主诊断事件(兼容性失败/宿主错误)。
+    // Electron:外链一律走系统浏览器;宿主诊断事件(兼容性失败/宿主错误/liveness)。
     let unlistenHost: (() => void) | null = null;
     let unlistenQuit: UnlistenFn | null = null;
     let onClickCleanup: (() => void) | null = null;
-    if (inTauri) {
+    if (isDesktop) {
       void listen<void>("app://quit-requested", () => {
         setQuitConfirmStop(false);
         setQuitError(null);
@@ -246,14 +255,10 @@ const App: Component = () => {
       };
       document.addEventListener("click", onClick, true);
       onClickCleanup = () => document.removeEventListener("click", onClick);
-      void listenHostDiagnostics({
-        onIncompatible: (details) => {
-          setHostActionNote(null);
-          setHostIncompatible(details);
-        },
-        onHostError: (message) => setBootError(message),
-      }).then((unlisten) => {
+      void initHostStatus().then((unlisten) => {
         unlistenHost = unlisten;
+      }).catch((error: unknown) => {
+        console.warn("[qaqh-webui] failed to subscribe host diagnostics", error);
       });
     }
 
@@ -367,7 +372,12 @@ const App: Component = () => {
     setQuitBusy(true);
     setQuitError(null);
     try {
-      await invoke("exit_app", { stopDaemon, stopActiveWork });
+      const host = desktopHost();
+      if (host != null) {
+        await host.requestQuit({ stopDaemon, stopActiveWork });
+      } else {
+        await invoke("exit_app", { stopDaemon, stopActiveWork });
+      }
     } catch (cause) {
       setQuitError(cause instanceof Error ? cause.message : String(cause));
       setQuitBusy(false);
@@ -392,7 +402,7 @@ const App: Component = () => {
   };
 
   const connectionNotice = (): string | null => {
-    const error = bootError();
+    const error = bootError() ?? hostError();
     if (error != null) return error;
     const tab = activeTab();
     if (tab == null) return null;
@@ -419,6 +429,7 @@ const App: Component = () => {
 
   const retryConnection = (): void => {
     setBootError(null);
+    setHostError(null);
     const tab = activeTab();
     if (tab != null) {
       tab.store.retry();
@@ -428,6 +439,42 @@ const App: Component = () => {
       setBootError(String(error instanceof Error ? error.message : error));
     });
   };
+
+  const openNativePicker = (sessionId: string | null): void => {
+    void openNativeModelPicker(sessionId).then((opened) => {
+      if (!opened) toast("当前壳未提供原生模型选择器", "err");
+    }).catch((error: unknown) => {
+      toast(`打开模型选择器失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    });
+  };
+
+  // Native picker writes through the main process and broadcasts this event
+  // when it closes. Refresh global config and the active session's profile.
+  let seenPickerRevision = 0;
+  createEffect(() => modelPickerRevision(), (revision) => {
+    if (revision === seenPickerRevision) return;
+    seenPickerRevision = revision;
+    void refreshConfig();
+    notifyConfigChanged();
+    void pollSessions();
+    const tab = activeTab();
+    if (tab != null) void tab.store.refreshProfile();
+  });
+
+  // Keep the tray tooltip in sync with the active tab's connection / retry
+  // state. This is intentionally best-effort; a missing tray is not an error.
+  createEffect(
+    () => [activeTab(), connectionNotice(), activeTab()?.store.providerRetry[0]()] as const,
+    () => {
+      const controls = desktopHost()?.windowControls;
+      if (controls == null) return;
+      const retry = activeTab()?.store.providerRetry[0]();
+      const text = retry != null
+        ? `上游重试 ${retry.attempt}/${retry.maxRetries}`
+        : connectionNotice() ?? "就绪";
+      void controls.setTrayStatus(`QAQ-Harness · ${text}`).catch(() => {});
+    },
+  );
 
   const navigateSection = (next: GlobalSection): void => {
     if (next === "settings") {
@@ -462,16 +509,16 @@ const App: Component = () => {
   };
 
   return (
-    <div id="app" class={{ "tauri-shell": inTauri }}>
+    <div id="app" class={{ "desktop-shell": isDesktop }}>
       {/* 三页(消息/工具/设置)共用同一条 40px 标题栏:返回按钮只在非根页面出现。
           消息页此前在原生壳里整行塌掉,切页会让左侧导航与内容整体跳 40px。 */}
-      <header id="top" data-tauri-drag-region>
+      <header id="top" data-desktop-drag-region>
         <Show when={settingsOpen() || section() !== "messages"}>
           <button type="button" class="titlebar-back" aria-label="返回消息" title="返回消息" onClick={() => navigateSection("messages")}>
             <IconArrowLeft />
           </button>
         </Show>
-        <Show when={!inTauri}><div class="titlebar-brand">QAQH</div></Show>
+        <Show when={!isDesktop}><div class="titlebar-brand">QAQH</div></Show>
         <div class="titlebar-session-title">{settingsOpen() ? "设置" : section() === "tools" ? "工具" : section() === "oauth" ? "接入" : "消息"}</div>
       </header>
       <GlobalNav
@@ -543,6 +590,7 @@ const App: Component = () => {
                 <div class="session-column">
                   <StartupView
                     onScreenshot={shotSupported ? () => void screenshot() : undefined}
+                    onOpenModelPicker={nativeModelPickerAvailable() ? () => openNativePicker(null) : undefined}
                   />
                 </div>
               }
@@ -580,6 +628,7 @@ const App: Component = () => {
                           toast(`${STR.attachmentFailed}：${String(error instanceof Error ? error.message : error)}`, "err");
                         })}
                         onScreenshot={shotSupported ? () => void screenshot() : undefined}
+                        onOpenModelPicker={nativeModelPickerAvailable() ? () => openNativePicker(tab.seed) : undefined}
                         attachments={() => tab.store.pendingAttachments[0]()}
                         onRemoveAttachment={(id) => tab.store.removeAttachment(id)}
                         profileView={() => tab.store.composerProfile[0]()}

@@ -5,7 +5,7 @@
  * （结构上不含 token）与一个需要交给系统浏览器打开的授权 URL。
  *
  * 八个方法的清单是 daemon 服务面（`qaqh_dsaccount::methods::ALL`）的镜像；
- * 壳侧白名单（`src-tauri/src/commands.rs::SERVICE_METHODS`）也要同步加。
+ * 壳侧白名单（`qaqh-electron/src/main/ipc-handlers.ts::SERVICE_METHODS`）也要同步加。
  */
 import { serviceRpc } from "./service-rpc";
 import { openExternalUrl } from "./transport";

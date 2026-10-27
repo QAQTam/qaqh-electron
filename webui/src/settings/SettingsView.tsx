@@ -68,6 +68,7 @@ import { NumberInput } from "../ui/NumberInput";
 import { ByokSection, ProfilesSection } from "./byok/Sections";
 import { PairingSection } from "./PairingSection";
 import { AboutSection } from "./AboutSection";
+import { HostSection } from "./HostSection";
 
 /**
  * 左侧分区导航:分组 + 点击切换(切换式单页——点谁渲染谁,不做滚动联动)。
@@ -80,6 +81,7 @@ const NAV = [
   { id: "section-permission", label: "权限档位", group: "运行" },
   { id: "section-context", label: "上下文", group: "运行" },
   { id: "section-runtime", label: "运行时", group: "运行" },
+  { id: "section-host", label: "桌面壳", group: "运行" },
   { id: "section-subagent", label: "子代理", group: "运行" },
   { id: "section-mcp", label: "MCP / LSP", group: "运行" },
   { id: "section-appearance", label: "外观", group: "界面" },
@@ -328,9 +330,13 @@ export const SettingsView: Component = () => {
                   </Section>
                   </Show>
 
+                  <Show when={activeSection() === "section-host"}>
+                    <HostSection onOpenPairing={() => setActiveSection("section-pairing")} />
+                  </Show>
+
                   <Show when={activeSection() === "section-appearance"}>
                   <Section id="section-appearance" title="外观" desc={STR.settingsThemeNote}>
-                    <Field label="界面风格预设" hint="默认跟随系统（Windows 使用 Fluent，macOS 使用原生材质）；也可手动选择预设。">
+                    <Field label="界面风格预设" hint="纯 CSS 主题预设；Electron 壳当前不提供原生 Mica/材质切换（set_window_theme 返回 false）。">
                       <Select
                         value={themePreset()}
                         onChange={(value) => applyThemePreset(value as ThemePreset)}

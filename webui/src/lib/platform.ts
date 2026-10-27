@@ -1,6 +1,6 @@
 /**
- * 平台标记：让浏览器预览、visual-capture 夹具与 Tauri 壳共用同一套 CSS 分支。
- * 只在 DOM 就绪前跑一次；不依赖 Tauri 运行时。
+ * 平台标记：让 visual-capture 夹具与 Electron 壳共用同一套 CSS 分支。
+ * 只在 DOM 就绪前跑一次；不依赖 Electron 运行时。
  */
 export function markPlatform(): void {
   const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
@@ -17,7 +17,8 @@ export function markPlatform(): void {
     root.dataset.platform = "linux";
   }
   if (typeof window !== "undefined" && window.qaqhHost != null) {
-    // `tauri` remains a legacy CSS hook for the migrated shell layout.
-    root.classList.add("tauri", "electron");
+    // `desktop` is the Electron shell layout hook; `electron` is kept for
+    // compatibility with older visual fixtures.
+    root.classList.add("desktop", "electron");
   }
 }

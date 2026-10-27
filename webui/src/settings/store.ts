@@ -2,7 +2,7 @@
  * 设置页状态:daemon 全局配置的读写面。
  *
  * 模块级单例(与 `tabs/store.ts` 同形)——配置本来就是 daemon 全局态,不属于
- * 任何标签;宿主对 `config.*`/`profile.*` 不注入 seed(webui/src-tauri/src/commands.rs
+ * 任何标签;宿主对 `config.*`/`profile.*` 不注入 seed(`qaqh-electron/src/main/ipc-handlers.ts
  * 的 `service_requires_session` 豁免),所以零会话/引导失败时也能打开设置。
  *
  * 三条不可省的现实:

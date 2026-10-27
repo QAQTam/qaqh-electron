@@ -414,7 +414,7 @@ if (isVisualPreview) {
       "项目级优先于用户级(`qaqh-skills` 的 seen_names)。",
     ].join("\n"),
   };
-  // 用户级夹具(宿主 `skills_user_scan` 的回包形状,见 src-tauri/src/skills.rs)。
+  // 用户级夹具(宿主 `skills_user_scan` 的回包形状,见 qaqh-electron/src/main/skills-scanner.ts)。
   const previewUserSkills = {
     roots: [
       { path: "C:/Users/fixture/.qaqh/skills", label: "~/.qaqh/skills", exists: false },
@@ -492,7 +492,7 @@ if (isVisualPreview) {
     throw new Error(`visual preview does not mock ${method}`);
   };
   // 用户级 skills 是**宿主命令**(不是 rpc):夹具直接替掉 transport 上那一个方法,
-  // 形状与 src-tauri/src/skills.rs 的回包一致。
+  // 形状与 qaqh-electron/src/main/skills-scanner.ts 的回包一致。
   transport.userSkills = async () => structuredClone(previewUserSkills);
 }
 
@@ -683,7 +683,7 @@ const scenarios = {
     if (group.querySelector(".collapsed-row")?.getAttribute("aria-expanded") !== "true") throw new Error("完成事件重置用户展开态");
     return { initialHeight, heights, animated, reduced, unloaded: true, replyStable: true, manualReopen: true, ...metrics() };
   },
-  /** Theme switcher for visual review of the Web/Tauri surface. */
+  /** Theme switcher for visual review of the Web/Electron surface. */
   theme(mode: ResolvedTheme): { theme: ResolvedTheme; owner: "web" } {
     applyTheme(mode);
     return { theme: mode, owner: "web" };

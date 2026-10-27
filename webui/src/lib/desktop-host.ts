@@ -49,11 +49,30 @@ export type HostEvent =
   | "conn://error"
   | "conn://liveness"
   | "conn://reconnect"
+  | "model-picker:changed"
+  | "app://window-state"
   | "app://quit-requested";
 
 export interface ModelPickerBridge {
   load(args?: { sessionId?: string | null }): Promise<any>;
   save(args: { sessionId?: string | null; selection: unknown; alsoDefault?: boolean }): Promise<null>;
+  open(args?: { sessionId?: string | null }): Promise<number>;
+}
+
+export interface WindowState {
+  visible: boolean;
+  maximized: boolean;
+  fullscreen: boolean;
+  closeToTray: boolean;
+  tray: boolean;
+}
+
+export interface DesktopWindowControls {
+  state(): Promise<WindowState>;
+  hide(): Promise<void>;
+  show(): Promise<void>;
+  setCloseToTray(value: boolean): Promise<WindowState>;
+  setTrayStatus(text: string): Promise<void>;
 }
 
 export interface DesktopHostBridge {
@@ -61,6 +80,7 @@ export interface DesktopHostBridge {
   invoke<T = unknown>(command: HostCommand, args?: Record<string, unknown>): Promise<T>;
   listen(event: HostEvent, callback: (payload: any) => void): () => void;
   modelPicker?: ModelPickerBridge;
+  windowControls?: DesktopWindowControls;
   requestQuit(options: { stopDaemon: boolean; stopActiveWork: boolean }): Promise<void>;
 }
 

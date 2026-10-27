@@ -93,11 +93,27 @@ try {
   };
   await send("Page.enable");
   // App reads this at module evaluation. The fixture installs its full mock before rendering.
-  await send("Page.addScriptToEvaluateOnNewDocument", { source: "window.__TAURI_INTERNALS__ = {}; document.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add('tauri'));" });
+  await send("Page.addScriptToEvaluateOnNewDocument", { source: `
+    window.__qaqhInternals = { invoke: async () => null, transformCallback: (callback) => callback };
+    window.qaqhHost = {
+      platform: "electron",
+      invoke: (cmd, args) => window.__qaqhInternals.invoke(cmd, args),
+      listen: () => () => {},
+      requestQuit: async () => {},
+      windowControls: {
+        state: async () => ({ visible: true, maximized: false, fullscreen: false, closeToTray: true, tray: false }),
+        hide: async () => {},
+        show: async () => {},
+        setCloseToTray: async () => ({ visible: true, maximized: false, fullscreen: false, closeToTray: true, tray: false }),
+        setTrayStatus: async () => {},
+      },
+    };
+    document.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add('desktop'));
+  ` });
   for (const [width, height] of [[1566, 790], [800, 600], [480, 640]]) {
     await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
     await send("Page.navigate", { url: base });
-    await waitFor("Boolean(document.querySelector('#app.tauri-shell .startup-container')) && document.fonts.status === 'loaded'");
+    await waitFor("Boolean(document.querySelector('#app.desktop-shell .startup-container')) && document.fonts.status === 'loaded'");
     let g = await geometry();
     assert.ok(g.top != null, "Native messages view must render the shared titlebar");
     assert.ok(g.workspace.top >= g.top.bottom, "Messages must start below the titlebar");
@@ -273,7 +289,7 @@ try {
   await waitFor("Boolean(document.querySelector('#composer .send'))");
   // Override only session IPC; keep the real App, Composer, tab store and transport.
   await evaluate(`(() => {
-    const internals = window.__TAURI_INTERNALS__;
+    const internals = window.__qaqhInternals;
     const original = internals.invoke.bind(internals);
     const probe = window.__composerProbe = { sessions: [], creates: 0, sends: [], failCreate: true, failSend: false, deferSend: false, release: null, workspaces: [], workspaceCalls: [] };
     const callbacks = new Map();

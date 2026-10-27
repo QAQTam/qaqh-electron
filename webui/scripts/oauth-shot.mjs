@@ -2,7 +2,7 @@
  * 接入页截图与交互复核：所有 RPC 都由独立浏览器配置中的本地夹具响应。
  *
  * 与 `visual-capture.mjs` 的区别：只拍这一张、不改动 `artifacts/ui-visual-review/`
- * 里已入库的视觉基线，并在应用脚本之前把 Tauri 判定 stub 成真——否则接入页
+ * 里已入库的视觉基线，并在应用脚本之前把 Electron 宿主 stub 成真——否则接入页
  * 只会渲染「浏览器预览下不可用」的兜底文案。
  *
  * 用法（dev server 需已在跑；QAQH_SHOT_MATRIX=1 验证亮暗、窄窗与登录状态矩阵）：
@@ -117,7 +117,7 @@ async function click(selector) {
 try {
   await send("Page.enable");
   await send("Runtime.enable");
-  // 必须在应用脚本之前：`isTauriRuntime()` 只看这个全局。
+  // 必须在应用脚本之前：`isDesktopRuntime()` 只看 `window.qaqhHost`。
   await send("Page.addScriptToEvaluateOnNewDocument", {
     source: `
       const scenario = new URLSearchParams(location.search).get('oauthState') ?? 'signed-in';
@@ -159,7 +159,7 @@ try {
       }
       window.__oauthRequests = [];
       window.__oauthFixture = FIXTURES;
-      window.__TAURI_INTERNALS__ = {
+      const internals = window.__qaqhInternals = {
         invoke: (cmd, args) => {
           window.__oauthRequests.push({ cmd, method: args?.method, params: args?.params });
           if (cmd !== "service_rpc") return Promise.resolve(null);
@@ -173,6 +173,19 @@ try {
           return Promise.resolve(FIXTURES[method]);
         },
         transformCallback: (callback) => callback,
+      };
+      window.qaqhHost = {
+        platform: "electron",
+        invoke: (cmd, args) => internals.invoke(cmd, args),
+        listen: () => () => {},
+        requestQuit: async () => {},
+        windowControls: {
+          state: async () => ({ visible: true, maximized: false, fullscreen: false, closeToTray: true, tray: false }),
+          hide: async () => {},
+          show: async () => {},
+          setCloseToTray: async () => ({ visible: true, maximized: false, fullscreen: false, closeToTray: true, tray: false }),
+          setTrayStatus: async () => {},
+        },
       };
     `,
   });

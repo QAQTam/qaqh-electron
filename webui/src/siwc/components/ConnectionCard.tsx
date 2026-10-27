@@ -20,7 +20,7 @@ type Props = {
   onSignIn: () => void;
   onCancel: () => void;
   onSignOut?: () => void;
-  /** 由宿主用系统浏览器打开（Tauri: `open_external`）；缺省走普通链接。 */
+  /** 由宿主用系统浏览器打开（Electron: `open_external`）；缺省走普通链接。 */
   onOpenUsage?: (url: string) => void;
 };
 

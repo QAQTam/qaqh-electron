@@ -2,12 +2,12 @@
  * 「本机」面板:壳进程 + 界面进程组 + daemon + 页面自身,各占多少一次看全。
  *
  * 四路数据各自的脾气不一样,所以分开兜,任何一路失败都只少它那一行:
- *  - `host_memory` 是壳命令,旧壳/纯浏览器里没有 → 少一行。
- *  - `host_process_group` 走 WebView2 的 `GetProcessInfos` + psapi 逐进程读;
- *    非 Windows 返回 `unsupported`,由 `excluded` 说明口径。
+ *  - `host_memory` 是 Electron 壳命令,旧壳/纯浏览器里没有 → 少一行。
+ *  - `host_process_group` 走 Electron `app.getAppMetrics()`,按进程角色聚合;
+ *    拿不到成员时由 `excluded` 说明口径。
  *  - daemon 那一行走 `diagnostics.memory.snapshot`,要求 admin scope;这里只读
  *    `process` 字段,**不 start**——采集开关仍归「内存」面板管。
- *  - 页面数字来自 `performance.memory`(只有 Chromium/WebView2 给)+ DOM 规模。
+ *  - 页面数字来自 `performance.memory`(Chromium 渲染进程)+ DOM 规模。
  */
 import { For, Show, createSignal, onCleanup, type Component } from "solid-js";
 import { formatBytes, formatClock, errorTextOf, isScopeError, loadMemorySnapshot, MEMORY_POLL_MS } from "../../lib/memwatch";
