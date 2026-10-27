@@ -65,7 +65,10 @@ if (bundle.status !== 0) {
 
 console.log("[dev] launching Electron with the live renderer");
 const electronPath = resolve(root, "node_modules/.bin/electron");
-const electron = start(electronPath, [root], root, {
+// The npm Electron binary ships an unpacked chrome-sandbox (755, not setuid
+// root). Without this flag Chromium aborts with SIGTRAP before the app code
+// runs. Packaged installers should keep the SUID sandbox; this is dev-only.
+const electron = start(electronPath, ["--no-sandbox", root], root, {
   ...process.env,
   NODE_ENV: "development",
   QAQH_DEV_URL: `http://127.0.0.1:${rendererPort}`,

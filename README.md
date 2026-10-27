@@ -30,6 +30,37 @@ pnpm test
 
 The renderer is loaded from Vite at `http://127.0.0.1:5173` in development. `app://localhost` serves packaged resources in production. The Electron main process starts/reuses the backend daemon and initializes the SDK client before loading the renderer so IPC routes exist at frontend boot.
 
+### Linux sandbox note
+
+`release/linux-unpacked` is an unpacked development artifact. Its
+`chrome-sandbox` is owned by the build user with mode `755`, so Electron refuses
+to start with:
+
+```text
+FATAL: ... The SUID sandbox helper binary was found, but is not configured correctly.
+```
+
+Run the unpacked build with the dev-only flag:
+
+```bash
+./release/linux-unpacked/qaqh-electron --no-sandbox
+```
+
+Or fix the helper once (then the normal command works):
+
+```bash
+sudo chown root:root release/linux-unpacked/chrome-sandbox
+sudo chmod 4755 release/linux-unpacked/chrome-sandbox
+```
+
+`pnpm run dev` passes `--no-sandbox` automatically for the same reason: the npm
+Electron binary also ships an unpacked helper. Do not use that flag for a
+production installer; install the `.deb`/AppImage and launch through the
+desktop entry so the packaged sandbox policy applies. If an older
+`/opt/QAQ-Harness` app is running, the single-instance lock makes a second
+build exit immediately; quit the old app or use a separate
+`--user-data-dir=/tmp/qaqh-electron-test`.
+
 ## Canonical build (currently Linux x64)
 
 ```bash
