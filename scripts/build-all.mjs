@@ -9,7 +9,7 @@ const { parseArgs, assertInputs } = require("./packaging.cjs");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sdk = resolve(root, "../qaqh-sdk");
 const backend = resolve(root, "../qaqh-backend");
-const frontend = resolve(root, "../qaqh-desktop-app");
+const frontend = resolve(root, "webui");
 
 function run(command, args, cwd = root, capture = false, env = process.env) {
   console.log(`\n> ${command} ${args.join(" ")}`);

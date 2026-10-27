@@ -15,10 +15,6 @@
  *    （`upload_attachment`）——不为截图新辟一条上传口。
  */
 import { transport, type ScreenshotWire, type ShotMode } from "./transport";
-import {
-  checkScreenRecordingPermission,
-  requestScreenRecordingPermission,
-} from "tauri-plugin-macos-permissions-api";
 
 /**
  * 截图快捷键：`⌘⇧S`（mac）/ `Ctrl+Shift+S`（其余平台）。
@@ -68,18 +64,6 @@ export type ShotDeps = {
 
 const defaultDeps: ShotDeps = {
   capture: (mode) => transport.captureScreenshot(mode),
-  // fail-open：预检本身出错（非 mac / 插件异常）时不拦截图，行为退回旧路径
-  //（宿主命令自己的错误信息兜底），绝不因为预检故障把可用功能锁死。
-  ensureScreenRecording: async () => {
-    try {
-      if (await checkScreenRecordingPermission()) return true;
-      // 首次调用会触发系统授权弹窗（TCC 归因到本 app）；曾被拒则无弹窗，回 false。
-      await requestScreenRecordingPermission();
-      return checkScreenRecordingPermission();
-    } catch {
-      return true;
-    }
-  },
 };
 
 const messageOf = (cause: unknown): string =>
@@ -92,9 +76,10 @@ const messageOf = (cause: unknown): string =>
  * 加一条 `platform` 命令：多一个 IPC 面只为一个 bool 不值，而这里猜错的后果只是
  * "按钮没出现"（用户仍能用系统的截图键 + 「添加附件」），不是坏功能。
  */
-export function screenshotSupported(options: { inTauri: boolean; userAgent: string }): boolean {
-  if (!options.inTauri) return false;
-  return /Macintosh|Mac OS X|iPad|iPhone/i.test(options.userAgent);
+export function screenshotSupported(_options: { inTauri: boolean; userAgent: string }): boolean {
+  // Electron host currently reports capture_screenshot as unsupported; keep the
+  // action hidden until native capture is implemented.
+  return false;
 }
 
 /**

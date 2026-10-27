@@ -18,5 +18,5 @@ check:
     pnpm run typecheck
     pnpm test
     pnpm --dir ../qaqh-sdk test
-    pnpm --dir ../qaqh-desktop-app typecheck
-    pnpm --dir ../qaqh-desktop-app test
+    pnpm --dir webui typecheck
+    pnpm --dir webui test

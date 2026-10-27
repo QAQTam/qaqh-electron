@@ -1,14 +1,15 @@
 /**
  * 传输后端接口 — 前端到后端的唯一门面。
  *
- * Tauri 桌面壳模式:Rust 宿主(qaqh-webui-app)经 qaqh-client 直连 daemon,
- * 前端只走类型化 IPC invoke + 事件订阅(daemon token 不会出现在 webview)。
+ * Electron 桌面壳模式:主进程经 @qaqh/sdk 直连 daemon,
+ * 前端只走 preload 的类型化 invoke + 事件订阅(daemon token 不会出现在 webview)。
  * store/组件只面向本接口;连接管理由宿主事件驱动(见 `StreamHandlers`)。
  */
 
 import type { ContentRef } from "../../api/qaqh/ContentRef";
 import type { RingingCommandAck } from "../../api/qaqh/RingingCommandAck";
 import type { TimelineSnapshot } from "../../api/qaqh/TimelineSnapshot";
+import { isDesktopRuntime } from "../desktop-host";
 
 export const RINGING_SCHEMA = "qaqh.Ringing";
 /** Ringing v2 单一信封版本:历史 v1 兼容已拆除。 */
@@ -44,6 +45,14 @@ export type TimelineStatusWire = {
   status: "connecting" | "open" | "reconnecting" | "closed";
   session_id?: string;
   [key: string]: unknown;
+};
+
+/** Electron host scheduled SSE reconnect (conn://reconnect). */
+export type ReconnectStatusWire = {
+  session_id: string;
+  attempt: number;
+  delay_ms: number;
+  at: number;
 };
 
 /** todo.list 的条目线类型(daemon typed 投影;status 归一化在 UI 侧做)。 */
@@ -97,6 +106,7 @@ export interface StreamHandlers {
   onTimelineSnapshot(page: TimelinePageResponse): void;
   onIncompatible(details: Record<string, any>): void;
   onHostError(message: string): void;
+  onReconnect?(info: ReconnectStatusWire): void;
 }
 
 export interface TransportBackend {
@@ -178,7 +188,7 @@ export type UserSkillsWire = {
   diagnostics: UserSkillDiagnostic[];
 };
 
-/** Tauri 宿主专属面。 */
+/** 桌面壳专属面。 */
 export interface TauriHostSurface {
   /** 订阅宿主转发事件;返回反订阅函数。 */
   subscribe(handlers: StreamHandlers): Promise<() => void>;
@@ -192,7 +202,7 @@ export interface TauriHostSurface {
   stopStaleDaemon(): Promise<"stopping" | "busy" | "unsupported">;
 }
 
-/** 若当前后端是 Tauri 宿主,返回其专属面;否则 null。 */
+/** 若当前后端是桌面壳宿主,返回其专属面;否则 null。 */
 export function tauriHost(backend: TransportBackend): TauriHostSurface | null {
   return backend instanceof Object && "subscribe" in backend
     ? (backend as TransportBackend & TauriHostSurface)
@@ -200,5 +210,5 @@ export function tauriHost(backend: TransportBackend): TauriHostSurface | null {
 }
 
 export function isTauriRuntime(): boolean {
-  return typeof window !== "undefined" && (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ != null;
+  return isDesktopRuntime();
 }

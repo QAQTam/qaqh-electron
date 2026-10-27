@@ -85,10 +85,11 @@ describe("可用性（决定按钮出不出）", () => {
   const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15";
   const windows = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
-  it("只有桌面壳里的 mac 才有系统截图面", () => {
-    expect(screenshotSupported({ inTauri: true, userAgent: mac })).toBe(true);
+  it("Electron 宿主当前没有原生截图面", () => {
+    // The Electron host reports capture_screenshot as unsupported until native
+    // capture lands, so the action stays hidden on every platform.
+    expect(screenshotSupported({ inTauri: true, userAgent: mac })).toBe(false);
     expect(screenshotSupported({ inTauri: true, userAgent: windows })).toBe(false);
-    // 浏览器预览（无宿主）也算不可用：那里连 `screencapture` 都调不到。
     expect(screenshotSupported({ inTauri: false, userAgent: mac })).toBe(false);
   });
 

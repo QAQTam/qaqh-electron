@@ -310,6 +310,16 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
   return (
     <div id="session">
       <SessionHeader tab={props.tab} />
+      <Show when={store.providerRetry[0]()}>
+        {(retry) => (
+          <div class="provider-retry" role="status" aria-live="polite">
+            <span>{STR.providerRetrying(retry().attempt, retry().maxRetries, retry().delaySecs)}</span>
+            <Show when={retry().error.trim() !== ""}>
+              <span class="provider-retry-detail">{retry().error}</span>
+            </Show>
+          </div>
+        )}
+      </Show>
       <div
         id="messages"
         ref={scroller}

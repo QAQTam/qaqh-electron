@@ -8,7 +8,7 @@
  * 壳侧另有一份白名单（`src-tauri/src/commands.rs::SERVICE_METHODS`），
  * 两处都要加才通——白名单的存在是为了让「前端能调哪些 daemon 方法」可审计。
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./host";
 
 import type { SiwcSessionStatus } from "../siwc/brand";
 import { isTauriRuntime } from "./transport/backend";

@@ -11,8 +11,7 @@
  *    (`config.load`/`config.save`/`profile.*` 经宿主白名单)。
  */
 import { createEffect, createSignal, For, onSettled, Show, type Component } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, type UnlistenFn } from "../lib/host";
 import IconArrowLeft from "~icons/lucide/arrow-left";
 import IconX from "~icons/lucide/x";
 // TabBar is reserved for the future Goal capsule; session navigation lives in MessageSidebar.
@@ -398,7 +397,13 @@ const App: Component = () => {
     const tab = activeTab();
     if (tab == null) return null;
     const state = tab.store.connection[0]();
-    if (state === "reconnecting") return STR.reconnecting;
+    if (state === "reconnecting") {
+      const info = tab.store.reconnect[0]();
+      if (info != null) {
+        return STR.networkReconnecting(info.attempt, Math.max(1, Math.ceil(info.delayMs / 1000)));
+      }
+      return STR.reconnecting;
+    }
     return state === "connected" ? null : STR.disconnected;
   };
 

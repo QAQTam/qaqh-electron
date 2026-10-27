@@ -11,6 +11,10 @@ export const STR = {
   hasNewReply: "有新回复",
   reconnecting: "重连中",
   disconnected: "已断开",
+  networkReconnecting: (attempt: number, seconds: number) =>
+    `网络波动，正在重连（第 ${attempt} 次，${seconds} 秒后）`,
+  providerRetrying: (attempt: number, maxRetries: number, delaySecs: number) =>
+    `上游请求失败，正在重试（第 ${attempt}/${maxRetries} 次，${delaySecs} 秒后）`,
   retry: "重试",
   worked: (parts: string) => `已工作${parts ? ` ${parts}` : ""}`,
   workedAbbrev: "已工作",

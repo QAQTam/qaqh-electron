@@ -6,7 +6,7 @@
  * 局域网模式:daemon 绑非回环地址后才会写 `lan_endpoint`(TLS 面)+ `tls_fingerprint`。
  * 手机必须连那个面;壳自己的管理请求走回环 `endpoint`,两条路互不干扰。
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./host";
 import { isTauriRuntime } from "./transport/backend";
 
 export type PairingScope = "view" | "interact" | "admin";

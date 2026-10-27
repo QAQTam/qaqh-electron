@@ -1,11 +1,11 @@
 # QAQ-Harness Electron (canonical desktop host)
 
-`qaqh-electron` is the first-class and only supported desktop shell. It hosts the SolidJS renderer from `../qaqh-desktop-app`, owns all OS privileges, daemon discovery credentials and lifecycle, and uses `@qaqh/sdk` for Ringing v2 communication. The renderer receives a narrow `window.qaqhHost` API; Node, Electron primitives, daemon bearer tokens, and unrestricted IPC are not exposed to it.
+`qaqh-electron` is the first-class and only supported desktop shell. It hosts the SolidJS renderer in `webui/`, owns all OS privileges, daemon discovery credentials and lifecycle, and uses `@qaqh/sdk` for Ringing v2 communication. The renderer receives a narrow `window.qaqhHost` API; Node, Electron primitives, daemon bearer tokens, and unrestricted IPC are not exposed to it.
 
 ## Architecture
 
 ```text
-qaqh-desktop-app renderer (Chromium)
+webui renderer (Chromium)
   → contextBridge window.qaqhHost (fixed command + event contract)
   → Electron main process (runtime sender checks, service allowlist, native OS work)
   → @qaqh/sdk (Ringing v2, leases, commands, streams, pairing, graceful stop)
@@ -18,10 +18,11 @@ The SDK owns protocol work: Ringing handshake/lease renewal, service methods, co
 
 ## Development
 
-Requirements: Node.js >=22.12, pnpm, Rust/Cargo, and sibling repositories `qaqh-sdk`, `qaqh-backend`, and `qaqh-desktop-app`.
+Requirements: Node.js >=22.12, pnpm, Rust/Cargo, and sibling repositories `qaqh-sdk` and `qaqh-backend`. The renderer lives in this repository under `webui/`.
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm --dir webui install --frozen-lockfile
 pnpm run dev             # Vite renderer + Electron main/preload, live development window
 pnpm run typecheck
 pnpm test

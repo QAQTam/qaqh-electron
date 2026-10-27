@@ -4,7 +4,7 @@
  * 浏览器夹具没有壳进程,所以那里返回 `unavailable` 而不是编一个假版本号——这块 UI
  * 存在的意义就是「别把旧包当成新构建」,宁可显式缺。
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./host";
 import { isTauriRuntime } from "./transport";
 
 export interface BuildInfo {

@@ -7,7 +7,7 @@
  */
 import { render } from "@solidjs/web";
 import { markPlatform } from "./lib/platform";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./lib/host";
 import { createSignal, Show, untrack } from "solid-js";
 import { SessionStore } from "./session/store";
 import type { SessionRunStatus } from "./api/qaqh/SessionRunStatus";
@@ -462,7 +462,7 @@ if (isVisualPreview) {
   };
   transport.rpc = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
     // OAuth 截图使用启动脚本注入的宿主夹具，覆盖配置读写以验证真实切换流程。
-    if (previewView === "oauth" && previewParams.has("oauthState") && window.__TAURI_INTERNALS__ != null) {
+    if (previewView === "oauth" && previewParams.has("oauthState") && window.qaqhHost != null) {
       return invoke<T>("service_rpc", { method, params });
     }
     if (method === "config.load") return structuredClone(previewConfig) as T;

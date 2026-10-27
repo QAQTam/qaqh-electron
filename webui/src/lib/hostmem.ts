@@ -10,7 +10,7 @@
  * `ICoreWebView2ProcessInfo2::MemoryUsage`,本仓 lock 里的 webview2-com-sys 0.39.1
  * 还没有那个接口)。所以合计一律标成「已覆盖部分」,别让人当成交换机占用。
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./host";
 import { isTauriRuntime } from "./transport";
 import type { ProcessMemory } from "./memwatch";
 

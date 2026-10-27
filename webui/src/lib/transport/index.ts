@@ -1,11 +1,11 @@
 /**
- * 传输单例 — Tauri 桌面壳后端(webui-tauri C3 起)。
+ * 传输单例 — Electron 桌面壳后端。
  *
  * 浏览器 gateway 部署形态已随 `qaqh-webui-gateway` 移除:webui 的唯一运行形态
  * 是 Tauri 壳,Rust 宿主经 `qaqh-client` 直连 daemon,daemon token 不进 webview。
  * 类型与接口见 `./backend`。
  */
-import { TauriTransport, listenHostDiagnostics, openExternalUrl } from "./tauri";
+import { ElectronTransport, listenHostDiagnostics, openExternalUrl } from "./electron";
 import {
   BrowserPreviewTransport,
   listenBrowserPreviewDiagnostics,
@@ -36,7 +36,7 @@ const browserPreview = typeof window !== "undefined"
 
 export const transport: TransportBackend = browserPreview
   ? new BrowserPreviewTransport()
-  : new TauriTransport();
+  : new ElectronTransport();
 
 const hostDiagnostics = browserPreview ? listenBrowserPreviewDiagnostics : listenHostDiagnostics;
 const externalUrl = browserPreview ? openBrowserPreviewUrl : openExternalUrl;

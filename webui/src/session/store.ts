@@ -26,6 +26,22 @@ import type { UsageInfo } from "../api/qaqh/UsageInfo";
 
 export type ConnectionKind = "connected" | "reconnecting" | "offline";
 
+/** Transient upstream retry status from the provider_retrying timeline event. */
+export type ProviderRetryState = {
+  turnId: string;
+  attempt: number;
+  maxRetries: number;
+  delaySecs: number;
+  error: string;
+};
+
+/** Latest scheduled Electron SSE reconnect (conn://reconnect). */
+export type ReconnectState = {
+  attempt: number;
+  delayMs: number;
+  at: number;
+};
+
 /**
  * 压缩的展示态机在 `./compact`(纯函数,带线上样本单测);这里只负责把它接到
  * 投影事件上。命令 ack 只做乐观 running,`compaction_applied` 事实与
@@ -167,6 +183,8 @@ export class SessionStore {
   readonly state: [SessionState, (fn: (draft: SessionState) => void) => void];
 
   connection = createSignal<ConnectionKind>("reconnecting");
+  providerRetry = createSignal<ProviderRetryState | null>(null);
+  reconnect = createSignal<ReconnectState | null>(null);
   activity = createSignal<SessionActivity | null>(null);
   composerMetrics = createSignal<ComposerMetrics>({ tokensPerSecond: null, isStreaming: false, contextPercent: null, contextWindow: null, cacheHitPercent: null, extras: {} });
   composerProfile = createSignal<SessionProfileView>({ selected: null, activeProfile: null, effective: null, model: null, catalog: [] });
@@ -293,6 +311,8 @@ export class SessionStore {
   async activate(): Promise<void> {
     if (this.disposed) return;
     this.hasNewReply[1](false);
+    this.providerRetry[1](null);
+    this.reconnect[1](null);
     await this.connectHost();
     await transport.attach(this.seed, SNAPSHOT_LIMIT);
     void this.refreshApprovals();
@@ -305,11 +325,15 @@ export class SessionStore {
   /** 失去活动资格(别的标签接管):退订宿主事件保状态(流由宿主在新 attach 时停)。 */
   deactivate(): void {
     this.closeHost();
+    this.providerRetry[1](null);
+    this.reconnect[1](null);
     this.setConnection("reconnecting");
   }
 
   dispose(): void {
     this.disposed = true;
+    this.providerRetry[1](null);
+    this.reconnect[1](null);
     this.unsubscribeConfig?.();
     this.unsubscribeConfig = null;
     this.clearCancelWatchdog();
@@ -331,6 +355,8 @@ export class SessionStore {
 
   retry(): void {
     // 重连/退避在宿主侧,这里只触发宿主重建流(用户点「重试」/窗口聚焦)。
+    this.providerRetry[1](null);
+    this.reconnect[1](null);
     this.setConnection("reconnecting");
     this.host()
       .streamsRetry(this.seed)
@@ -365,6 +391,7 @@ export class SessionStore {
       },
       onProjectionReset: (seed) => {
         if (seed !== this.seed) return;
+        this.providerRetry[1](null);
         // 宿主的 v2 流会自动以 snapshot cursor 重订阅;这里刷新派生信号即可。
         this.onSessionsChanged?.();
         void this.refreshApprovals();
@@ -374,6 +401,7 @@ export class SessionStore {
       onTimelineSnapshot: (page) => {
         // attach 的权威首页与宿主侧缺口恢复都走这里(前端不再自己补拉首页)。
         if (page.session_id != null && page.session_id !== this.seed) return;
+        this.providerRetry[1](null);
         this.mutate((draft) => {
           applySnapshot(draft, page);
         });
@@ -382,6 +410,11 @@ export class SessionStore {
       },
       onIncompatible: () => {},
       onHostError: () => {},
+      onReconnect: (info) => {
+        if (info.session_id !== this.seed) return;
+        this.reconnect[1]({ attempt: info.attempt, delayMs: info.delay_ms, at: info.at });
+        this.setConnection("reconnecting");
+      },
     };
     try {
       this.hostUnlisten = await this.host().subscribe(handlers);
@@ -405,8 +438,10 @@ export class SessionStore {
     if (status.status === "open") {
       const reconnected = this.connection[0]() !== "connected";
       this.setConnection("connected");
+      this.reconnect[1](null);
       if (reconnected) void this.refreshTodos();
     } else if (status.status === "closed") {
+      this.reconnect[1](null);
       this.setConnection("offline");
     } else {
       this.setConnection("reconnecting");
@@ -426,6 +461,24 @@ export class SessionStore {
       return;
     }
     const event = entry.event;
+    if (event.type === "provider_retrying") {
+      this.providerRetry[1]({
+        turnId: entry.turn_id,
+        attempt: event.attempt,
+        maxRetries: event.max_retries,
+        delaySecs: event.delay_secs,
+        error: event.error,
+      });
+      // Still advance the seq/watermark: this is a real timeline entry, just
+      // not a turn/block mutation.
+      this.mutate((draft) => {
+        this.flushFragmentsInto(draft);
+        draft.watermark = entry.timeline_seq;
+      });
+      this.consumedSeq = Math.max(this.consumedSeq, entry.timeline_seq);
+      return;
+    }
+    this.providerRetry[1](null);
     if (event.type === "block_opened" && (event.block.kind === "text" || event.block.kind === "reasoning")) {
       this.activeModelBlockIds.add(event.block.block_id);
     } else if (event.type === "text_delta" && this.activeModelBlockIds.has(event.block_id)) {

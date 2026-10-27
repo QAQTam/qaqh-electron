@@ -17,6 +17,7 @@ import { openSettings } from "./settings/store";
 import { openSession } from "./tabs/store";
 import type { McpServerDto } from "./api/qaqh/McpServerDto";
 import type { LspServerDto } from "./api/qaqh/LspServerDto";
+import type { DesktopHostBridge } from "./lib/desktop-host";
 
 type RpcCall = { method: string; params: Record<string, unknown> };
 
@@ -389,12 +390,18 @@ const internals = {
 
 declare global {
   interface Window {
-    __TAURI_INTERNALS__?: unknown;
     __qaqhProbe?: typeof probe;
   }
 }
 
-window.__TAURI_INTERNALS__ = internals;
+const host: DesktopHostBridge = {
+  platform: "electron",
+  invoke: <T,>(cmd: Parameters<DesktopHostBridge["invoke"]>[0], args?: Record<string, unknown>) =>
+    internals.invoke(cmd, args) as Promise<T>,
+  listen: () => () => {},
+  requestQuit: async () => {},
+};
+window.qaqhHost = host;
 window.__qaqhProbe = probe;
 
 const root = document.getElementById("root");

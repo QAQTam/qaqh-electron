@@ -1,30 +1,28 @@
 /**
- * Tauri 桌面壳传输后端 — 经 Rust 宿主(qaqh-webui-app)的类型化 IPC 访问 daemon。
+ * Electron 桌面壳传输后端 — 经 preload 的 `window.qaqhHost` 访问 daemon。
  *
  * 前端只见两类通道:
- *  - `invoke` 请求/响应(与宿主 commands.rs 一一对应);
- *  - 宿主 `ClientHandlers` 回调转发的事件(timeline://*, projection://*, conn://*,
- *    payload 与现行 SSE 帧同形)。
+ *  - `invoke` 请求/响应(与 Electron 主进程的固定命令表一一对应);
+ *  - 宿主转发的事件(timeline://*, projection://*, conn://*, payload 与 SSE 帧同形)。
  *
- * 连接语义:重连/退避/续传责任上移宿主(qaqh-client 的 V2Stream/timeline 流自带
- * 重连),`lib/reconnect.ts` 的自动退避不再使用;connection 状态由
+ * 连接语义:重连/退避/续传责任在 Electron 宿主/SDK,connection 状态由
  * `timeline://status` 驱动;offline 后由用户动作(重试按钮/窗口聚焦)触发
  * `streams_retry`。
  */
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type Event, type UnlistenFn } from "@tauri-apps/api/event";
+import { isDesktopRuntime, type HostEvent } from "../desktop-host";
+import { invoke, listen, type Event, type UnlistenFn } from "./electron-core";
 import { noteEvent, noteRpc } from "../devlog";
 import {
   type Ack,
   type ApprovalView,
   attachmentRefsOf,
   type AttachmentUploadWire,
-  isTauriRuntime,
   type ScreenshotWire,
   type ShotMode,
   type StreamHandlers,
   type TimelinePageResponse,
   type TimelineStatusWire,
+  type ReconnectStatusWire,
   type TransportBackend,
   type UserSkillsWire,
 } from "./backend";
@@ -38,7 +36,7 @@ function rejectAck(ack: Ack): Error {
   return new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
 }
 
-export class TauriTransport implements TransportBackend {
+export class ElectronTransport implements TransportBackend {
   /** 宿主的单一 active seed(attach 时登记;命令按它定界,与宿主语义一致)。 */
   private activeSeed: string | null = null;
 
@@ -123,7 +121,7 @@ export class TauriTransport implements TransportBackend {
     });
   }
 
-  // ── Tauri 专属面(TauriHostSurface) ──────────────────────────────────────────
+  // ── Electron 宿主专属面(DesktopHostSurface) ────────────────────────────────
 
   pickDirectory(): Promise<string | null> {
     return invoke<string | null>("pick_directory");
@@ -145,7 +143,7 @@ export class TauriTransport implements TransportBackend {
   /** 订阅宿主转发事件;返回反订阅函数(store 切换/销毁时调用)。 */
   async subscribe(handlers: StreamHandlers): Promise<() => void> {
     const unlistens: UnlistenFn[] = [];
-    const on = async <P>(name: string, run: (payload: P) => void): Promise<void> => {
+    const on = async <P>(name: HostEvent, run: (payload: P) => void): Promise<void> => {
       unlistens.push(await listen<P>(name, (event: Event<P>) => {
         noteEvent(name, event.payload);
         run(event.payload);
@@ -166,6 +164,7 @@ export class TauriTransport implements TransportBackend {
     });
     await on<Record<string, any>>("conn://incompatible", (payload) => handlers.onIncompatible(payload ?? {}));
     await on<{ message?: string }>("conn://error", (payload) => handlers.onHostError(String(payload?.message ?? "host error")));
+    await on<ReconnectStatusWire>("conn://reconnect", (payload) => handlers.onReconnect?.(payload));
     return () => {
       for (const unlisten of unlistens.splice(0)) unlisten();
     };
@@ -201,7 +200,7 @@ export async function openExternalUrl(url: string): Promise<void> {
 
 /** 宿主级诊断事件(App 装配期订阅,与具体标签无关)。非 Tauri 环境返回空操作。 */
 export async function listenHostDiagnostics(handlers: HostDiagnostics): Promise<() => void> {
-  if (!isTauriRuntime()) return () => {};
+  if (!isDesktopRuntime()) return () => {};
   const unlistens: UnlistenFn[] = [];
   if (handlers.onIncompatible) {
     unlistens.push(

@@ -9,7 +9,7 @@
  * 抽到这里的原因：`siwc.ts` 与 `dsaccount.ts` 各自写一份 `invoke` 包装，迟早会出现
  * 「一个改了错误文案、另一个没改」这类漂移。
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./host";
 
 import { isTauriRuntime } from "./transport/backend";
 

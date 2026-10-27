@@ -1,6 +1,6 @@
 # Provider Retry / 网络波动状态接入说明
 
-本文记录后端、SDK、Electron 宿主已经落地的契约，以及 renderer（`../qaqh-desktop-app`）还需要接入的 UI 改动。renderer 源码仓库在 2026-10-28 01:06 左右从本机消失，远端 `main` 仍是 2026-10-24 的 Tauri 旧基线。`HANDOFF.md:9` 明确说明该 renderer 工作区有大量迁移中的未提交修改，不能恢复、覆盖或清理；因此本轮没有用远端旧基线替换 renderer 源码。
+本文记录 provider retry / 网络波动的完整链路。renderer 已迁入本仓 `webui/`，不再依赖 `../qaqh-desktop-app`。
 
 ## 已落地
 
@@ -43,16 +43,16 @@ onReconnectScheduled?: (info: { attempt: number; delayMs: number }) => void;
 - `RingingClient` 把两条 watch 的 `onReconnectScheduled` 转发为 `conn://reconnect`。
 - session 与 timeline 两条 watch 可能各自上报；renderer 以最新一条为准即可，不要求 UI 区分流。
 
-## Renderer 待接入
+## Renderer 接入（已实现）
 
 ### 1. 类型与事件订阅
 
-- `src/lib/desktop-host.ts`：`HostEvent` 增加 `"conn://reconnect"`。
-- `src/lib/transport/backend.ts`：
+- `webui/src/lib/desktop-host.ts`：`HostEvent` 增加 `"conn://reconnect"`。
+- `webui/src/lib/transport/backend.ts`：
   - 增加 `ReconnectStatusWire`；
   - `StreamHandlers` 增加 `onReconnect?(info: ReconnectStatusWire): void`。
-- `src/lib/transport/electron.ts`：`subscribe` 中监听 `conn://reconnect`，调用 `handlers.onReconnect`。
-- `src/api/qaqh/TimelineEvent.ts`：重新同步生成类型，加入 `provider_retrying`。
+- `webui/src/lib/transport/electron.ts`：`subscribe` 中监听 `conn://reconnect`，调用 `handlers.onReconnect`。
+- `webui/src/api/qaqh/TimelineEvent.ts`：加入 `provider_retrying`。
 
 ### 2. SessionStore
 
@@ -82,18 +82,19 @@ reconnect = createSignal<{
 
 ### 3. UI
 
-- `SessionView` 顶部或底部显示 `providerRetry`：
+- `webui/src/session/SessionView.tsx` 显示 `providerRetry`：
   - 文案：`上游请求失败，正在重试（第 N/M 次，D 秒后）`
   - 第二行展示 `error`（后端已脱敏/截断）。
   - 颜色用 warn，不要用 err（重试仍可能成功）。
-- `App.tsx` 的 `connectionNotice` 在 `connection === "reconnecting"` 且 `reconnect` 非空时显示：
+- `webui/src/app/App.tsx` 的 `connectionNotice` 在 `connection === "reconnecting"` 且 `reconnect` 非空时显示：
   - `网络波动，正在重连（第 N 次，D 秒后）`
   - 否则保留原 `重连中`。
-- `strings.ts` 增加上述两条文案。
-- `styles/components/feedback.css` 增加 `.provider-retry` 的样式，复用 `connection-notice` 的 warn 边框与字号。
+- `webui/src/lib/strings.ts` 增加上述两条文案。
+- `webui/src/styles/components/feedback.css` 增加 `.provider-retry` 的样式。
 
 ### 4. 验证
 
-- `pnpm typecheck`
-- `pnpm test`
+- `pnpm --dir webui typecheck`
+- `pnpm --dir webui test`（521/521）
+- `pnpm --dir webui build`
 - 手工/夹具：模拟 `timeline://entry` 的 `provider_retrying`，确认横幅出现并在下一个内容事件后消失；模拟 `conn://reconnect`，确认“网络波动”文案与重试按钮。

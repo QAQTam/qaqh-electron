@@ -16,7 +16,8 @@ export function markPlatform(): void {
     root.classList.add("platform-linux");
     root.dataset.platform = "linux";
   }
-  if ((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ != null) {
-    root.classList.add("tauri");
+  if (typeof window !== "undefined" && window.qaqhHost != null) {
+    // `tauri` remains a legacy CSS hook for the migrated shell layout.
+    root.classList.add("tauri", "electron");
   }
 }

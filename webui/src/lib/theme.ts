@@ -5,7 +5,8 @@
  * 从 `resolvedTheme()` 读解析结果选配色。
  */
 import { createSignal } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { isDesktopRuntime } from "./desktop-host";
+import { invoke } from "./host";
 
 export type ResolvedTheme = "light" | "dark";
 
@@ -24,7 +25,7 @@ const prefersReducedMotion = typeof matchMedia === "function"
   : null;
 
 function syncNativeBackdrop(theme: ResolvedTheme): void {
-  if (typeof window === "undefined" || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ == null) return;
+  if (!isDesktopRuntime()) return;
   const revision = ++backdropSyncRevision;
   backdropSyncQueue = backdropSyncQueue
     .then(() => {

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const rendererRoot = resolve(root, "../qaqh-desktop-app");
+const rendererRoot = resolve(root, "webui");
 const children = new Set();
 let shuttingDown = false;
 

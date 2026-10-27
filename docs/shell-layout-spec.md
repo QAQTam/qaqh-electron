@@ -2,10 +2,10 @@
 
 - 状态：Draft v0.1（待评审）
 - 日期：2026-10-27
-- 范围：`qaqh-electron` 宿主 + `../qaqh-desktop-app` renderer
+- 范围：`qaqh-electron` 宿主 + 本仓 `webui/` renderer
 - 相关：`docs/interaction-semantics.md`、`HANDOFF.md`
 - 规范词：**MUST** / **SHOULD** / **MAY**（按 RFC 2119 语义）
-- 代码缩写：`E/` = `qaqh-electron/src`，`R/` = `qaqh-desktop-app/src`
+- 代码缩写：`E/` = `qaqh-electron/src`，`R/` = `qaqh-electron/webui/src`
 
 ---
 
