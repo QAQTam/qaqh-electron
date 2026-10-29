@@ -83,16 +83,38 @@ describe("groupRowsByKind", () => {
 });
 
 describe("summarizeMachineMemory", () => {
-  it("合计 = 壳 + daemon + 界面进程组 + 页面已用堆", () => {
+  it("合计 = 壳 + daemon + 界面进程组;renderer 工作集已含 JS 堆,不重复计", () => {
     const view = summarizeMachineMemory(
       process({ resident_bytes: 100 }),
       process({ resident_bytes: 50, source: "linux.procfs" }),
       { usedJsHeapBytes: 10, totalJsHeapBytes: 20, jsHeapLimitBytes: null, domNodes: 5, childFrames: 0 },
       group([member(1, "browser", 30), member(2, "renderer", 20)]),
     );
-    expect(view.totalBytes).toBe(100 + 50 + 50 + 10);
+    expect(view.totalBytes).toBe(100 + 50 + 50);
     expect(view.group.map((row) => [row.kind, row.resident])).toEqual([["browser", 30], ["renderer", 20]]);
     expect(view.rows.map((row) => row.id)).toEqual(["shell", "daemon"]);
+    expect(view.excluded).toContain("页面 JS 堆(已含在 renderer 工作集,不重复计入)");
+  });
+
+  it("进程组没有 renderer 时,页面 JS 堆是渲染侧唯一读数,照常计入", () => {
+    const view = summarizeMachineMemory(
+      process({ resident_bytes: 100 }),
+      null,
+      { usedJsHeapBytes: 10, totalJsHeapBytes: 20, jsHeapLimitBytes: null, domNodes: 5, childFrames: 0 },
+      group([member(1, "gpu", 40)]),
+    );
+    expect(view.totalBytes).toBe(150);
+  });
+
+  it("Linux zygote 的共享 fork 页不计入合计,但写明口径", () => {
+    const view = summarizeMachineMemory(
+      process({ resident_bytes: 100 }),
+      null,
+      null,
+      group([member(1, "renderer", 20), member(2, "zygote", 30)]),
+    );
+    expect(view.totalBytes).toBe(120);
+    expect(view.excluded.some((line) => line.includes("zygote") && line.includes("不计入合计"))).toBe(true);
   });
 
   it("一个角色里有进程读不到,合计照算但口径要写明", () => {

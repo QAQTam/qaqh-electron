@@ -109,15 +109,29 @@ export function resolveDaemonExecutable(): string | null {
     return process.env.QAQH_DAEMON_PATH;
   }
 
-  // 生产环境打包路径 (resources/bin/qaqh-daemon)
+  const binName = process.platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
+
+  // 用户组件根(updater 热通道):overlay 的 daemon 比 baseline 新,优先于包内。
+  // 仅打包形态生效,dev 时不让本机残留的 overlay 干扰开发。
   if ((process as any).resourcesPath) {
-    const binName = process.platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
+    const overlayPath = join(homedir(), ".local", "share", "QAQ-Harness", "backend", binName);
+    if (existsSync(overlayPath)) return overlayPath;
+  }
+
+  // 生产环境打包路径 (resources/bin/qaqh-daemon) —— 单体包/旧布局兼容。
+  if ((process as any).resourcesPath) {
     const prodPath = join((process as any).resourcesPath, "bin", binName);
     if (existsSync(prodPath)) return prodPath;
   }
 
+  // 系统安装路径(shell 包 / 独立 daemon 包)。
+  const systemCandidates = process.platform === "win32"
+    ? []
+    : [join("/usr/local/bin", binName), join("/usr/bin", binName)];
+
   // 本地开发路径（同级项目 qaqh-backend）
   const candidates = [
+    ...systemCandidates,
     resolve(process.cwd(), "../qaqh-backend/target/release/qaqh-daemon"),
     resolve(process.cwd(), "../qaqh-backend/target/debug/qaqh-daemon"),
     resolve(process.cwd(), "resources/bin/qaqh-daemon"),
@@ -146,7 +160,10 @@ export class DaemonManager {
     const exe = resolveDaemonExecutable();
     if (!exe) {
       throw new Error(
-        "Could not find qaqh-daemon executable. Please set QAQH_DAEMON_PATH or build qaqh-backend."
+        "Could not find qaqh-daemon executable. "
+        + "Expected one of: QAQH_DAEMON_PATH, ~/.local/share/QAQ-Harness/backend/, "
+        + "the app's resources/bin/, /usr/local/bin or /usr/bin. "
+        + "Install the qaqh-daemon component or build qaqh-backend."
       );
     }
 

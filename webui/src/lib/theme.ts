@@ -5,7 +5,7 @@
  * 从 `resolvedTheme()` 读解析结果选配色。
  */
 import { createSignal } from "solid-js";
-import { isDesktopRuntime } from "./desktop-host";
+import { desktopHost, isDesktopRuntime } from "./desktop-host";
 import { invoke } from "./host";
 
 export type ResolvedTheme = "light" | "dark";
@@ -41,6 +41,21 @@ function syncNativeBackdrop(theme: ResolvedTheme): void {
     });
 }
 
+/** WCO 窗口控制配色跟随主题(阶段4):只影响外观;失败(平台不支持)静默降级。 */
+function syncTitlebarOverlay(theme: ResolvedTheme): void {
+  if (!isDesktopRuntime()) return;
+  const overlay = theme === "dark"
+    ? { color: "#17181b", symbolColor: "#edeef0" }
+    : { color: "#f7f7f8", symbolColor: "#20242b" };
+  backdropSyncQueue = backdropSyncQueue
+    .then(() => {
+      const controls = desktopHost()?.windowControls;
+      if (controls == null) return;
+      void controls.setTitleBarOverlay(overlay).catch(() => {});
+    })
+    .catch(() => {});
+}
+
 function recompute(animate = true): void {
   const root = document.documentElement;
   const next: ResolvedTheme =
@@ -65,6 +80,7 @@ function recompute(animate = true): void {
   setResolved(next);
   root.dataset.theme = next;
   syncNativeBackdrop(next);
+  syncTitlebarOverlay(next);
 }
 
 /** config 的 theme 值进来(空串 = 跟随系统);config.load 与每次改动都会调用。 */

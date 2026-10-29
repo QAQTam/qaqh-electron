@@ -147,7 +147,7 @@ export const StartupView: Component<{
   return (
     <div class="startup-container">
       <div class="startup-hero">
-        <h1 class="startup-title">QAQ-Harness</h1>
+        {/* §8.7:产品名已在 TopBar,启动页不再用 28px 产品名当主标题;composer 才是主角。 */}
         <p class="startup-subtitle">配置新会话环境，在发送首条消息时原子化创建</p>
       </div>
 

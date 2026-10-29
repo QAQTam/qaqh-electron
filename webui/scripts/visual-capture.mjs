@@ -7,7 +7,7 @@
  *
  * Output defaults to artifacts/ui-visual-review. Override with QAQH_VISUAL_OUT.
  */
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,24 +17,43 @@ const PORT = Number(process.env.QAQH_VISUAL_CDP_PORT ?? "9334");
 const BASE = process.env.QAQH_VISUAL_URL ?? "http://127.0.0.1:5173/stress.html";
 const OUT = resolve(process.env.QAQH_VISUAL_OUT ?? "artifacts/ui-visual-review");
 const delay = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+/** 单场景护栏:CDP 对端崩溃时 send 可能永不返回,把挂死变成响亮失败(实测 exit 13)。 */
+const withTimeout = (promise, ms, label) => {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label}: capture timed out after ${ms}ms`)), ms); }),
+  ]).finally(() => clearTimeout(timer));
+};
 
-const child = spawn(
-  EDGE,
-  [
-    "--headless=new",
-    `--remote-debugging-port=${PORT}`,
-    `--user-data-dir=${mkdtempSync(join(tmpdir(), "qaqh-visual-"))}`,
-    "--window-size=1280,900",
-    "--no-first-run",
-    "--disable-extensions",
-    "--disable-sync",
-    "--no-default-browser-check",
-    `${BASE}?view=settings&theme=light&material=solid`,
-  ],
-  { stdio: "ignore" },
-);
+/** Edge + CDP 连接:崩溃后可整体重建(重试护栏用)。cdp 的三个字段是可变的。 */
+let child;
+const cdp = { socket: null, send: null, evaluate: null };
+const killStale = () => {
+  // 模式不以连字符开头,避免被 pkill 当作选项;无匹配时 pkill 退出码 1,吞掉即可。
+  try { execSync(`pkill -f "remote.debugging.port=${PORT}"`); } catch { /* 无残留即成功 */ }
+};
 
-const cdp = await (async () => {
+async function spawnEdgeAndConnect() {
+  killStale();
+  child = spawn(
+    EDGE,
+    [
+      "--headless=new",
+      `--remote-debugging-port=${PORT}`,
+      `--user-data-dir=${mkdtempSync(join(tmpdir(), "qaqh-visual-"))}`,
+      "--window-size=1280,900",
+      "--no-first-run",
+      "--disable-extensions",
+      "--disable-sync",
+      "--no-default-browser-check",
+      // 低内存护栏曾试过 --disable-gpu/--disable-dev-shm-usage:在这台 Edge 上
+      // 会让 CDP 连接静默挂死(实测),故不采用;OOM 场景靠重试护栏兜底。
+      `${BASE}?view=settings&theme=light&material=solid`,
+    ],
+    { stdio: "ignore" },
+  );
+
   let target;
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -74,8 +93,12 @@ const cdp = await (async () => {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
     return result.result?.value;
   };
-  return { socket, send, evaluate };
-})();
+  cdp.socket = socket;
+  cdp.send = send;
+  cdp.evaluate = evaluate;
+}
+
+await spawnEdgeAndConnect();
 
 async function waitForFixture(view) {
   const selector = view === "settings" ? ".settings-page .settings-section" : view === "tools" ? ".tools-page" : view === "messages" ? "#messages .turn" : "#approval-slot .card";
@@ -102,12 +125,76 @@ async function clickTodo() {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
 }
 
-async function capture(name, { view, theme, material, width, height, section, closed = false, scale = 1, reduced = false, typography = false, pending = false } ) {
+async function capture(name, { view, theme, material, width, height, section, closed = false, scale = 1, reduced = false, typography = false, pending = false, contextMenu = false, shellMenu = false, sidebarDrawer = false, railDrawer = false, sidebarResize = false } ) {
   await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
   await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: reduced ? "reduce" : "no-preference" }] });
-  const url = `${BASE}?view=${view}&theme=${theme}&material=${material}${pending ? "&pending=1" : ""}`;
+  const url = `${BASE}?view=${view}&theme=${theme}&material=${material}${pending ? "&pending=1" : ""}${sidebarDrawer ? "&sidebarDrawer=1" : ""}${railDrawer ? "&railDrawer=1" : ""}`;
   await cdp.send("Page.navigate", { url });
   await waitForFixture(view);
+  // 阶段5:抽屉态断言——遮罩在、面板覆盖层就位、不出横向滚动。
+  if (sidebarDrawer) {
+    const ok = await cdp.evaluate("(() => { const el = document.querySelector('.app-sidebar.drawer.open'); return el != null && getComputedStyle(el).display !== 'none'; })()");
+    if (!ok) throw new Error(`${name}: sidebar drawer did not open`);
+  }
+  // 侧栏拖拽调宽(用户侧需求):真实鼠标拖拽 → 宽度生效;拖到阈值下 → 等效汉堡收回。
+  if (sidebarResize) {
+    const edgePoint = () => cdp.evaluate(`(() => {
+      const el = document.querySelector('.app-sidebar-resizer');
+      if (el == null) throw new Error('resizer missing');
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + 200) };
+    })()`);
+    const dragEdge = async (dx) => {
+      const p = await edgePoint();
+      await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: p.x, y: p.y, button: "left", buttons: 1, clickCount: 1 });
+      for (let step = 1; step <= 10; step++) {
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: p.x + Math.round((dx * step) / 10), y: p.y, button: "left", buttons: 1 });
+        await delay(16);
+      }
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: p.x + dx, y: p.y, button: "left", clickCount: 1 });
+    };
+    await dragEdge(100);
+    await delay(350); // 轨道过渡(--dur-layout 220ms)播完再量
+    const wide = await cdp.evaluate(`(() => {
+      const app = document.getElementById('app');
+      const side = document.getElementById('app-sidebar').getBoundingClientRect();
+      return { cssVar: app.style.getPropertyValue('--sidebar-width').trim(), width: Math.round(side.width), collapsed: app.classList.contains('sidebar-collapsed') };
+    })()`);
+    if (wide.cssVar !== "388px" || Math.abs(wide.width - 388) > 2 || wide.collapsed) {
+      throw new Error(`${name}: sidebar drag resize failed ${JSON.stringify(wide)}`);
+    }
+    await dragEdge(-170); // 388 - 170 = 218 ∈ [200, 224):低于收回阈值,且未被 MIN=200 夹持
+    await delay(400);
+    const narrow = await cdp.evaluate(`(() => {
+      const app = document.getElementById('app');
+      const side = document.getElementById('app-sidebar').getBoundingClientRect();
+      return { width: Math.round(side.width), collapsed: app.classList.contains('sidebar-collapsed') };
+    })()`);
+    if (!narrow.collapsed || narrow.width !== 48) {
+      throw new Error(`${name}: drag below collapse threshold must collapse to 48px ${JSON.stringify(narrow)}`);
+    }
+    // 收回后再用汉堡展开:恢复到记忆宽度(218px),不是默认 288。
+    const menu = await cdp.evaluate(`(() => { const b = document.querySelector('.titlebar-menu'); const r = b.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: menu.x, y: menu.y, button: "left", buttons: 1, clickCount: 1 });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: menu.x, y: menu.y, button: "left", clickCount: 1 });
+    await delay(400);
+    const restored = await cdp.evaluate(`(() => {
+      const app = document.getElementById('app');
+      const side = document.getElementById('app-sidebar').getBoundingClientRect();
+      return { cssVar: app.style.getPropertyValue('--sidebar-width').trim(), width: Math.round(side.width), collapsed: app.classList.contains('sidebar-collapsed') };
+    })()`);
+    if (restored.collapsed || restored.cssVar !== "218px" || Math.abs(restored.width - 218) > 2) {
+      throw new Error(`${name}: re-expand must restore remembered width ${JSON.stringify(restored)}`);
+    }
+    console.log(`${name}: sidebar resize ok (388px → collapse → restore 218px)`);
+  }
+  if (railDrawer) {
+    const ok = await cdp.evaluate("(() => { const el = document.querySelector('.workspace-panel.drawer'); return el != null && getComputedStyle(el).display !== 'none'; })()");
+    if (!ok) throw new Error(`${name}: rail drawer did not open`);
+    if (await cdp.evaluate("document.documentElement.scrollWidth > innerWidth")) {
+      throw new Error(`${name}: rail drawer caused horizontal overflow`);
+    }
+  }
   if (scale !== 1) await cdp.evaluate(`document.documentElement.style.zoom = ${scale}`);
   if (view === "messages") {
     if (await cdp.evaluate("Boolean(document.querySelector('.session-capsule'))")) throw new Error('Future Goal capsule must not render');
@@ -143,21 +230,34 @@ async function capture(name, { view, theme, material, width, height, section, cl
       const head = document.querySelector('.workspace-panel-head');
       const body = document.querySelector('.workspace-panel-body');
       const a = turn.getBoundingClientRect(), b = composer.getBoundingClientRect();
-      const m = messages.getBoundingClientRect(), p = surface.getBoundingClientRect();
+      const m = messages.getBoundingClientRect();
+      // 抽屉未挂载(cols≥2 且未开抽屉)时,列 dock 断言整体跳过,只保留正文对齐。
+      if (panel == null || surface == null || head == null || body == null) {
+        return { leftDelta: Math.abs(a.left - b.left), rightDelta: Math.abs(a.right - b.right), messageWidth: a.width, messagesWidth: m.width, composerWidth: b.width, panelHeight: 0, panelDocked: true, bodyBelowHeader: true, overflow: document.documentElement.scrollWidth > innerWidth, panelOpen: false, panelHidden: true, noOverlap: true, identityBelowSurface: true, identityAligned: true, profileChip: true };
+      }
+      const p = surface.getBoundingClientRect();
       const h = head.getBoundingClientRect(), c = body.getBoundingClientRect();
       // 身份行(§1.5):在表面外下方、与表面同宽;profile chip 必须在动作行里。
       const id = document.querySelector('.composer-identity');
       const i = id == null ? null : id.getBoundingClientRect();
       const panelOpen = !panel.classList.contains('collapsed');
+      const panelHidden = getComputedStyle(panel).display === 'none';
       const hasIdentity = i != null;
       const dock = document.querySelector('.session-column').getBoundingClientRect();
-      return { leftDelta: Math.abs(a.left - b.left), rightDelta: Math.abs(a.right - b.right), messageWidth: a.width, messagesWidth: m.width, composerWidth: b.width, panelHeight: p.height, panelDocked: Math.abs(p.top - dock.top) <= 2 && Math.abs(p.bottom - dock.bottom) <= 2, bodyBelowHeader: !panelOpen || c.top >= h.bottom - 1, overflow: document.documentElement.scrollWidth > innerWidth, panelOpen, noOverlap: p.left >= m.right - 1, identityBelowSurface: !hasIdentity || i.top >= b.bottom - 1, identityAligned: !hasIdentity || (Math.abs(i.left - b.left) <= 2 && Math.abs(i.right - b.right) <= 2), profileChip: !hasIdentity || document.querySelector('.composer-profile-button') != null };
+      return { leftDelta: Math.abs(a.left - b.left), rightDelta: Math.abs(a.right - b.right), messageWidth: a.width, messagesWidth: m.width, composerWidth: b.width, panelHeight: p.height, panelDocked: Math.abs(p.top - dock.top) <= 2 && Math.abs(p.bottom - dock.bottom) <= 2, bodyBelowHeader: !panelOpen || c.top >= h.bottom - 1, overflow: document.documentElement.scrollWidth > innerWidth, panelOpen, panelHidden, noOverlap: p.left >= m.right - 1, identityBelowSurface: !hasIdentity || i.top >= b.bottom - 1, identityAligned: !hasIdentity || (Math.abs(i.left - b.left) <= 2 && Math.abs(i.right - b.right) <= 2), profileChip: !hasIdentity || document.querySelector('.composer-profile-button') != null };
     })()`);
-    if (geometry.leftDelta > 2 || geometry.rightDelta > 2 || geometry.overflow || !geometry.noOverlap || !geometry.bodyBelowHeader || !geometry.panelDocked
+    // 阶段5 断言语义:列态验 dock/推挤;抽屉态验覆盖层就位(它本来就覆盖正文,
+    // noOverlap/bodyBelowHeader 不适用);抽屉未挂载只验正文对齐/溢出。
+    const panelDrawer = await cdp.evaluate("document.querySelector('.workspace-panel')?.classList.contains('drawer') === true");
+    const panelFail = geometry.panelHidden || panelDrawer
+      ? false
+      : (!geometry.noOverlap || !geometry.bodyBelowHeader || !geometry.panelDocked);
+    if (geometry.leftDelta > 2 || geometry.rightDelta > 2 || geometry.overflow || panelFail
       || !geometry.identityBelowSurface || !geometry.identityAligned || !geometry.profileChip) {
       throw new Error(`${name}: alignment failed ${JSON.stringify(geometry)}`);
     }
-    if (closed) {
+    // 收合/回弹只对列态右栏有意义;抽屉态由 App 控制挂载,不在此流里。
+    if (closed && !geometry.panelHidden) {
       // Refresh the local snapshot while collapsed: the same header must survive.
       await cdp.evaluate("window.__stress.store.todos[1](window.__stress.store.todos[0]().map(item => ({ ...item })))");
       await delay(50);
@@ -245,6 +345,54 @@ async function capture(name, { view, theme, material, width, height, section, cl
       }
       console.log(`${name}: pending ${JSON.stringify(cards)}`);
     }
+    // BUG-2026-10-28 回归:右键菜单曾被「任意 scroll 一律关闭」误伤——流式输出的
+    // 跟随尾部是程序化滚动,把用户在旧消息上打开的菜单连续刷掉。现在滚动不关闭
+    // (菜单位于视口坐标,与原生菜单一致);resize/外点/Escape 仍关闭。
+    if (contextMenu) {
+      await cdp.evaluate(`(() => {
+        const turn = document.querySelector('#messages .turn');
+        const pre = document.createElement('pre');
+        pre.textContent = 'const regression = "menu survives programmatic scroll";';
+        turn.appendChild(pre);
+        const rect = pre.getBoundingClientRect();
+        pre.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.left + 30, clientY: rect.top + 10 }));
+      })()`);
+      await delay(200);
+      if (!await cdp.evaluate("document.querySelector('.context-menu') != null")) {
+        throw new Error(`${name}: context menu did not open`);
+      }
+      await cdp.evaluate("(() => { const m = document.querySelector('#messages'); m.scrollTop += 120; })()");
+      await delay(150);
+      if (!await cdp.evaluate("document.querySelector('.context-menu') != null")) {
+        throw new Error(`${name}: context menu closed by programmatic scroll (stream follow)`);
+      }
+      await cdp.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+      await delay(120);
+      if (await cdp.evaluate("document.querySelector('.context-menu') != null")) {
+        throw new Error(`${name}: Escape did not close the context menu`);
+      }
+      await cdp.evaluate(`(() => { document.querySelector('#messages .turn pre:last-child')?.remove(); })()`);
+      console.log(`${name}: context menu survives scroll`);
+    }
+    // 阶段1(spec §5.5):壳层 ⋯ 菜单必须包含模型两项/设置/关于/退出,键盘可关。
+    if (shellMenu) {
+      await cdp.evaluate("document.querySelector('.titlebar-more')?.click()");
+      await delay(200);
+      const menu = await cdp.evaluate(`(() => {
+        const menu = document.querySelector('.context-menu');
+        if (menu == null) return null;
+        return [...menu.querySelectorAll('.context-menu-label')].map((el) => el.textContent);
+      })()`);
+      const required = ["选择新会话默认模型…", "更改当前会话模型…", "设置…", "关于 QAQ-Harness", "退出…"];
+      const missing = required.filter((label) => !Array.isArray(menu) || !menu.includes(label));
+      if (missing.length > 0) throw new Error(`${name}: shell menu missing ${JSON.stringify({ missing, menu })}`);
+      await cdp.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+      await delay(120);
+      if (await cdp.evaluate("document.querySelector('.context-menu') != null")) {
+        throw new Error(`${name}: Escape did not close the shell menu`);
+      }
+      console.log(`${name}: shell menu complete (${required.length} entries)`);
+    }
   }
   if (section) {
     // 按 data-section-id 点，不按位置索引：设置分区一增删，索引版就静默拍错分区
@@ -254,11 +402,21 @@ async function capture(name, { view, theme, material, width, height, section, cl
     );
     await delay(300);
   }
-  const { data } = await cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
-  mkdirSync(OUT, { recursive: true });
-  const path = join(OUT, `${name}.png`);
-  writeFileSync(path, Buffer.from(data, "base64"));
-  console.log(`${path} (${width}x${height})`);
+  // 截图单独 30s 护栏:OOM 压力下 captureScreenshot 可能挂死,丢截图但不能丢断言。
+  let shot;
+  try {
+    shot = await withTimeout(cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true }), 30_000, `${name}: screenshot`);
+  } catch (error) {
+    console.error(`${name}: screenshot skipped (${error.message})`);
+  }
+  if (shot != null) {
+    mkdirSync(OUT, { recursive: true });
+    const path = join(OUT, `${name}.png`);
+    writeFileSync(path, Buffer.from(shot.data, "base64"));
+    console.log(`${path} (${width}x${height})`);
+  } else {
+    console.log(`${name}: (screenshot unavailable this run)`);
+  }
 }
 
 try {
@@ -280,7 +438,16 @@ try {
     // 侧栏待响应卡(§6.2):浅/深各一张,另有 reduced-motion 那张验「动画全停」。
     ["sidebar-pending-light", { view: "messages", theme: "light", material: "solid", width: 1280, height: 900, pending: true }],
     ["sidebar-pending-dark", { view: "messages", theme: "dark", material: "solid", width: 1280, height: 900, pending: true }],
-    ["sidebar-pending-640", { view: "messages", theme: "light", material: "solid", width: 640, height: 480, pending: true }],
+    ["sidebar-pending-640", { view: "messages", theme: "light", material: "solid", width: 640, height: 480, pending: true, sidebarDrawer: true }],
+    // 阶段5:抽屉态——右栏抽屉(1024,两列)与侧栏抽屉(640,单列)。
+    ["rail-drawer-1024", { view: "messages", theme: "dark", material: "solid", width: 1024, height: 800, railDrawer: true }],
+    ["sidebar-drawer-640", { view: "messages", theme: "light", material: "solid", width: 640, height: 480, sidebarDrawer: true }],
+    // 侧栏拖拽调宽(用户侧需求):拖宽生效;拖到阈值下等效汉堡收回;再展开恢复记忆宽度。
+    ["sidebar-resize-1280", { view: "messages", theme: "light", material: "solid", width: 1280, height: 900, sidebarResize: true }],
+    // BUG-2026-10-28 回归:右键菜单必须在程序化滚动(流式跟随)下存活。
+    ["context-menu-stream-scroll", { view: "messages", theme: "dark", material: "solid", width: 1280, height: 900, contextMenu: true }],
+    // 阶段1(spec §5.5):壳层 ⋯ 菜单完整性。
+    ["shell-menu-light", { view: "messages", theme: "light", material: "solid", width: 1280, height: 900, shellMenu: true }],
     ["settings-light-solid-desktop", { view: "settings", theme: "light", material: "solid", width: 1280, height: 900 }],
     ["settings-dark-glass-narrow", { view: "settings", theme: "dark", material: "glass", width: 480, height: 820 }],
     ["settings-dark-glass-narrow-pairing", { view: "settings", theme: "dark", material: "glass", width: 480, height: 820, section: "section-pairing" }],
@@ -299,8 +466,29 @@ try {
     ["approval-dark-glass-480x640", { view: "approval", theme: "dark", material: "glass", width: 480, height: 640 }],
   ];
   const filter = process.env.QAQH_VISUAL_FILTER;
+  // 低内存环境(本机 7.9G/swap 常 满)偶发 Edge 被挤死:每场景最多重试 2 次,
+  // 间隔 3s 让系统缓口气;重试会 killStale + 整体重建 Edge/CDP。
+  const attempts = Number(process.env.QAQH_VISUAL_ATTEMPTS ?? "3");
   for (const [name, options] of scenarios) {
-    if (filter == null || new RegExp(filter).test(name)) await capture(name, options);
+    if (filter != null && !new RegExp(filter).test(name)) continue;
+    let lastError;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await withTimeout(capture(name, options), 120_000, name);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        console.error(`[retry ${attempt}/${attempts}] ${name}: ${error.message}`);
+        try { cdp.socket.close(); } catch {}
+        try { child.kill(); } catch {}
+        killStale();
+        await delay(3_000);
+        // 重建 CDP(原 socket/child 已废弃):复用顶部同款连接逻辑。
+        await spawnEdgeAndConnect();
+      }
+    }
+    if (lastError != null) throw lastError;
   }
 } finally {
   cdp.socket.close();

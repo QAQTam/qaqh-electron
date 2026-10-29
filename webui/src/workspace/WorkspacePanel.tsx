@@ -52,10 +52,23 @@ const TodoRow: Component<{ item: { title?: string; status?: string; evidence?: s
   );
 };
 
-export const WorkspacePanel: Component<{ store: SessionStore }> = (props) => {
+export const WorkspacePanel: Component<{ store: SessionStore;
+  /** 阶段5:cols<3 时以抽屉呈现(固定 320,覆盖正文),App 控制挂载。 */
+  drawer?: boolean;
+  /** 抽屉开合(App 的 railDrawerOpen);抽屉态恒由外部驱动,不走 manual/auto 规则。 */
+  drawerOpen?: boolean;
+  /** 受控手动开合(BUG-2026-10-29 顶栏主动展开钮):App 持有并持久化;不传走内部信号。 */
+  manualOpen?: boolean | null;
+  onManualToggle?: (value: boolean | null) => void; }> = (props) => {
   const items = () => props.store.todos[0]();
   // null = 自动(有待办且右栏放得下时展开);true/false = 用户手动开合,清空后重置。
-  const [manual, setManual] = createSignal<boolean | null>(null);
+  const [manualSignal, setManualSignal] = createSignal<boolean | null>(null);
+  // 受控优先:TopBar 的任务钮与面板头部按钮共享同一份手动态(App 持有,可持久化)。
+  const manual = (): boolean | null => (props.manualOpen !== undefined ? props.manualOpen : manualSignal());
+  const setManual = (value: boolean | null): void => {
+    if (props.onManualToggle != null) props.onManualToggle(value);
+    else setManualSignal(value);
+  };
   const [narrow, setNarrow] = createSignal(false);
   let root: HTMLElement | undefined;
   createEffect(
@@ -65,15 +78,21 @@ export const WorkspacePanel: Component<{ store: SessionStore }> = (props) => {
       if (total === 0) setManual(null);
     },
   );
-  // 窄屏自动收起为窄栏;manual 优先,点图标仍可强制展开(占真实列宽,不覆盖消息)。
-  const open = () => manual() ?? (items().length > 0 && !narrow());
+  // 抽屉态由 App 的 drawerOpen 驱动(面板常驻挂载,滑出画面后 display:none);
+  // 列态沿用 narrow/manual 规则。
+  const open = () => (props.drawer === true ? props.drawerOpen === true : (manual() ?? (items().length > 0 && !narrow())));
 
-  // 量的是父容器(.session-column)的可用宽度:右栏自己是 auto 列,量自己会循环。
+  // 量「#app 总宽 − 侧栏宽」(spec §4.7 允许量 #app):这个值与右栏自身宽度无关,
+  // 不会形成「展开→挤压→收起→回弹」的反馈振荡;阈值语义仍是"主列可用宽度"。
   onSettled(() => {
-    const host = root?.parentElement;
+    const host = root?.closest("#app");
     if (host == null) return;
+    const sidebar = host.querySelector<HTMLElement>(".app-sidebar");
     // 注意:setter 返回被赋的布尔值,回调绝不能是表达式箭头体(会被当成 cleanup)。
-    const measure = (): void => { setNarrow(host.clientWidth < NARROW_RAIL_MAX); };
+    const measure = (): void => {
+      const sidebarWidth = sidebar?.getBoundingClientRect().width ?? 288;
+      setNarrow(host.clientWidth - sidebarWidth < NARROW_RAIL_MAX);
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(host);
@@ -83,7 +102,14 @@ export const WorkspacePanel: Component<{ store: SessionStore }> = (props) => {
   const doneCount = () => items().filter((item) => normalizeStatus(item.status) === "completed").length;
 
   return (
-    <aside ref={root} class={{ "workspace-panel": true, collapsed: !open() }} aria-label={STR.workspacePanelTitle}>
+    <aside ref={root} id="right-rail" class={{
+      "workspace-panel": true,
+      drawer: props.drawer === true,
+      open: props.drawer === true && open(),
+      /* collapsed 只描述列态收窄;抽屉的出画交给 .drawer 的 transform,
+         两者混用会让滑出过程同时叠一层 320→40 的宽度收缩。 */
+      collapsed: props.drawer !== true && !open(),
+    }} aria-label={STR.workspacePanelTitle}>
       <div class="workspace-panel-surface">
         <button
           type="button"

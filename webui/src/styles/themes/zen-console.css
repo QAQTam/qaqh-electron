@@ -118,9 +118,19 @@ html.theme-zen-console .toast {
   transform: none !important;
 }
 
-/* 折叠区域瞬间就位 */
+/* 折叠区域瞬间就位(含壳层收展/抽屉滑动的 motion kit 过渡) */
 :root[data-theme-preset="zen-console"] .collapse,
-html.theme-zen-console .collapse {
+:root[data-theme-preset="zen-console"] .app-sidebar,
+:root[data-theme-preset="zen-console"] .workspace-panel,
+:root[data-theme-preset="zen-console"] .drawer-mask,
+:root[data-theme-preset="zen-console"] #app,
+:root[data-theme-preset="zen-console"] #top,
+html.theme-zen-console .collapse,
+html.theme-zen-console .app-sidebar,
+html.theme-zen-console .workspace-panel,
+html.theme-zen-console .drawer-mask,
+html.theme-zen-console #app,
+html.theme-zen-console #top {
   transition: none !important;
 }
 
@@ -143,7 +153,10 @@ html.theme-zen-console .tab-dot.run {
   animation: zen-dot-blink 1s steps(1) infinite !important;
 }
 
-/* 2. 流光文本改造：停用 background-clip 渐变动画，追加工作中的闪动圆点 */
+/* 2. 流光文本改造：停用 background-clip 渐变动画。
+   活性指示统一收归状态栏的彗星(见下),此处不再追加闪动圆点——
+   旧版给 .text-shimmer 追加的 " ●" 与 .tool-elapsed 的 "● " 会在运行中的
+   工具行上同时出现,一行两点(用户实机反馈)。 */
 :root[data-theme-preset="zen-console"] .text-shimmer-glow,
 html.theme-zen-console .text-shimmer-glow {
   animation: none !important;
@@ -154,25 +167,58 @@ html.theme-zen-console .text-shimmer-glow {
   opacity: 1 !important;
 }
 
-:root[data-theme-preset="zen-console"] .text-shimmer[data-active="true"]::after,
-html.theme-zen-console .text-shimmer[data-active="true"]::after {
-  content: " ●";
-  display: inline-block;
-  color: var(--accent);
-  font-size: 9px;
-  vertical-align: middle;
-  margin-left: 4px;
-  animation: zen-dot-blink 1s steps(1) infinite;
-}
-
-/* 3. Composer 生成态工作点 */
+/* 3. Composer 生成态工作点：彗星接管存活指示,这里不再重复显示 */
 :root[data-theme-preset="zen-console"] .composer-live-dot,
 html.theme-zen-console .composer-live-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  display: none;
+}
+
+/* ── 状态栏彗星 (TUI Comet Tail):本主题唯一的「存活」动画 ─────────────────
+   亮块领飞 + 2 个渐暗尾块,在状态栏(.composer-identity)右端来回跑(用户参考
+   TUI 彗星 spinner)。调头点恰在 ease-in-out 拐点(速度为 0),用 steps(1) 把
+   尾巴 scaleX(-1) 瞬时镜像——亮块永远朝运动方向,镜像不可见。
+   纯 transform/opacity,合成器友好;reduced-motion 全局规则兜底静止。 */
+:root[data-theme-preset="zen-console"] .composer-comet,
+html.theme-zen-console .composer-comet {
+  display: inline-flex;
+  flex: none;
+  width: 40px;
+  margin-left: auto;
+  align-items: center;
+}
+:root[data-theme-preset="zen-console"] .composer-comet-run,
+html.theme-zen-console .composer-comet-run {
+  display: inline-flex;
+  animation: zen-comet-shuttle 2.4s ease-in-out infinite;
+}
+:root[data-theme-preset="zen-console"] .composer-comet-face,
+html.theme-zen-console .composer-comet-face {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  animation: zen-comet-face 2.4s steps(1) infinite;
+}
+:root[data-theme-preset="zen-console"] .composer-comet-face i,
+html.theme-zen-console .composer-comet-face i {
+  display: block;
+  width: 6px;
+  height: 6px;
   background: var(--accent);
-  animation: zen-dot-blink 1s steps(1) infinite !important;
+}
+:root[data-theme-preset="zen-console"] .composer-comet-face i:nth-child(1),
+html.theme-zen-console .composer-comet-face i:nth-child(1) { opacity: 1; }
+:root[data-theme-preset="zen-console"] .composer-comet-face i:nth-child(2),
+html.theme-zen-console .composer-comet-face i:nth-child(2) { opacity: .45; }
+:root[data-theme-preset="zen-console"] .composer-comet-face i:nth-child(3),
+html.theme-zen-console .composer-comet-face i:nth-child(3) { opacity: .16; }
+@keyframes zen-comet-shuttle {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(16px); }
+}
+@keyframes zen-comet-face {
+  /* 去程(向右)亮块镜像到右端领先,回程(向左)翻回 DOM 顺序。 */
+  0%, 49.9% { transform: scaleX(-1); }
+  50%, 100% { transform: scaleX(1); }
 }
 
 /* ── 显式指示标志 (Explicit Status Badges & Glyphs) ─────────────────────── */
@@ -199,14 +245,8 @@ html.theme-zen-console .step-row.tool.st-running .tool-state::before {
   font-weight: 800;
 }
 
-:root[data-theme-preset="zen-console"] .step-row.tool.st-running .tool-elapsed::before,
-html.theme-zen-console .step-row.tool.st-running .tool-elapsed::before {
-  content: "● ";
-  color: var(--accent);
-  font-size: 8px;
-  vertical-align: 1px;
-  animation: zen-dot-blink 1s steps(1) infinite;
-}
+/* 运行中的工具行不再追加闪动圆点(旧版 "● " 与 shimmer 的 " ●" 叠成一行两点):
+   工具行的运行态由旋转 loader 图标 + 实时耗时承担,「存活」由状态栏彗星统一表达。 */
 
 :root[data-theme-preset="zen-console"] .tool-state.err,
 html.theme-zen-console .tool-state.err {
@@ -240,14 +280,8 @@ html.theme-zen-console #top {
   background: var(--surface);
 }
 
-:root[data-theme-preset="zen-console"] .global-nav,
-html.theme-zen-console .global-nav {
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-}
-
-:root[data-theme-preset="zen-console"] .message-sidebar,
-html.theme-zen-console .message-sidebar {
+:root[data-theme-preset="zen-console"] .app-sidebar,
+html.theme-zen-console .app-sidebar {
   border-right: 1px solid var(--border);
   background: var(--surface);
 }
@@ -262,6 +296,14 @@ html.theme-zen-console .message-session-item {
 html.theme-zen-console .message-session-item.active {
   background: var(--surface-2);
   border-left-color: var(--accent);
+}
+
+/* 激活条去重(用户实机反馈):基础主题的 ::before 竖条(3px accent)与主题的
+   border-left(2px accent)在选中行上叠成两条。zen 用 border-left 一条承担,
+   基础激活条整体关掉(pending 卡的 inset 语义条是独立元素,不受影响)。 */
+:root[data-theme-preset="zen-console"] .message-session-item::before,
+html.theme-zen-console .message-session-item::before {
+  display: none !important;
 }
 
 :root[data-theme-preset="zen-console"] .composer-surface,

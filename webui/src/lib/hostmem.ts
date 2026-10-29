@@ -75,12 +75,16 @@ const KIND_LABEL: Record<string, string> = {
   gpu: "gpu",
   utility: "utility",
   network: "network(网络进程)",
+  zygote: "zygote(共享 fork 页)",
   sandbox_helper: "sandbox_helper",
   ppapi_plugin: "ppapi_plugin",
   ppapi_broker: "ppapi_broker",
   other: "other(其他子进程)",
   unknown: "unknown",
 };
+
+/** Linux zygote/sandbox helper 的页与子进程 fork 共享;计入合计会把 renderer 的私有页重复算一遍。 */
+const SHARED_PAGE_KINDS = new Set(["zygote", "sandbox_helper"]);
 
 /** 壳未提供该命令(旧壳 / 非 Electron)时返回 null。 */
 export const loadProcessGroup = (): Promise<ProcessGroup | null> =>
@@ -208,6 +212,11 @@ export function summarizeMachineMemory(
   }
   const groupRows = groupRowsByKind(group);
   for (const entry of groupRows) {
+    if (SHARED_PAGE_KINDS.has(entry.kind)) {
+      // 共享页不进合计,但要说话:面板上仍然展示这一行,只是不计入。
+      if (entry.resident != null) excluded.push(`${entry.label} ${entry.count} 个(与子进程共享 fork 页,不计入合计)`);
+      continue;
+    }
     if (entry.resident != null) parts.push(entry.resident);
     if (entry.failed > 0) excluded.push(`${entry.label} 有 ${entry.failed} 个进程读不到`);
   }
@@ -216,8 +225,16 @@ export function summarizeMachineMemory(
   // 空列表和「不支持」是两件事:mac 上如果 WKWebView 的 helper 不是我们的直接子进程,
   // 枚举会成功但一条都没有——不写出来的话,合计看起来就像「界面组本来就是 0」。
   else if (group.members.length === 0) excluded.push("界面进程组(枚举到 0 个子进程)");
-  if (renderer?.usedJsHeapBytes != null) parts.push(renderer.usedJsHeapBytes);
-  else excluded.push("页面 JS 堆");
+  if (renderer?.usedJsHeapBytes != null) {
+    // JS 堆包含在 renderer 进程的工作集里:进程组读到了 renderer 就不再重复加,
+    // 否则同一个字节被数两遍(合计虚高一个堆的量)。纯浏览器(无进程组)时它仍是
+    // 渲染侧唯一读数,照常计入。
+    const rendererCountedInGroup = groupRows.some((row) => row.kind === "renderer" && row.resident != null);
+    if (rendererCountedInGroup) excluded.push("页面 JS 堆(已含在 renderer 工作集,不重复计入)");
+    else parts.push(renderer.usedJsHeapBytes);
+  } else {
+    excluded.push("页面 JS 堆");
+  }
   return {
     rows,
     group: groupRows,

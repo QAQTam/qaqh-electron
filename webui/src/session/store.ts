@@ -178,6 +178,18 @@ function compactDeliveryFailure(error: unknown): string {
 const CANCEL_WATCHDOG_MS = 10_000;
 export { CANCEL_WATCHDOG_MS };
 
+/**
+ * 连接状态看门狗(BUG-2026-10-29):connection 完全由宿主推的 `timeline://status`
+ * 事件驱动,daemon 重启窗口期发出的事件渲染层可能错过,宿主侧一条流 paused 后
+ * combined 也永远回不到 open——横幅就无限期停在「网络波动,正在重连」,直到用户
+ * 偶然发出首个请求才间接翻转。非 connected 期间周期性向宿主核对一次缓存状态
+ * (纯 IPC,无网络请求),恢复后自动停止;宿主两条流 wedged(closed)时限频自动
+ * 重建,不再等用户点「重试」。
+ */
+const STATUS_WATCHDOG_MS = 2_500;
+/** 看门狗发现宿主流 wedged(closed)时的自动重建限频:daemon 未起时不打爆 attach。 */
+const AUTO_RETRY_MIN_MS = 10_000;
+
 export class SessionStore {
   readonly seed: string;
   readonly state: [SessionState, (fn: (draft: SessionState) => void) => void];
@@ -192,6 +204,12 @@ export class SessionStore {
   pending = createSignal<ApprovalView[]>([]);
   todos = createSignal<TodoItemWire[]>([]);
   loadError = createSignal(false);
+  /**
+   * 权威首页是否已落地(BUG-2026-10-29 第二则)。deactivate 即卸载转录,重新激活
+   * 要等 attach 的快照回来才有内容——SessionView 据此渲染「消息同步中」,
+   * 而不是闪一帧空态。open 但未 hydrate 时由 applyTimelineStatus 兜底补拉一次。
+   */
+  hydrated = createSignal(false);
   hasNewReply = createSignal(false);
   /** 乐观发送中状态：点击发送即刻置 true 消除时差空窗，首个事件到达或结束时置 false。 */
   isSending = createSignal(false);
@@ -205,6 +223,11 @@ export class SessionStore {
   private compactTimer: number | null = null;
   /** 取消看门狗定时器;真实终态 delta / 新回合 / dispose 都会先撤掉。 */
   private cancelWatchdog: ReturnType<typeof setTimeout> | null = null;
+  /** 连接状态看门狗;connected / deactivate / dispose 停止。 */
+  private statusWatchdog: ReturnType<typeof setInterval> | null = null;
+  private lastAutoRetryAt = 0;
+  /** 宿主侧是否已为本 seed 尝试过建流;closed 兜底重试只在尝试过之后才允许。 */
+  private attachAttempted = false;
   /** 待发附件;上传成功前不允许发送(命令里只能出现 `ContentRef`)。 */
   pendingAttachments = createSignal<PendingAttachment[]>([]);
   loadingOlder = createSignal(false);
@@ -313,7 +336,9 @@ export class SessionStore {
     this.hasNewReply[1](false);
     this.providerRetry[1](null);
     this.reconnect[1](null);
+    this.hydrated[1](false);
     await this.connectHost();
+    this.attachAttempted = true;
     await transport.attach(this.seed, SNAPSHOT_LIMIT);
     void this.refreshApprovals();
     void this.refreshTodos();
@@ -322,29 +347,53 @@ export class SessionStore {
     void this.refreshProfile();
   }
 
-  /** 失去活动资格(别的标签接管):退订宿主事件保状态(流由宿主在新 attach 时停)。 */
+  /**
+   * 失去活动资格(别的标签接管):退订宿主事件 + **立即卸载转录**(BUG-2026-10-29
+   * 第二则)。宿主本就只给单一 active seed 建流,后台不收流;真正的内存过载来自
+   * 非活动 store 的全量转录(turns 的文本/工具输出)与 fragments 常驻——每开一个
+   * 会话只增不减。后台标签只保留轻量生命周期(title/connection/activity/
+   * hasNewReply),待授权/待回答等状态由 sessions 列表轮询(15s/聚焦)驱动;
+   * 重新激活时 attach 权威快照重建,配合 SessionView 的「消息同步中」。
+   */
   deactivate(): void {
     this.closeHost();
+    this.stopStatusWatchdog();
     this.providerRetry[1](null);
     this.reconnect[1](null);
     this.setConnection("reconnecting");
+    this.unloadForBackground();
   }
 
-  dispose(): void {
-    this.disposed = true;
-    this.providerRetry[1](null);
-    this.reconnect[1](null);
-    this.unsubscribeConfig?.();
-    this.unsubscribeConfig = null;
+  /** 卸载重状态:转录、增量缓冲、审批/待办全量列表。轻量信号(title 等)保留。 */
+  private unloadForBackground(): void {
+    this.releaseBuffers();
     this.clearCancelWatchdog();
-    this.closeHost();
-    // 退订后还挂在队列里的 rAF 回调会带着已废弃标签的缓冲写进 store(一次性悬挂,
-    // 不是泄漏级问题,但关掉它就不用解释它)。
-    if (this.rafHandle != null) {
-      cancelAnimationFrame(this.rafHandle);
-      this.rafHandle = null;
-    }
+    if (this.compactTimer != null) clearTimeout(this.compactTimer);
+    this.compactTimer = null;
+    this.compact[1]({ phase: "idle" });
+    this.compactedCheckpoint = null;
+    this.compactedAfter[1](null);
+    this.hydrated[1](false);
+    this.loadError[1](false);
+    this.loadingOlder[1](false);
+    this.consumedSeq = 0;
+    this.waitFrom = null;
+    this.activeTurnStartedAt = null;
+    this.activeModelBlockIds.clear();
+    this.pending[1]([]);
+    this.todos[1]([]);
+    // 顶层键逐个换血(emptySession 覆盖全部顶层键):turns 的嵌套 store 节点整体
+    // 替换,回合文本/工具输出全部可回收。
+    this.mutate((draft) => {
+      Object.assign(draft, emptySession());
+    });
+  }
+
+  /** 释放帧内合并缓冲与挂起的定时器(deactivate/dispose 共用)。 */
+  private releaseBuffers(): void {
     this.pendingFragments.clear();
+    if (this.rafHandle != null) cancelAnimationFrame(this.rafHandle);
+    this.rafHandle = null;
     if (this.flushTimer != null) clearTimeout(this.flushTimer);
     this.flushTimer = null;
     if (this.resnapshotTimer != null) {
@@ -353,11 +402,27 @@ export class SessionStore {
     }
   }
 
+  dispose(): void {
+    this.disposed = true;
+    this.stopStatusWatchdog();
+    this.providerRetry[1](null);
+    this.reconnect[1](null);
+    this.unsubscribeConfig?.();
+    this.unsubscribeConfig = null;
+    this.clearCancelWatchdog();
+    this.closeHost();
+    // 退订后还挂在队列里的 rAF 回调会带着已废弃标签的缓冲写进 store;统一在
+    // releaseBuffers 里撤(与 deactivate 的卸载共用一份释放逻辑)。
+    this.releaseBuffers();
+    this.unloadForBackground();
+  }
+
   retry(): void {
-    // 重连/退避在宿主侧,这里只触发宿主重建流(用户点「重试」/窗口聚焦)。
+    // 重连/退避在宿主侧,这里只触发宿主重建流(用户点「重试」/窗口聚焦/看门狗兜底)。
     this.providerRetry[1](null);
     this.reconnect[1](null);
     this.setConnection("reconnecting");
+    this.attachAttempted = true;
     this.host()
       .streamsRetry(this.seed)
       .catch(() => this.setConnection("offline"));
@@ -407,6 +472,7 @@ export class SessionStore {
         });
         this.rebaseConsumed(page.snapshot?.watermark ?? 0);
         this.loadError[1](false);
+        this.hydrated[1](true);
       },
       onIncompatible: () => {},
       onHostError: () => {},
@@ -430,22 +496,62 @@ export class SessionStore {
     } catch {
       // best-effort:后续 status 事件仍会持续驱动。
     }
+    this.startStatusWatchdog();
   }
 
   /** timeline 流状态 → connection 信号(其他 seed 的状态忽略)。 */
   private applyTimelineStatus(status: TimelineStatusWire): void {
     if (status.session_id != null && status.session_id !== this.seed) return;
     if (status.status === "open") {
+      this.stopStatusWatchdog();
       const reconnected = this.connection[0]() !== "connected";
       this.setConnection("connected");
       this.reconnect[1](null);
       if (reconnected) void this.refreshTodos();
+      // 流已 open 但权威首页还没到(snapshot 事件丢失/晚到):按后端分页口径
+      // 主动补拉一次首页,不等下一个内容事件。hydrated 后不再走这条。
+      if (!this.hydrated[0]()) void this.resnapshot();
     } else if (status.status === "closed") {
       this.reconnect[1](null);
       this.setConnection("offline");
     } else {
       this.setConnection("reconnecting");
     }
+  }
+
+  /**
+   * 连接状态看门狗:非 connected 期间每 2.5s 向宿主核对一次缓存流状态(纯 IPC),
+   * 补上丢失的 status 事件;宿主回报 closed(paused 流,事件驱动永不自愈)时
+   * 限频自动重建双流。恢复 connected / 标签失活 / dispose 时停止。
+   */
+  private startStatusWatchdog(): void {
+    if (this.statusWatchdog != null || this.disposed) return;
+    this.statusWatchdog = setInterval(() => {
+      if (this.disposed || this.connection[0]() === "connected") {
+        this.stopStatusWatchdog();
+        return;
+      }
+      void Promise.resolve()
+        .then(() => this.host().timelineStatus(this.seed))
+        .then((status) => {
+          if (status == null || this.disposed) return;
+          this.applyTimelineStatus(status);
+          if (status.status === "closed" && this.attachAttempted) {
+            const at = Date.now();
+            if (at - this.lastAutoRetryAt >= AUTO_RETRY_MIN_MS) {
+              this.lastAutoRetryAt = at;
+              this.retry();
+            }
+          }
+        })
+        .catch(() => {});
+    }, STATUS_WATCHDOG_MS);
+  }
+
+  private stopStatusWatchdog(): void {
+    if (this.statusWatchdog == null) return;
+    clearInterval(this.statusWatchdog);
+    this.statusWatchdog = null;
   }
 
   private onTimelineEntry(entry: TimelineEntryWire): void {
@@ -629,6 +735,7 @@ export class SessionStore {
       });
       this.rebaseConsumed(page.snapshot?.watermark ?? 0);
       this.loadError[1](false);
+      this.hydrated[1](true);
     } catch {
       // 快照失败不致命:流还在,下一次触发再试。
     }
@@ -919,7 +1026,11 @@ export class SessionStore {
     try {
       const bootstrap = (await this.host().sessionBootstrap(this.seed)) as any;
       const control = bootstrap?.control?.state ?? {};
-      this.activity[1](normalizeActivity(control.activity, "domain"));
+      // bootstrap 的 `control.activity` 是 canonical 投影枚举
+      // (`SessionActivityState`: idle|running|interrupted)，不是旧 domain 枚举
+      // (working/…)。按 "domain" 读会让 `running` 落到未知值 → null，
+      // 重启后运行中的会话反而失去「正在工作」态。
+      this.activity[1](normalizeActivity(control.activity, "projection"));
     } catch {
       // best-effort;activity 由投影事件持续修正。
     }
@@ -1099,10 +1210,21 @@ export class SessionStore {
     this.pendingAttachments[1]((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }
 
-  async cancelTurn(): Promise<void> {
-    const activeKey = this.stateGet.activeTurnKey;
-    const turn = activeKey != null ? this.stateGet.turns[activeKey] : null;
-    const turnId = turn?.id ?? null;
+  /**
+   * 停止当前回合。
+   *
+   * 默认**不带** `turn_id`。后端 §7（e5bc39c）之后只有「取消当前回合」
+   * （`turn_id: null`）在 registry 入队时就置位取消标记，gate 流式与在途工具
+   * 下一个轮询点就能看到；显式 `turn_id` 的取消要先经 actor 校验，而 actor 的
+   * 常规派发只在回合结束后发生——那等于「等回合自己结束才取消」。长回合
+   * （工具自循环、子代理未收尾）里停止按钮因此完全无效，命令收据也永远停在
+   * Running（BUG-2026-10-28，实测 340s 后回合仍在跑）。
+   *
+   * 需要取消某个特定回合（多客户端/历史视图）时才传 `turnId`，并接受它只在
+   * 回合边界生效的语义。
+   */
+  async cancelTurn(options: { turnId?: string | null } = {}): Promise<void> {
+    const turnId = options.turnId ?? null;
     await transport.command("conversation", { channel: "conversation", type: "conversation_cancel", turn_id: turnId }, this.seed);
     // 命令已入队才布防:投递失败走异常,Composer 的 catch 会复位 stopping,
     // 不需要看门狗代劳。真实终态 delta 到达时撤防(见 applyProjection)。

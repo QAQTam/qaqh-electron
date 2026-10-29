@@ -78,7 +78,7 @@ test("双流对齐自愈：Timeline 流漏发 turn_sealed，但收到 V2 turn_fi
   expect(resnapshotSpy).toHaveBeenCalledOnce();
 });
 
-test("cancelTurn 携带当前活跃的 turn_id", async () => {
+test("cancelTurn 默认不带 turn_id（只有「取消当前回合」保留后端入队即抢占）", async () => {
   const store = new SessionStore("test-cancel");
   const cmdSpy = vi.spyOn(transport, "command").mockResolvedValue({ status: "accepted" });
 
@@ -94,9 +94,24 @@ test("cancelTurn 携带当前活跃的 turn_id", async () => {
     "conversation",
     expect.objectContaining({
       type: "conversation_cancel",
-      turn_id: "active-turn-123",
+      // BUG-2026-10-28：显式 turn_id 的取消要等 actor 在 lap 边界校验，
+      // 而常规派发只在回合结束后发生 → 长回合里 stop 完全无效。
+      turn_id: null,
     }),
     "test-cancel",
+  );
+});
+
+test("cancelTurn({ turnId }) 仍可定向取消（多客户端/历史视图）", async () => {
+  const store = new SessionStore("test-cancel-targeted");
+  const cmdSpy = vi.spyOn(transport, "command").mockResolvedValue({ status: "accepted" });
+
+  await store.cancelTurn({ turnId: "turn-explicit" });
+
+  expect(cmdSpy).toHaveBeenCalledWith(
+    "conversation",
+    expect.objectContaining({ type: "conversation_cancel", turn_id: "turn-explicit" }),
+    "test-cancel-targeted",
   );
 });
 

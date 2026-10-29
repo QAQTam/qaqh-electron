@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, cpSync, chmodSync, rmSync, renameSync, mkdtempSy
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { parseArgs, assertInputs } = require("./packaging.cjs");
+const { parseArgs, parseBuildIdentity, assertInputs } = require("./packaging.cjs");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sdk = resolve(root, "../qaqh-sdk");
 const backend = resolve(root, "../qaqh-backend");
@@ -38,10 +38,19 @@ function syncDir(source, destination) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    console.log("Usage: just build [all|dir|AppImage|deb|tar.gz] [--skip-install] [--skip-backend]\n" +
-      "Default: full Linux x64 pipeline. --skip-backend explicitly reuses resources/bin/qaqh-daemon.");
+    console.log("Usage: just build [all|dir|AppImage|deb|tar.gz] [--skip-install] [--skip-backend] [--shell]\n" +
+      "Default: full Linux x64 pipeline. --skip-backend explicitly reuses resources/bin/qaqh-daemon.\n" +
+      "--shell: shell 包口径(electron-builder.shell.yml)——plain dir baseline + 双 CLI + 维护脚本,\n" +
+      "         仅支持 deb 目标;AppImage/tar.gz 永远是全量口径。\n" +
+      "Build identity comes from just (QAQH_BUILD_VERSION / QAQH_BUILD_DATE / QAQH_GIT_COMMIT).");
     return;
   }
+  if (options.shell && !["all", "deb", "dir"].includes(options.target)) {
+    throw new Error(`shell 口径只支持 deb(dir=调试);${options.target} 请走全量口径(去掉 --shell)。`);
+  }
+  const build = parseBuildIdentity(process.env);
+  console.log(`Build identity: ${build.version}+${build.commit.slice(0, 8)}` +
+    `${build.dirty ? "-dirty" : ""} (${build.date})`);
   if (process.platform !== "linux" || process.arch !== "x64") {
     throw new Error("This pipeline currently supports native Linux x64 only (no implicit cross-compilation).");
   }
@@ -97,27 +106,50 @@ async function main() {
   // 复用已安装、与当前依赖版本一致的 Electron，避免 builder 再下载同一份运行时。
   const electronExecutable = require("electron");
   if (!existsSync(electronExecutable)) throw new Error("Installed Electron binary missing; reinstall electron with build scripts enabled.");
+  if (options.shell) {
+    // shell 口径专属产物:更新引擎双 CLI + 出厂基线 zip。
+    run("cargo", ["build", "--locked", "--release", "--manifest-path",
+      join(root, "crates", "qaqh-update", "Cargo.toml"), "--bins"]);
+    for (const bin of ["qaqh-maint", "qaqh-update"]) {
+      cpSync(join(root, "crates", "qaqh-update", "target", "release", bin), join(root, "resources", "bin", bin));
+      chmodSync(join(root, "resources", "bin", bin), 0o755);
+    }
+    run(process.execPath, ["scripts/make-baseline.mjs", "--version", build.version]);
+  }
   mkdirSync(join(root, ".tmp"), { recursive: true });
   const staging = mkdtempSync(join(root, ".tmp/package-"));
   try {
     const targets = options.target === "all" ? [] : [options.target];
     run("pnpm", ["exec", "electron-builder", "--linux", ...targets, "--x64", "--publish", "never",
+      ...(options.shell ? ["--config", "electron-builder.shell.yml"] : []),
+      `--config.extraMetadata.version=${build.version}`,
       `--config.directories.output=${staging}`, `--config.electronDist=${dirname(electronExecutable)}`], root, false,
-      { ...process.env, ELECTRON_BUILDER_COMPRESSION_LEVEL: process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL || "1" });
-    const expected = options.target === "all" ? ["AppImage", "deb", "tar.gz"] : [options.target];
+      { ...process.env, ...(options.shell ? { QAQH_SHELL_PACKAGE: "1" } : {}),
+        ELECTRON_BUILDER_COMPRESSION_LEVEL: process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL || "1" });
+    const expected = options.shell
+      ? ["deb"]
+      : (options.target === "all" ? ["AppImage", "deb", "tar.gz"] : [options.target]);
     const files = readdirSync(staging);
     for (const target of expected) {
       if (target !== "dir" && !files.some(file => file.endsWith(`.${target}`))) {
         throw new Error(`electron-builder did not produce a .${target} artifact.`);
       }
     }
-    if (!existsSync(join(staging, "linux-unpacked/resources/app.asar"))) {
+    if (options.shell) {
+      if (!existsSync(join(staging, "linux-unpacked/resources/app/dist/bootstrap.cjs"))) {
+        throw new Error("Shell layout broken: plain-dir baseline app missing bootstrap.cjs.");
+      }
+      if (existsSync(join(staging, "linux-unpacked/resources/app.asar"))) {
+        throw new Error("Shell layout must not contain app.asar.");
+      }
+    } else if (!existsSync(join(staging, "linux-unpacked/resources/app.asar"))) {
       throw new Error("Packaged app.asar missing.");
     }
     // 成功才替换 release；失败不把旧安装包冒充成本次产物。
-    rmSync(join(root, "release"), { recursive: true, force: true });
-    renameSync(staging, join(root, "release"));
-    console.log(`\nBuild succeeded: ${join(root, "release")}\n${files.join("\n")}`);
+    const releaseDir = options.shell ? "release-shell" : "release";
+    rmSync(join(root, releaseDir), { recursive: true, force: true });
+    renameSync(staging, join(root, releaseDir));
+    console.log(`\nBuild succeeded: ${join(root, releaseDir)}\n${files.join("\n")}`);
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }

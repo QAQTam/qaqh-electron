@@ -26,6 +26,13 @@ import { nativeModelPickerAvailable, openNativeModelPicker } from "../lib/model-
 import { daemonLanStatus, type DaemonLanStatus } from "../lib/pairing";
 import { desktopHostSurface, transport } from "../lib/transport";
 import { loadBuildInfo, type BuildInfo } from "../lib/version";
+import {
+  applyPowerMode,
+  describeMode,
+  modeFromToggles,
+  restorePowerMode,
+  type PowerBlockerMode,
+} from "../lib/power-blocker";
 import { toast } from "../ui/toast";
 import { Section, Switch } from "./controls";
 
@@ -39,6 +46,10 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
   const [group, setGroup] = createSignal<ProcessGroup | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
   const [note, setNote] = createSignal<string | null>(null);
+  /** 休眠限制(阶段外新增,用户需求):双开关 ↔ 模式;偏好存 localStorage,启动重放。 */
+  const [powerMode, setPowerMode] = createSignal<PowerBlockerMode>("off");
+  const [powerActive, setPowerActive] = createSignal(false);
+  const powerBridge = (): boolean => desktopHost()?.powerBlocker != null;
 
   const windowState = (): WindowState | null => hostWindowState();
   const trayReady = (): boolean => windowState()?.tray === true;
@@ -83,6 +94,13 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
 
   onSettled(() => {
     void refresh();
+    // 启动重放:上次会话的休眠限制偏好重新应用到主进程;off 只查状态。
+    void restorePowerMode().then((state) => {
+      if (state != null) {
+        setPowerMode(state.mode);
+        setPowerActive(state.active);
+      }
+    }).catch(() => {});
   });
 
   const runAction = async (id: string, run: () => Promise<void>): Promise<void> => {
@@ -153,6 +171,24 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
       setNote("已在独立窗口打开模型选择器；保存后会自动刷新。");
     });
 
+  /** 休眠限制双开关 → 主进程 powerSaveBlocker;返回态为准(localStorage 只存偏好)。 */
+  const setPowerToggles = async (keepAwake: boolean, keepBright: boolean): Promise<void> => {
+    const bridge = desktopHost()?.powerBlocker;
+    if (bridge == null) {
+      toast("当前运行环境没有桌面壳，无法设置休眠限制", "err");
+      return;
+    }
+    try {
+      const state = await applyPowerMode(modeFromToggles(keepAwake, keepBright));
+      if (state != null) {
+        setPowerMode(state.mode);
+        setPowerActive(state.active);
+      }
+    } catch (cause) {
+      toast(`更新休眠限制失败：${messageOf(cause)}`, "err");
+    }
+  };
+
   return (
     <Section
       id="section-host"
@@ -205,6 +241,8 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
         <b>未实现：使用系统截图后「添加附件」</b>
         <span>原生窗口材质</span>
         <b>不支持（set_window_theme 返回 false；使用 CSS 主题）</b>
+        <span>休眠限制</span>
+        <b>{powerBridge() ? describeMode(powerMode(), powerActive()) : "仅桌面壳提供"}</b>
       </div>
 
       <Switch
@@ -213,6 +251,21 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
         checked={effectiveCloseToTray()}
         disabled={!trayReady()}
         onToggle={(value) => void setCloseToTray(value)}
+      />
+
+      <Switch
+        label="阻止系统休眠"
+        hint="运行期间阻止电脑进入休眠/挂起（Linux 经 D-Bus inhibit，Windows 经 SetThreadExecutionState）。屏幕仍可能按系统设置熄灭。"
+        checked={powerMode() !== "off"}
+        disabled={!powerBridge()}
+        onToggle={(value) => void setPowerToggles(value, value && powerMode() === "keep-awake-bright")}
+      />
+      <Switch
+        label="同时保持屏幕常亮"
+        hint="在阻止休眠的基础上保持屏幕不熄灭——适合演示/监控场景；隐含开启「阻止系统休眠」。"
+        checked={powerMode() === "keep-awake-bright"}
+        disabled={!powerBridge() || powerMode() === "off"}
+        onToggle={(value) => void setPowerToggles(value || powerMode() !== "off", value)}
       />
 
       <div class="lan-actions" style={{ "grid-column": "1 / -1" }}>

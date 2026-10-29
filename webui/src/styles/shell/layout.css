@@ -2,28 +2,86 @@
 
 @layer components {
   #app {
-    display: grid; grid-template-columns: 64px minmax(0, 1fr); grid-template-rows: var(--topbar-height, 40px) minmax(0, 1fr);
+    display: grid; grid-template-columns: var(--sidebar-width, 288px) minmax(0, 1fr) auto; grid-template-rows: var(--topbar-height, 48px) minmax(0, 1fr);
     width: 100%; height: 100%; min-width: 0; min-height: 0;
     background: var(--bg);
+    /* 汉堡收展(motion kit):轨道 288↔48 过渡。三轨列表里只有第一轨变,
+       minmax/auto 轨两端相等仍可插值;cols-N 换轨数时离散跳变(断点本就该瞬切)。 */
+    transition: grid-template-columns var(--dur-layout) var(--ease);
   }
-  /* 标签栏(40px 固定,§4/§5):消息/工具/设置三页共用,切页不产生行高跳动 */
-  #top { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 12px; min-width: 0; padding-left: 16px; border-bottom: 1px solid var(--border); }
-  /* macOS 标题栏融合:交通灯安全边距与窗口拖拽支持 */
-  html.desktop.platform-macos #top {
-    padding-left: 78px;
-    background: color-mix(in srgb, var(--surface) 65%, transparent);
+  /* 顶栏(48px,spec §3.4/阶段4):左格对齐 Sidebar(汉堡/返回/品牌),中格会话标题
+     (SessionHeader 入驻),右格 ⋯ 菜单;原生窗口控制由 WCO 画在右上角安全区。 */
+  #top {
+    grid-column: 1 / -1; grid-row: 1;
+    display: grid; grid-template-columns: var(--sidebar-width, 288px) minmax(0, 1fr) auto;
+    align-items: center; min-width: 0;
+    border-bottom: 1px solid var(--border);
+    /* 与 #app 同节奏:汉堡收展时中格(会话标题)随左轨一起滑,不与侧栏脱节。 */
+    transition: grid-template-columns var(--dur-layout) var(--ease);
+  }
+  .topbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 10px; }
+  .topbar-center { display: flex; align-items: center; min-width: 0; }
+  /* SessionHeader 入驻中格:吃满中格宽度,自身 40px 行壳已剥(spec §6.4)。 */
+  .topbar-center .session-header { flex: 1 1 auto; min-width: 0; }
+  .topbar-right { display: flex; align-items: center; gap: 6px; }
+  .topbar-right .titlebar-more { margin-left: 0; }
+  /* 任务抽屉触发钮(阶段5):图标+badge 横排,宽度随内容。 */
+  .rail-trigger { display: inline-flex; align-items: center; gap: 4px; width: auto; padding: 0 8px; }
+  /* 主动展开钮的按下态(BUG-2026-10-29):docked 右栏展开中 / 抽屉开着时点亮。 */
+  .rail-trigger.active { color: var(--text); background: var(--surface-2); }
+  /* 阶段5 断点列态(spec §4.6):由 #app 实宽的 ResizeObserver 切 cols-N class,
+     不用媒体查询——窗口 chrome/缩放会让视口宽 ≠ 内容宽。 */
+  #app.cols-2 { grid-template-columns: var(--sidebar-width, 288px) minmax(0, 1fr); }
+  #app.cols-2 #top { grid-template-columns: var(--sidebar-width, 288px) minmax(0, 1fr) auto; }
+  #app.cols-1 { grid-template-columns: minmax(0, 1fr); }
+  #app.cols-1 #top { grid-template-columns: 48px minmax(0, 1fr) auto; }
+  #app.cols-2 .workspace { grid-column: 2; }
+  #app.cols-1 .workspace { grid-column: 1; }
+  /* 抽屉遮罩:盖住 body 行,TopBar 仍可点(关闭入口保持在原位)。
+     常驻 DOM(App 只切 .open):开合都有淡入淡出,退场不是硬切。 */
+  .drawer-mask {
+    position: fixed; inset: var(--topbar-height, 48px) 0 0 0; z-index: 65;
+    background: color-mix(in srgb, #000 32%, transparent);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity var(--dur) var(--ease), visibility 0s var(--dur);
+  }
+  .drawer-mask.open {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    /* 开:visibility 立即可见(不进过渡),遮罩跟着淡入。 */
+    transition: opacity var(--dur) var(--ease);
+  }
+  .topbar-right .rail-badge {
+    min-width: 16px; height: 16px; margin-left: 4px;
+    display: inline-grid; place-items: center;
+    border-radius: var(--radius-pill); padding: 0 4px;
+    background: var(--accent); color: var(--on-accent);
+    font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+  /* 阶段4:原生标题栏隐藏后,#top 是唯一窗口拖拽区(全平台)。两条硬规则:
+     1. app-region: drag 的区域忽略全部 pointer 事件——按钮/输入必须显式 no-drag;
+     2. WCO 的原生窗口控制画在右上角,用 titlebar-area 预留安全边距。 */
+  html.desktop #top {
     -webkit-app-region: drag;
     app-region: drag;
+    user-select: none;
+    margin-right: calc(100% - env(titlebar-area-width, 100%));
   }
-  html.desktop.platform-macos[data-theme="dark"] #top {
-    background: color-mix(in srgb, var(--surface) 75%, transparent);
-  }
-  html.desktop.platform-macos #top button,
-  html.desktop.platform-macos #top a,
-  html.desktop.platform-macos #top input {
+  html.desktop #top button,
+  html.desktop #top a,
+  html.desktop #top input {
     -webkit-app-region: no-drag;
     app-region: no-drag;
   }
+  html.desktop.platform-macos .topbar-left { padding-left: 78px; }
+  html.desktop.platform-macos #top { background: color-mix(in srgb, var(--surface) 65%, transparent); }
+  html.desktop.platform-macos[data-theme="dark"] #top { background: color-mix(in srgb, var(--surface) 75%, transparent); }
+  /* 汉堡(侧栏收展):常驻 #top 左缘,规格与 .titlebar-back 一致。 */
+  .titlebar-menu { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-control); color: var(--muted); background: transparent; cursor: pointer; }
+  .titlebar-menu:hover { color: var(--text); background: var(--surface-2); }
+  .titlebar-menu svg { width: 16px; height: 16px; }
+  /* ⋯(壳层菜单,阶段1):顶栏右缘,与原生窗口控制隔 WCO 安全区。 */
+  .titlebar-more { margin-left: auto; }
+  .titlebar-more svg { width: 18px; height: 18px; }
   .titlebar-back { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-control); color: var(--muted); background: transparent; cursor: pointer; }
   .titlebar-back:hover { color: var(--text); background: var(--surface-2); }
   .titlebar-back svg { width: 16px; height: 16px; }
@@ -34,12 +92,12 @@
     grid-column: 2; grid-row: 2; min-width: 0; min-height: 0;
     display: grid; grid-template-rows: minmax(0, 1fr);
   }
-  .workspace.workspace-messages { grid-template-columns: 244px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  /* 阶段3:会话列表并入 .app-sidebar,.workspace 不再产生第二组可见列(spec §4.1)。 */
+  .workspace.workspace-messages { grid-template-rows: minmax(0, 1fr); }
   .workspace.workspace-settings { grid-template-rows: minmax(0, 1fr); }
-  .workspace-content { grid-column: 1 / -1; grid-row: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
+  .workspace-content { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
   .workspace-content { background: var(--bg); }
   .workspace-content { container: workspace / inline-size; }
-  .workspace-messages > .workspace-content { grid-column: 2; }
 
   /* 会话/标签切换的视图过渡(src/ui/viewTransition.ts):默认 UA 交叉淡出收敛
    * 为本仓节奏;不支持的引擎不会产生这些伪元素,规则自然不生效。 */

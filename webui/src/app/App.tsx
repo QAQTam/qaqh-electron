@@ -13,10 +13,15 @@
 import { createEffect, createSignal, For, onSettled, Show, type Component } from "solid-js";
 import { invoke, listen, type UnlistenFn } from "../lib/host";
 import IconArrowLeft from "~icons/lucide/arrow-left";
+import IconMenu from "~icons/lucide/menu";
+import IconMoreHorizontal from "~icons/lucide/more-horizontal";
+import IconListTodo from "~icons/lucide/list-todo";
+import { observeShellCols, type ShellCols } from "../lib/shell-cols";
+import { restoreSidebarWidth, shouldCollapseSidebar } from "../lib/sidebar-resize";
 import IconX from "~icons/lucide/x";
-// TabBar is reserved for the future Goal capsule; session navigation lives in MessageSidebar.
-import { MessageSidebar } from "./MessageSidebar";
-import { GlobalNav, type GlobalSection } from "./GlobalNav";
+// TabBar is reserved for the future Goal capsule; session navigation lives in Sidebar.
+import { Sidebar, type GlobalSection } from "./Sidebar";
+import { SessionHeader } from "../session/SessionHeader";
 import { ToolsPage } from "./ToolsPage";
 import { OAuthPage } from "../oauth/OAuthPage";
 import {
@@ -82,9 +87,10 @@ import {
 } from "../lib/host-status";
 import { nativeModelPickerAvailable, openNativeModelPicker } from "../lib/model-picker";
 import { applyTheme, storedTheme } from "../lib/theme";
+import { applyGpuPerfHint } from "../lib/visual";
 import { notifyConfigChanged } from "../lib/config-events";
 import { toast, ToastHost } from "../ui/toast";
-import { buildContextMenu, ContextMenuHost, openContextMenu } from "../ui/contextMenu";
+import { buildContextMenu, ContextMenuHost, openContextMenu, type ContextMenuItem } from "../ui/contextMenu";
 import { DiffReviewDrawer } from "../diff/DiffReviewDrawer";
 import "../styles/app.css";
 
@@ -101,6 +107,67 @@ const shotSupported = screenshotSupported({
 
 /** 「设置」刻意不在这个信号里：它是浮层页（见 `settings/store`）。 */
 const [section, setSection] = createSignal<Exclude<GlobalSection, "settings">>("messages");
+
+/* 侧栏收展(汉堡):记忆到 localStorage,与 MessageSidebar 的工作区分组折叠键分开。 */
+const SIDEBAR_COLLAPSED_KEY = "qaqh.app-sidebar.collapsed";
+const readSidebarCollapsed = (): boolean => {
+  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; } catch { return false; }
+};
+const [sidebarCollapsed, setSidebarCollapsed] = createSignal<boolean>(readSidebarCollapsed());
+/* 侧栏拖拽调宽(用户侧需求):宽度记忆在 localStorage;拖拽路径不进 signal
+   (Sidebar 直写 #app 内联变量),松手才 commit——低于收回阈值等效汉堡收回,
+   收拢动画由 #app 的 grid 轨道过渡播出。 */
+const SIDEBAR_WIDTH_KEY = "qaqh.app-sidebar.width";
+const readSidebarWidth = (): number | null => {
+  try { return restoreSidebarWidth(localStorage.getItem(SIDEBAR_WIDTH_KEY)); } catch { return null; }
+};
+const [sidebarWidth, setSidebarWidth] = createSignal<number | null>(readSidebarWidth());
+const commitSidebarWidth = (width: number | null): void => {
+  if (width != null && shouldCollapseSidebar(width)) {
+    try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width)); } catch {}
+    setSidebarWidth(width);
+    setSidebarCollapsed(true);
+    return;
+  }
+  try {
+    if (width == null) localStorage.removeItem(SIDEBAR_WIDTH_KEY);
+    else localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  } catch {}
+  setSidebarWidth(width);
+  if (width != null) setSidebarCollapsed(false);
+};
+/* 阶段5 断点与抽屉(spec §4.6):cols 由 #app 实宽 ResizeObserver 驱动;
+   抽屉是会话级状态(不落盘),Esc/遮罩/触发钮三路可关。 */
+const [appCols, setAppCols] = createSignal<ShellCols>(3);
+const [sidebarDrawerOpen, setSidebarDrawerOpen] = createSignal(false);
+const [railDrawerOpen, setRailDrawerOpen] = createSignal(false);
+/* 右栏手动开合(BUG-2026-10-29 顶栏主动展开钮):TopBar 任务钮与面板头部按钮
+   共享这一份,null=回自动(有待办自动展开);持久化,跨会话记忆用户偏好。 */
+const RAIL_MANUAL_KEY = "qaqh.rail.manual";
+const readRailManual = (): boolean | null => {
+  try {
+    const raw = localStorage.getItem(RAIL_MANUAL_KEY);
+    return raw === "1" ? true : raw === "0" ? false : null;
+  } catch { return null; }
+};
+const [railManual, setRailManualSignal] = createSignal<boolean | null>(readRailManual());
+const setRailManual = (value: boolean | null): void => {
+  setRailManualSignal(value);
+  try {
+    if (value == null) localStorage.removeItem(RAIL_MANUAL_KEY);
+    else localStorage.setItem(RAIL_MANUAL_KEY, value ? "1" : "0");
+  } catch {}
+};
+/* docked 态右栏当前是否展开(手动优先,否则按自动规则:有待办就展开)。 */
+const railDockedOpen = (): boolean => railManual() ?? (activeTab()?.store.todos[0]().length ?? 0) > 0;
+const toggleRail = (): void => setRailManual(!railDockedOpen());
+const toggleSidebar = (): void => {
+  setSidebarCollapsed((value) => {
+    const next = !value;
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0"); } catch {}
+    return next;
+  });
+};
 const [emptyDraft, setEmptyDraft] = createSignal("");
 
 /** 一键停止旧 daemon(不静默杀:Busy 时给动作文案)→ 重启标签引导。 */
@@ -128,6 +195,9 @@ const App: Component = () => {
   const [quitConfirmStop, setQuitConfirmStop] = createSignal(false);
   const [quitBusy, setQuitBusy] = createSignal(false);
   const [quitError, setQuitError] = createSignal<string | null>(null);
+  /** 重连倒计时的每秒心跳:仅在活动标签 reconnecting 期间运转(见 connectionNotice)。 */
+  const [reconnectTick, setReconnectTick] = createSignal(0);
+  let reconnectTickTimer: number | null = null;
   let quitCancelButton: HTMLButtonElement | undefined;
 
   /** 系统准星占着屏幕:一次只允许一个截图动作在飞。 */
@@ -225,23 +295,14 @@ const App: Component = () => {
     let unlistenHost: (() => void) | null = null;
     let unlistenQuit: UnlistenFn | null = null;
     let onClickCleanup: (() => void) | null = null;
+    let stopCols: (() => void) | null = null;
+    {
+      // 阶段5:壳断点按 #app 实宽切 3/2/1 列(spec §4.6),列态进信号。
+      const appEl = document.getElementById("app");
+      if (appEl != null) stopCols = observeShellCols(appEl, { withClasses: false, onChange: setAppCols });
+    }
     if (isDesktop) {
-      void listen<void>("app://quit-requested", () => {
-        setQuitConfirmStop(false);
-        setQuitError(null);
-        void transport.rpc<Array<{ state?: string }>>("session.activity")
-          .then((activities) => {
-            const activeCount = activities.filter((item) =>
-              item.state === "starting" || item.state === "working" || item.state === "waiting_user",
-            ).length;
-            setQuitPrompt(activeCount);
-            requestAnimationFrame(() => quitCancelButton?.focus());
-          })
-          .catch(() => {
-            setQuitPrompt(null);
-            requestAnimationFrame(() => quitCancelButton?.focus());
-          });
-      }).then((unlisten) => {
+      void listen<void>("app://quit-requested", () => openQuitDialog()).then((unlisten) => {
         unlistenQuit = unlisten;
       });
 
@@ -260,6 +321,8 @@ const App: Component = () => {
       }).catch((error: unknown) => {
         console.warn("[qaqh-webui] failed to subscribe host diagnostics", error);
       });
+      // GPU 后端探针:软渲染时 auto 性能档自动降档(见 lib/visual.ts)。
+      void applyGpuPerfHint();
     }
 
     // 全局快捷键(§5.3)。
@@ -276,11 +339,30 @@ const App: Component = () => {
         closeDevConsole();
         return;
       }
+      // 阶段5:抽屉 Esc 只关一层,优先级在设置浮层之前(抽屉开着时设置必然是关的)。
+      if (event.key === "Escape" && (railDrawerOpen() || sidebarDrawerOpen())) {
+        event.preventDefault();
+        closeDrawers();
+        return;
+      }
       // 截图键放在设置浮层的分支**之前**:设置页正是最需要截图的地方(OAuth/BYOK
       // 那批字段都在那儿),浮层开着时也该能截。唯一让路的是上面的退出确认遮罩。
       if (isScreenshotShortcut(event)) {
         event.preventDefault();
         void screenshot();
+        return;
+      }
+      // 阶段1(spec §5.5):application menu 已摘除,这两个加速键由 renderer 键盘
+      // 接管,与 ⋯ 菜单的 hint 同源。放在设置分支之前:picker/退出是全局动作。
+      const accel = event.ctrlKey || event.metaKey;
+      if (accel && event.shiftKey && (event.key === "M" || event.key === "m")) {
+        event.preventDefault();
+        openNativePicker(null);
+        return;
+      }
+      if (accel && !event.shiftKey && (event.key === "q" || event.key === "Q")) {
+        event.preventDefault();
+        openQuitDialog();
         return;
       }
       // 浮层开着时快捷键归浮层:Ctrl+T/W/Tab/1-9 不该在遮罩背后建会话、切标签。
@@ -361,6 +443,7 @@ const App: Component = () => {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("contextmenu", onContextMenu);
       window.removeEventListener("keydown", onKey);
+      stopCols?.();
       onClickCleanup?.();
       unlistenHost?.();
       unlistenQuit?.();
@@ -401,6 +484,19 @@ const App: Component = () => {
     return tab.store.isSending[0]() || tab.store.state[0].runningTurns > 0 || tab.store.activity[0]() === "working";
   };
 
+  // 倒计时心跳:只在活动标签 reconnecting 时运转,其余时间零定时器。
+  createEffect(
+    () => activeTab()?.store.connection[0]() === "reconnecting",
+    (reconnecting) => {
+      if (reconnecting && reconnectTickTimer == null) {
+        reconnectTickTimer = window.setInterval(() => setReconnectTick((value) => value + 1), 1000);
+      } else if (!reconnecting && reconnectTickTimer != null) {
+        clearInterval(reconnectTickTimer);
+        reconnectTickTimer = null;
+      }
+    },
+  );
+
   const connectionNotice = (): string | null => {
     const error = bootError() ?? hostError();
     if (error != null) return error;
@@ -410,7 +506,11 @@ const App: Component = () => {
     if (state === "reconnecting") {
       const info = tab.store.reconnect[0]();
       if (info != null) {
-        return STR.networkReconnecting(info.attempt, Math.max(1, Math.ceil(info.delayMs / 1000)));
+        void reconnectTick();
+        // 宿主 `at` 是调度时刻(types.ts 注释即"renderer can age the notice"):
+        // 倒计时按 at+delayMs 与本机钟实时递减,而不是冻结在调度值;已到期按 1 秒显示。
+        const remainingMs = info.at + info.delayMs - Date.now();
+        return STR.networkReconnecting(info.attempt, Math.max(1, Math.ceil(remainingMs / 1000)));
       }
       return STR.reconnecting;
     }
@@ -446,6 +546,94 @@ const App: Component = () => {
     }).catch((error: unknown) => {
       toast(`打开模型选择器失败：${String(error instanceof Error ? error.message : error)}`, "err");
     });
+  };
+
+  /** 退出确认对话框:⋯菜单、Ctrl+Q、主进程 quit-requested 三条入口共用这一份。 */
+  const openQuitDialog = (): void => {
+    setQuitConfirmStop(false);
+    setQuitError(null);
+    void transport.rpc<Array<{ state?: string }>>("session.activity")
+      .then((activities) => {
+        const activeCount = activities.filter((item) =>
+          item.state === "starting" || item.state === "working" || item.state === "waiting_user",
+        ).length;
+        setQuitPrompt(activeCount);
+        requestAnimationFrame(() => quitCancelButton?.focus());
+      })
+      .catch(() => {
+        setQuitPrompt(null);
+        requestAnimationFrame(() => quitCancelButton?.focus());
+      });
+  };
+
+  /**
+   * 壳层 ⋯ 菜单(spec §5.5 阶段1):application menu 的动作在此全部可达,
+   * 复用应用内右键菜单宿主(定位/键盘/外点关闭都已有行为)。
+   */
+  const openShellMenu = (anchor: HTMLElement): void => {
+    const rect = anchor.getBoundingClientRect();
+    const sessionSeed = activeTab()?.seed ?? null;
+    const items: ContextMenuItem[] = [
+      { kind: "action", label: "选择新会话默认模型…", hint: "Ctrl+Shift+M", onSelect: () => openNativePicker(null) },
+      {
+        kind: "action",
+        label: "更改当前会话模型…",
+        hint: sessionSeed == null ? "无活动会话" : undefined,
+        onSelect: () => {
+          if (sessionSeed == null) {
+            toast("当前没有活动会话，请先新建或选择一个会话", "err");
+            return;
+          }
+          openNativePicker(sessionSeed);
+        },
+      },
+      { kind: "separator" },
+      {
+        kind: "action",
+        label: "设置…",
+        hint: "Ctrl+,",
+        onSelect: () => { if (!settingsOpen()) toggleSettings(); },
+      },
+      {
+        kind: "action",
+        label: "关于 QAQ-Harness",
+        onSelect: () => {
+          if (!settingsOpen()) toggleSettings();
+          requestAnimationFrame(() => {
+            document.querySelector<HTMLElement>('.settings-nav-item[data-section-id="section-about"]')?.click();
+          });
+        },
+      },
+      { kind: "separator" },
+      { kind: "action", label: "退出…", hint: "Ctrl+Q", onSelect: () => openQuitDialog() },
+    ];
+    openContextMenu({ x: rect.right - 220, y: rect.bottom + 6, items });
+  };
+
+  /* 阶段5 抽屉:触发钮引用(关闭后回焦),汉堡在 cols=1 时开抽屉而非收窄。 */
+  let hamburgerButton: HTMLButtonElement | undefined;
+  let railTriggerButton: HTMLButtonElement | undefined;
+  const closeDrawers = (): void => {
+    if (railDrawerOpen()) {
+      setRailDrawerOpen(false);
+      railTriggerButton?.focus();
+      return;
+    }
+    if (sidebarDrawerOpen()) {
+      setSidebarDrawerOpen(false);
+      hamburgerButton?.focus();
+    }
+  };
+  const sidebarButtonTitle = (): string =>
+    appCols() === 1
+      ? (sidebarDrawerOpen() ? "关闭菜单" : "打开菜单")
+      : (sidebarCollapsed() ? "展开侧栏" : "收起侧栏");
+  const onHamburger = (): void => {
+    if (appCols() === 1) {
+      setSidebarDrawerOpen((value) => !value);
+      return;
+    }
+    toggleSidebar();
   };
 
   // Native picker writes through the main process and broadcasts this event
@@ -509,38 +697,98 @@ const App: Component = () => {
   };
 
   return (
-    <div id="app" class={{ "desktop-shell": isDesktop }}>
-      {/* 三页(消息/工具/设置)共用同一条 40px 标题栏:返回按钮只在非根页面出现。
-          消息页此前在原生壳里整行塌掉,切页会让左侧导航与内容整体跳 40px。 */}
-      <header id="top" data-desktop-drag-region>
-        <Show when={settingsOpen() || section() !== "messages"}>
-          <button type="button" class="titlebar-back" aria-label="返回消息" title="返回消息" onClick={() => navigateSection("messages")}>
-            <IconArrowLeft />
+    <div id="app" class={{ "desktop-shell": isDesktop, "sidebar-collapsed": sidebarCollapsed() && appCols() > 1, "cols-3": appCols() === 3, "cols-2": appCols() === 2, "cols-1": appCols() === 1 }}
+      style={{ "--sidebar-width": appCols() > 1 && sidebarWidth() != null ? `${sidebarWidth()}px` : undefined }}>
+      {/* 三页(消息/工具/设置)共用同一条 48px TopBar:返回按钮只在非根页面出现。 */}
+      <header id="top" role="banner" data-desktop-drag-region>
+        <div class="topbar-left">
+          {/* 汉堡必须在 #top 内:放在 #app 层会被 grid 自动放置丢进空列(曾飘到右上角)。
+              cols=1 时它是菜单按钮(开侧栏抽屉),否则是收展开关。 */}
+          <button
+            type="button"
+            class="titlebar-menu"
+            ref={hamburgerButton}
+            aria-label={sidebarButtonTitle()}
+            aria-expanded={appCols() === 1 ? (sidebarDrawerOpen() ? "true" : "false") : (sidebarCollapsed() ? "false" : "true")}
+            aria-controls="app-sidebar"
+            title={sidebarButtonTitle()}
+            onClick={onHamburger}
+          >
+            <IconMenu />
           </button>
-        </Show>
-        <Show when={!isDesktop}><div class="titlebar-brand">QAQH</div></Show>
-        <div class="titlebar-session-title">{settingsOpen() ? "设置" : section() === "tools" ? "工具" : section() === "oauth" ? "接入" : "消息"}</div>
+          <Show when={settingsOpen() || section() !== "messages"}>
+            <button type="button" class="titlebar-back" aria-label="返回消息" title="返回消息" onClick={() => navigateSection("messages")}>
+              <IconArrowLeft />
+            </button>
+          </Show>
+          <Show when={!isDesktop}><div class="titlebar-brand">QAQH</div></Show>
+        </div>
+        <div class="topbar-center">
+          <Show
+            when={section() === "messages" && !settingsOpen() && !isStartup() && activeTab() != null}
+            fallback={
+              <div class="titlebar-session-title">
+                {settingsOpen() ? "设置" : section() === "tools" ? "工具" : section() === "oauth" ? "接入" : "新会话"}
+              </div>
+            }
+          >
+            {/* 会话标题(双击重命名/⋯菜单)随会话入驻 TopBar(spec §6.4),会话页不再有 40px 标题行。 */}
+            <SessionHeader tab={activeTab()!} />
+          </Show>
+        </div>
+        <div class="topbar-right">
+          {/* 任务面板开关(BUG-2026-10-29 主动展开钮):全列态可见——cols<3 唤起抽屉,
+              cols≥3 直接开合 docked 右栏(与面板头部按钮同态,持久化);badge=待办数。 */}
+          <Show when={section() === "messages" && !settingsOpen() && !isStartup() && activeTab() != null}>
+            <button
+              type="button"
+              class={{ "titlebar-menu rail-trigger": true, active: appCols() < 3 ? railDrawerOpen() : railDockedOpen() }}
+              ref={railTriggerButton}
+              aria-label="任务面板"
+              aria-haspopup={appCols() < 3 ? "dialog" : undefined}
+              aria-pressed={appCols() < 3 ? undefined : railDockedOpen() ? "true" : "false"}
+              title="任务"
+              onClick={() => { if (appCols() < 3) setRailDrawerOpen(true); else toggleRail(); }}
+            >
+              <IconListTodo />
+              <Show when={activeTab()!.store.todos[0]().length > 0}>
+                <span class="rail-badge">{activeTab()!.store.todos[0]().length}</span>
+              </Show>
+            </button>
+          </Show>
+          <button
+            type="button"
+            class="titlebar-menu titlebar-more"
+            aria-label="更多应用菜单"
+            aria-haspopup="menu"
+            title="更多应用菜单"
+            onClick={(event) => openShellMenu(event.currentTarget)}
+          >
+            <IconMoreHorizontal />
+          </button>
+        </div>
       </header>
-      <GlobalNav
-        active={settingsOpen() ? "settings" : section()}
+      <Sidebar
+        section={settingsOpen() ? "settings" : section()}
         onNavigate={navigateSection}
+        collapsed={sidebarCollapsed()}
+        drawer={appCols() === 1}
+        drawerOpen={appCols() === 1 && sidebarDrawerOpen()}
+        width={sidebarWidth()}
+        onWidthCommit={commitSidebarWidth}
+        sessions={sessionCatalog()}
+        activeSeed={isStartup() ? null : (activeTab()?.seed ?? null)}
+        activePending={() => activeTab()?.store.pending[0]() ?? []}
+        onSelect={(seed) => { setSection("messages"); void openSession(seed); }}
+        onCreate={() => { setSection("messages"); openStartup(); }}
+        creating={creating()}
+        canCreate={hostIncompatible() == null}
+        onMove={(seed, workspaceId) => { void moveSessionToWorkspace(seed, workspaceId); }}
+        onDetach={(seed) => { void detachSessionFromWorkspace(seed); }}
       />
-      <div class={settingsOpen() ? "workspace workspace-settings" : section() === "messages" ? "workspace workspace-messages" : "workspace"}>
+      <div class={settingsOpen() ? "workspace workspace-settings" : "workspace"}>
         <Show when={settingsOpen()} fallback={
           <>
-        <Show when={section() === "messages"}>
-          <MessageSidebar
-            sessions={sessionCatalog()}
-            activeSeed={isStartup() ? null : (activeTab()?.seed ?? null)}
-            activePending={() => activeTab()?.store.pending[0]() ?? []}
-            onSelect={(seed) => { setSection("messages"); void openSession(seed); }}
-            onCreate={() => { setSection("messages"); openStartup(); }}
-            creating={creating()}
-            canCreate={hostIncompatible() == null}
-            onMove={(seed, workspaceId) => { void moveSessionToWorkspace(seed, workspaceId); }}
-            onDetach={(seed) => { void detachSessionFromWorkspace(seed); }}
-          />
-        </Show>
         <div class="workspace-content">
         {/* Reserved for Goal. Do not render the old session capsule for now.
         <div class="session-tabs-region">
@@ -619,7 +867,9 @@ const App: Component = () => {
                         blocked={() => blockedReason(tab)}
                         running={() => runningNow(tab)}
                         onSend={(text) => send(tab, text)}
-                        onStop={() => void tab.store.cancelTurn().catch(() => {})}
+                        /* 返回 promise:Composer 失败时会复位「正在停止」,
+                           否则一次投递异常就让停止按钮永久禁用(BUG-2026-10-28)。 */
+                        onStop={() => tab.store.cancelTurn()}
                         focusToken={focusToken()}
                         metrics={() => tab.store.composerMetrics[0]()}
                         onCompact={() => void tab.store.compactContext().catch(() => {})}
@@ -643,7 +893,6 @@ const App: Component = () => {
                         sessionWorkspace={() => sessionWorkspaceName(tab.seed)}
                         lanActive={lanActive}
                       />
-                      <WorkspacePanel store={tab.store} />
                     </div>
                   </Show>
                 )}
@@ -659,6 +908,18 @@ const App: Component = () => {
           <SettingsView />
         </Show>
       </div>
+      {/* 任务右栏(spec §6.3):≥1280 第三列(dock);<1280 常驻挂载为覆盖层抽屉。 */}
+      {/* 抽屉面板常驻挂载(cols<3 时为覆盖层):开关由 class 驱动,
+          关闭时滑出画面再 display:none(motion kit),退出动画播得出来。 */}
+      <Show when={!settingsOpen() && section() === "messages" && !isStartup() && activeTab() != null}>
+        <WorkspacePanel store={activeTab()!.store} drawer={appCols() < 3} drawerOpen={railDrawerOpen()} manualOpen={railManual()} onManualToggle={setRailManual} />
+      </Show>
+      {/* 抽屉遮罩:盖 body 行,点击关闭;TopBar 不被盖住(关闭入口常在)。
+          常驻 DOM 只切 .open:开合都有淡入淡出,不用 Show 硬切。 */}
+      <div
+        class={{ "drawer-mask": true, open: (appCols() === 1 && sidebarDrawerOpen()) || (appCols() < 3 && railDrawerOpen()) }}
+        onClick={closeDrawers}
+      />
       <Show when={connectionNotice() != null}>
         <div class="connection-notice" role="status" aria-live="polite">
           <span>{connectionNotice()}</span>

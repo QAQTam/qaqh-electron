@@ -166,13 +166,20 @@
 
   /* 工具行(§8) */
   .step-row.tool { min-width: 0; }
-  /* todo v2 语义卡片:成功终态的 todo 调用原位渲染清单快照,替代纯文字语义行。 */
+  /* todo v2 语义卡片:成功终态的 todo 调用原位渲染清单快照,替代纯文字语义行。
+     入场(motion kit):轻微上浮淡入,新卡片落进时间线时有「落定」感;
+     一次性 compositor 动画,长回放也只是首帧多一次合成。 */
   .todo-card {
     min-width: 0;
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: var(--r-md);
     background: var(--surface);
+    animation: todo-card-in var(--dur) var(--ease) both;
+  }
+  @keyframes todo-card-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
   }
   .todo-card-head {
     display: flex; align-items: center; gap: 8px; min-width: 0;

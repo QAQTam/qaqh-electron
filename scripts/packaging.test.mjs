@@ -6,7 +6,13 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { parseArgs, assertInputs, walkFiles } = require("./packaging.cjs");
+const {
+  parseArgs,
+  parseBuildIdentity,
+  expectedPackageVersion,
+  assertInputs,
+  walkFiles,
+} = require("./packaging.cjs");
 const verify = require("./verify-package.cjs");
 const builderRequire = createRequire(require.resolve("electron-builder/package.json"));
 const libRequire = createRequire(builderRequire.resolve("app-builder-lib/package.json"));
@@ -16,11 +22,37 @@ test("CLI accepts only explicit targets and known opt-outs", () => {
   assert.equal(parseArgs([]).target, "all");
   for (const target of ["all", "dir", "AppImage", "deb", "tar.gz"]) {
     assert.deepEqual(parseArgs([target, "--skip-install", "--skip-backend"]),
-      { target, skipInstall: true, skipBackend: true, help: false });
+      { target, skipInstall: true, skipBackend: true, help: false, shell: false });
   }
   for (const args of [["deb; touch /tmp/bad"], ["--linux"], ["deb", "dir"], ["--unknown"]]) {
     assert.throws(() => parseArgs(args), /Unknown target\/option/);
   }
+});
+
+test("--shell selects the shell packaging criteria (plain dir + baseline)", () => {
+  assert.equal(parseArgs(["deb", "--shell"]).shell, true);
+  assert.equal(parseArgs(["deb"]).shell, false);
+  assert.equal(parseArgs(["--shell", "--skip-backend"]).shell, true);
+});
+
+test("just-provided build identity is complete, consistent and injected into the package", () => {
+  const env = {
+    QAQH_BUILD_VERSION: "2.0.20261028",
+    QAQH_BUILD_DATE: "20261028",
+    QAQH_GIT_COMMIT: "9f3610d6b6263f7abf690bfdd477c95658a0b85c",
+    QAQH_GIT_DIRTY: "0",
+  };
+  assert.deepEqual(parseBuildIdentity(env), {
+    version: "2.0.20261028",
+    date: "20261028",
+    commit: "9f3610d6b6263f7abf690bfdd477c95658a0b85c",
+    dirty: false,
+  });
+  assert.equal(expectedPackageVersion("2.0.0", env), "2.0.20261028");
+  assert.equal(expectedPackageVersion("2.0.0", {}), "2.0.0");
+  assert.throws(() => parseBuildIdentity({ ...env, QAQH_BUILD_VERSION: "" }), /just build/);
+  assert.throws(() => parseBuildIdentity({ ...env, QAQH_BUILD_DATE: "20261029" }), /disagree/);
+  assert.throws(() => parseBuildIdentity({ ...env, QAQH_GIT_COMMIT: "" }), /QAQH_GIT_COMMIT/);
 });
 
 test("preload exposes a narrow Electron host bridge, not the legacy Tauri or generic Electron globals", () => {
@@ -47,10 +79,12 @@ function fixture(t) {
     mkdirSync(dirname(join(root, file)), { recursive: true });
     writeFileSync(join(root, file), contents);
   };
-  put("package.json", JSON.stringify({ name: "fixture", version: "1.0.0", main: "dist/main/index.cjs",
+  put("package.json", JSON.stringify({ name: "fixture",
+    version: process.env.QAQH_BUILD_VERSION || "1.0.0", main: "dist/bootstrap.cjs",
     author: { name: "QAQTam", email: "tsy3minso@gmail.com" }, homepage: "https://example.org" }));
   put("renderer/index.html", '<script src="/assets/app.js"></script>');
   put("renderer/assets/app.js", "console.log('fresh')");
+  put("dist/bootstrap.cjs", "module.exports = {};");
   put("dist/main/index.cjs", "module.exports = {};");
   put("dist/preload/index.cjs", "module.exports = {};");
   const elf = Buffer.alloc(64);

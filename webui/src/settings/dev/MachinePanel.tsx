@@ -12,14 +12,36 @@
 import { For, Show, createSignal, onCleanup, type Component } from "solid-js";
 import { formatBytes, formatClock, errorTextOf, isScopeError, loadMemorySnapshot, MEMORY_POLL_MS } from "../../lib/memwatch";
 import { captureRendererMemory, loadHostMemory, loadProcessGroup, summarizeMachineMemory, type MachineMemoryView } from "../../lib/hostmem";
+import { loadGpuStatus, type GpuStatus } from "../../lib/gpu";
+import {
+  applyStagedUpdate, checkForUpdates, loadStagedStatus, stageUpdate,
+  type StagedStatus, type UpdateCheckResult,
+} from "../../lib/updater";
+import { requireDesktopHost } from "../../lib/desktop-host";
 
 export const MachinePanel: Component = () => {
   const [view, setView] = createSignal<MachineMemoryView | null>(null);
   const [note, setNote] = createSignal<string | null>(null);
   const [at, setAt] = createSignal(0);
   const [paused, setPaused] = createSignal(false);
+  // GPU 后端在会话期内不会变,探一次就够;失败只少这一块,不影响内存采样。
+  const [gpu, setGpu] = createSignal<GpuStatus | null>(null);
+  // 组件热更新:检查(plan)/暂存(stage)/应用(apply),见 webui/src/lib/updater.ts。
+  const [plan, setPlan] = createSignal<UpdateCheckResult | null>(null);
+  const [staged, setStaged] = createSignal<StagedStatus | null>(null);
+  const [updateNote, setUpdateNote] = createSignal<string | null>(null);
+  const [updateBusy, setUpdateBusy] = createSignal(false);
   let stopped = false;
   let timer = 0;
+
+  void loadGpuStatus().then((value) => {
+    if (!stopped) setGpu(value);
+  }).catch(() => {});
+
+  // 已暂存的更新跨面板存活,挂载时读一次,有就亮出「应用」。
+  void loadStagedStatus().then((value) => {
+    if (!stopped && value) setStaged(value);
+  }).catch(() => {});
 
   const tick = async (): Promise<void> => {
     const notes: string[] = [];
@@ -61,6 +83,54 @@ export const MachinePanel: Component = () => {
   });
 
   const segment = (label: string, bytes: number | null): string => `${label} ${formatBytes(bytes)}`;
+
+  // ── 组件热更新动作(每步独立兜错,不互相打断) ──
+  const runUpdateStep = async (step: () => Promise<void>): Promise<void> => {
+    setUpdateBusy(true);
+    setUpdateNote(null);
+    try {
+      await step();
+    } catch (cause) {
+      setUpdateNote(errorTextOf(cause));
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+  const doCheck = (): void => {
+    void runUpdateStep(async () => {
+      const result = await checkForUpdates();
+      if (!result) {
+        setUpdateNote("纯浏览器环境没有更新链路。");
+        return;
+      }
+      setPlan(result);
+      setStaged(null);
+    });
+  };
+  const doStage = (): void => {
+    void runUpdateStep(async () => {
+      const status = await stageUpdate();
+      if (!status) {
+        setUpdateNote("纯浏览器环境没有更新链路。");
+        return;
+      }
+      setStaged(status);
+      setPlan(null);
+    });
+  };
+  const doApply = (): void => {
+    void runUpdateStep(async () => {
+      const result = await applyStagedUpdate();
+      if (result.policy === "electron") {
+        // detached updater 已挂上 --wait-pid,走既有退出流程即可,换文件与重启由 updater 接手。
+        setUpdateNote("壳即将退出,更新将在退出后应用并自动重启。");
+        requireDesktopHost().requestQuit({ stopDaemon: false, stopActiveWork: false });
+        return;
+      }
+      setStaged(null);
+      setUpdateNote("daemon 已换血并重连,壳未重启。");
+    });
+  };
 
   return (
     <div class="dev-panel">
@@ -113,7 +183,7 @@ export const MachinePanel: Component = () => {
                         <td>{row().label}</td>
                         <td>{formatBytes(row().resident)}</td>
                         <td>{formatBytes(row().private)}</td>
-                        <td title="psapi 口径是进程全生命周期峰值,不是本次会话">{formatBytes(row().peak)}</td>
+                        <td title="进程全生命周期峰值(Linux procfs VmHWM / Windows psapi),不是本次会话峰值">{formatBytes(row().peak)}</td>
                         <td>{row().source}</td>
                       </tr>
                     )}
@@ -142,6 +212,65 @@ export const MachinePanel: Component = () => {
                   </For>
                 </tbody>
               </table>
+            </Show>
+
+            <h4 class="dev-sub">图形后端</h4>
+            <Show when={gpu()} fallback={<p class="dev-muted">壳未提供 GPU 读数(旧壳/纯浏览器)。</p>}>
+              {(current) => (
+                <>
+                  <div class="readonly-grid">
+                    <span>合成</span>
+                    <b>{current().compositing ?? "—"}</b>
+                    <span>软件渲染</span>
+                    <b>{current().softwareRendering == null ? "—" : current().softwareRendering ? "是" : "否"}</b>
+                    <span>驱动</span>
+                    <b>{[current().vendor, current().renderer].filter(Boolean).join(" / ") || "—"}</b>
+                  </div>
+                  <Show when={current().software === true}>
+                    <p class="dev-warn">GPU 落在软件光栅(SwiftShader):每帧都由 CPU 绘制,关动画/去模糊的主题级优化收效有限——先解决硬件加速,再谈视觉降载。</p>
+                  </Show>
+                  <Show when={current().error != null}>
+                    <p class="dev-warn">GPU 读数失败({current().error})。</p>
+                  </Show>
+                </>
+              )}
+            </Show>
+
+            <h4 class="dev-sub">组件热更新</h4>
+            <div class="dev-toolbar">
+              <button type="button" class="ghost-mini" disabled={updateBusy()} onClick={doCheck}>
+                检查更新
+              </button>
+              <Show when={plan() && !plan()!.upToDate}>
+                <button type="button" class="ghost-mini" disabled={updateBusy()} onClick={doStage}>
+                  暂存
+                </button>
+              </Show>
+              <Show when={staged()}>
+                <button type="button" class="ghost-mini" disabled={updateBusy()} onClick={doApply}>
+                  应用
+                </button>
+              </Show>
+            </div>
+            <Show when={plan()}>
+              {(current) => (
+                <p class="dev-muted">
+                  {current().upToDate
+                    ? `已是最新(release ${current().plan.releaseId})`
+                    : `release ${current().plan.releaseId}:${current().plan.mode} [${current().plan.artifacts.join(", ")}]`}
+                </p>
+              )}
+            </Show>
+            <Show when={staged()}>
+              {(current) => (
+                <p class="dev-muted">
+                  已暂存 {current().operationId}(release {current().releaseId})·
+                  {current().restartPolicy === "daemon" ? "应用后仅重启 daemon" : "应用后退出壳并自动重启"}
+                </p>
+              )}
+            </Show>
+            <Show when={updateNote() != null}>
+              <p class="dev-warn">{updateNote()}</p>
             </Show>
 
             <h4 class="dev-sub">渲染层</h4>

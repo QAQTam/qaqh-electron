@@ -39,6 +39,19 @@ contextBridge.exposeInMainWorld("qaqhHost", {
     show: () => ipcRenderer.invoke("qaqh:window-show"),
     setCloseToTray: (value: boolean) => ipcRenderer.invoke("qaqh:window-close-to-tray", value),
     setTrayStatus: (text: string) => ipcRenderer.invoke("qaqh:tray-status", text),
+    setTitleBarOverlay: (options: { color?: string; symbolColor?: string }) => ipcRenderer.invoke("qaqh:titlebar-overlay", options),
   },
+  devtools: {
+    toggle: () => ipcRenderer.invoke("qaqh:devtools-toggle") as Promise<boolean>,
+  },
+  powerBlocker: {
+    set: (mode: "off" | "keep-awake" | "keep-awake-bright") => ipcRenderer.invoke("qaqh:power-blocker", { mode }),
+    state: () => ipcRenderer.invoke("qaqh:power-blocker-state"),
+  },
+  gpuPref: {
+    state: () => ipcRenderer.invoke("qaqh:gpu-pref-state") as Promise<{ currentLaunchDisabled: boolean; nextLaunchDisabled: boolean }>,
+    set: (disabled: boolean) => ipcRenderer.invoke("qaqh:gpu-pref-set", { disabled }) as Promise<{ currentLaunchDisabled: boolean; nextLaunchDisabled: boolean }>,
+  },
+  relaunch: () => ipcRenderer.invoke("qaqh:relaunch"),
   requestQuit: (options: { stopDaemon: boolean; stopActiveWork: boolean }) => ipcRenderer.invoke("qaqh:request-quit", options),
 });

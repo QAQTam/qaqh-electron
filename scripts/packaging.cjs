@@ -6,18 +6,57 @@ const requiredFiles = ["renderer/index.html", "resources/bin/qaqh-daemon",
   "dist/main/index.cjs", "dist/preload/index.cjs"];
 
 function parseArgs(args) {
-  const options = { target: "all", skipInstall: false, skipBackend: false, help: false };
+  const options = { target: "all", skipInstall: false, skipBackend: false, help: false, shell: false };
   let targetSeen = false;
   for (const arg of args) {
     if (arg === "--skip-install") options.skipInstall = true;
     else if (arg === "--skip-backend") options.skipBackend = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
+    else if (arg === "--shell") options.shell = true;
     else if (!targetSeen && ["all", "dir", "AppImage", "deb", "tar.gz"].includes(arg)) {
       options.target = arg;
       targetSeen = true;
     } else throw new Error(`Unknown target/option: ${arg}. Use --help.`);
   }
   return options;
+}
+
+/**
+ * The canonical build identity is produced by `just` once and exported to every
+ * stage. Node must not invent its own date/version here: a packaging run that
+ * bypasses just would otherwise silently produce a differently-versioned app.
+ * @param {NodeJS.ProcessEnv} env
+ */
+function parseBuildIdentity(env = process.env) {
+  const version = String(env.QAQH_BUILD_VERSION ?? "").trim();
+  const date = String(env.QAQH_BUILD_DATE ?? "").trim();
+  const commit = String(env.QAQH_GIT_COMMIT ?? "").trim();
+  const dirty = String(env.QAQH_GIT_DIRTY ?? "") === "1";
+  if (!/^2\.0\.\d{8}$/.test(version)) {
+    throw new Error("QAQH_BUILD_VERSION must be 2.0.YYYYMMDD; run `just build`.");
+  }
+  if (date !== "" && !/^\d{8}$/.test(date)) {
+    throw new Error(`QAQH_BUILD_DATE must be YYYYMMDD; got ${date}.`);
+  }
+  if (date !== "" && version !== `2.0.${date}`) {
+    throw new Error("QAQH_BUILD_VERSION (" + version + ") and QAQH_BUILD_DATE (" +
+      date + ") disagree; run `just build`.");
+  }
+  if (commit === "") throw new Error("QAQH_GIT_COMMIT is missing; run `just build`.");
+  return { version, date: date || version.slice(4), commit, dirty };
+}
+
+/**
+ * electron-builder writes the injected version into the packaged package.json.
+ * afterPack therefore compares against the injected value, not the source
+ * manifest (which intentionally keeps a stable date base).
+ */
+function expectedPackageVersion(sourceVersion, env = process.env) {
+  const injected = String(env.QAQH_BUILD_VERSION ?? "").trim();
+  if (injected !== "" && !/^2\.0\.\d{8}$/.test(injected)) {
+    throw new Error(`Invalid injected package version: ${injected}.`);
+  }
+  return injected || sourceVersion;
 }
 
 function assertInputs(root) {
@@ -54,4 +93,11 @@ function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-module.exports = { parseArgs, assertInputs, walkFiles, digest };
+module.exports = {
+  parseArgs,
+  parseBuildIdentity,
+  expectedPackageVersion,
+  assertInputs,
+  walkFiles,
+  digest,
+};

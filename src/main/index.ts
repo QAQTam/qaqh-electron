@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, powerSaveBlocker, type IpcMainInvokeEvent } from "electron";
 import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readDiscovery } from "./daemon.js";
@@ -7,6 +7,7 @@ import { DaemonManager } from "./daemon.js";
 import { RingingClient } from "./ringing-client.js";
 import { ChallengeManager } from "./challenges.js";
 import { registerIpcHandlers, registerQuitIpcHandler, isTrustedRenderer } from "./ipc-handlers.js";
+import { ensureBaselineSeeded } from "./baseline.js";
 import { MODEL_PICKER_HTML, openModelPicker } from "./model-picker.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
@@ -35,11 +36,32 @@ app.commandLine.appendSwitch("disable-site-isolation-trials");
 
 // 3. V8 堆内存约束与代码体积优化（限制最大 256MB，优先小内存占用）
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=256 --optimize-for-size --expose-gc");
+// performance.memory 精确化：不开的话 Chromium 对 JS 堆读数做量化且 ~20s 才刷新，
+// 开发者面板看到的堆是"大约数"，500MB 尖峰会整个被抹掉（stress-cdp.mjs 同一前提）。
+app.commandLine.appendSwitch("enable-precise-memory-info");
 
-// 4. 彻底禁用无用的重量级模块（纯代码/文本客户端无需 3D/WebGL、语音与后台遥测）
-app.commandLine.appendSwitch("disable-3d-apis");
-app.commandLine.appendSwitch("disable-webgl");
-app.commandLine.appendSwitch("disable-webgl2");
+// 4. GPU/3D 开关(用户可调,渲染性能模式驱动):默认禁用(受限硬件极致省内存的
+//    旧行为);设置页选 Quality 档时 renderer 会把偏好写进 shell-prefs.json,
+//    **下次启动**不再追加禁用开关(命令行开关只能在进程启动前生效,改档须重启壳)。
+//    纯内存类约束(V8 堆上限/进程数/缓存)与开关无关,恒定不动。
+type ShellPrefs = { gpuDisabled?: boolean };
+const SHELL_PREFS_FILE = join(app.getPath("userData"), "shell-prefs.json");
+function readShellPrefs(): ShellPrefs {
+  try {
+    return JSON.parse(readFileSync(SHELL_PREFS_FILE, "utf8")) as ShellPrefs;
+  } catch { return {}; }
+}
+function writeShellPrefs(prefs: ShellPrefs): void {
+  try { writeFileSync(SHELL_PREFS_FILE, JSON.stringify(prefs, null, 2)); } catch {}
+}
+const shellPrefs = readShellPrefs();
+// 缺省 = 禁用(与历史行为一致);只有 Quality 档明确写过 false 才启用 GPU。
+const gpuDisabledNow = shellPrefs.gpuDisabled !== false;
+if (gpuDisabledNow) {
+  app.commandLine.appendSwitch("disable-3d-apis");
+  app.commandLine.appendSwitch("disable-webgl");
+  app.commandLine.appendSwitch("disable-webgl2");
+}
 app.commandLine.appendSwitch("disable-speech-api");
 app.commandLine.appendSwitch("disable-breakpad");
 app.commandLine.appendSwitch("disable-print-preview");
@@ -150,6 +172,113 @@ ipcMain.handle("qaqh:window-show", (event) => {
   return null;
 });
 
+// DevTools 开关(设置页·开发者模式):click 即 toggle,返回开关后的状态。
+// 只暴露 toggle,不暴露 openDevTools/参数——renderer 不需要更多控制面。
+ipcMain.handle("qaqh:devtools-toggle", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  const webContents = mainWindow?.webContents;
+  if (webContents == null) return false;
+  webContents.toggleDevTools();
+  return webContents.isDevToolsOpened();
+});
+
+// ── 休眠限制(用户需求,Linux+Windows)────────────────────────────────────
+// Electron 原生 powerSaveBlocker:prevent-app-suspension 阻止系统休眠(允许熄屏),
+// prevent-display-sleep 连屏幕一起保持(演示/监控)。Linux 走 D-Bus inhibit,
+// Windows 走 SetThreadExecutionState;单实例只持有一个 blocker,切模式先停旧。
+// 设置页「桌面壳」面板是唯一入口;偏好存 renderer localStorage,启动时由
+// renderer 重新 set(主进程不持久化——这是界面偏好,不是 daemon 配置)。
+type PowerBlockerMode = "off" | "keep-awake" | "keep-awake-bright";
+const POWER_MODES = new Set<string>(["off", "keep-awake", "keep-awake-bright"]);
+let powerBlockerId: number | null = null;
+let powerBlockerMode: PowerBlockerMode = "off";
+
+function powerBlockerState(): { mode: PowerBlockerMode; active: boolean } {
+  return {
+    mode: powerBlockerMode,
+    active: powerBlockerId != null && powerSaveBlocker.isStarted(powerBlockerId),
+  };
+}
+
+ipcMain.handle("qaqh:power-blocker", (event, payload: unknown) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  const requested = (payload as { mode?: unknown } | null)?.mode;
+  if (typeof requested !== "string" || !POWER_MODES.has(requested)) {
+    throw new Error(`未知的休眠限制模式: ${String(requested)}`);
+  }
+  if (powerBlockerId != null) {
+    powerSaveBlocker.stop(powerBlockerId);
+    powerBlockerId = null;
+  }
+  powerBlockerMode = requested as PowerBlockerMode;
+  if (powerBlockerMode === "keep-awake") {
+    powerBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+  } else if (powerBlockerMode === "keep-awake-bright") {
+    powerBlockerId = powerSaveBlocker.start("prevent-display-sleep");
+  }
+  return powerBlockerState();
+});
+
+ipcMain.handle("qaqh:power-blocker-state", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  return powerBlockerState();
+});
+
+// ── GPU 加速偏好(渲染性能模式驱动,重启生效)────────────────────────────
+// renderer 是档位事实源(auto/low/quality + 硬件/GPU 探针),这里只存偏好与回报
+// 「本次启动实际是什么」。命令行开关在启动前定格,运行时改档只能下次生效。
+function gpuPrefState(): { currentLaunchDisabled: boolean; nextLaunchDisabled: boolean } {
+  return {
+    currentLaunchDisabled: gpuDisabledNow,
+    nextLaunchDisabled: readShellPrefs().gpuDisabled !== false,
+  };
+}
+
+ipcMain.handle("qaqh:gpu-pref-state", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  return gpuPrefState();
+});
+
+ipcMain.handle("qaqh:gpu-pref-set", (event, payload: unknown) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  const requested = (payload as { disabled?: unknown } | null)?.disabled;
+  if (typeof requested !== "boolean") throw new Error("gpu-pref-set 需要 boolean disabled");
+  const prefs = readShellPrefs();
+  prefs.gpuDisabled = requested;
+  writeShellPrefs(prefs);
+  return gpuPrefState();
+});
+
+// 重启壳(应用 GPU 偏好/加载新参数):**必须走 app.quit()**——app.exit() 会跳过
+// before-quit,托盘的 StatusNotifier 不反注册,旧进程留下僵尸托盘项,面板上
+// 新实例的图标被顶掉不显示(实测:重启后托盘 icon 消失)。quit 路径里
+// before-quit 会拆托盘、断 client;daemon 是 detached 子进程,不受影响。
+ipcMain.handle("qaqh:relaunch", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  app.relaunch();
+  try { tray?.destroy(); } catch { /* 面板侧可能已先摘除 */ }
+  tray = null;
+  app.quit();
+});
+
+// WCO 配色跟随主题(阶段4):只改外观,不承担关窗职责——即使 IPC 全挂,原生
+// 窗口控制仍然可用(绝对隔离的边界就在这里:控制画在原生层,不走 renderer)。
+ipcMain.handle("qaqh:titlebar-overlay", (event, options: unknown) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  const overlay = (options ?? {}) as { color?: unknown; symbolColor?: unknown };
+  try {
+    mainWindow?.setTitleBarOverlay({
+      ...(typeof overlay.color === "string" ? { color: overlay.color } : {}),
+      ...(typeof overlay.symbolColor === "string" ? { symbolColor: overlay.symbolColor } : {}),
+    });
+    return true;
+  } catch (error) {
+    // 平台不支持(旧 Windows/部分 Linux WM)时静默降级:维持创建时的初值。
+    console.warn("[app] setTitleBarOverlay unavailable:", error);
+    return false;
+  }
+});
+
 ipcMain.handle("qaqh:window-hide", (event) => {
   if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
   mainWindow?.hide();
@@ -200,6 +329,8 @@ async function bootstrapApp(): Promise<void> {
   // 1. Start/reuse daemon and establish the SDK client before the renderer loads,
   // so every IPC handler exists before frontend boot invokes anything.
   registerIpcHandlers(ensureClient, daemonMgr, challenges);
+  // 首跑提升(打包形态):系统 seed 基线 → 用户组件根,updater 的 plan 才有 install-state。
+  await ensureBaselineSeeded();
   try {
     await ensureClient();
   } catch (err) {
@@ -213,6 +344,14 @@ async function bootstrapApp(): Promise<void> {
 }
 
 function resolveRendererDir(): string {
+  // 0. 组件根(bootstrap 选中:overlay 或 baseline)。dist 与 renderer 同根,
+  //    保证壳与前端版本永远配对,不会出现"新壳带旧前端"。
+  const componentRoot = process.env.QAQH_APP_DIR?.trim();
+  if (componentRoot) {
+    const componentRenderer = join(componentRoot, "renderer");
+    if (existsSync(componentRenderer)) return componentRenderer;
+  }
+
   // 1. 打包生产环境/asar 内部路径: join(app.getAppPath(), "renderer")
   const asarRenderer = join(app.getAppPath(), "renderer");
   if (existsSync(asarRenderer)) return asarRenderer;
@@ -279,6 +418,22 @@ function createMainWindow(): BrowserWindow {
     title: "QAQ-Harness",
     show: false,
     backgroundColor: "#18181b",
+    // 阶段4(spec §5):隐藏原生标题栏。Linux/Windows 用 WCO(titleBarOverlay):
+    // 窗口控制由壳层原生绘制,renderer panic/挂死之后窗口仍然可拖动、缩放、
+    // 关闭——「能否关窗」绝不依赖 renderer 存活。macOS 用 hiddenInset 交通灯。
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    // 阶段1(菜单迁 TopBar ⋯)完成前保留 application menu,但不占一整行 chrome;
+    // Alt 仍可呼出,动作不丢失(spec §5.5 的「先迁移后移除」在此兑现一半)。
+    autoHideMenuBar: true,
+    ...(process.platform !== "darwin"
+      ? {
+          titleBarOverlay: {
+            color: "#17181b",
+            symbolColor: "#edeef0",
+            height: 48, // 与 TopBar(--topbar-height: 48px)同高
+          },
+        }
+      : {}),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -301,6 +456,29 @@ function createMainWindow(): BrowserWindow {
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
+  });
+
+  // 可编辑区右键菜单:Tauri 时代 WebView2/WKWebView 自带原生编辑菜单,Electron
+  // 不会自动弹任何菜单(Chromium 的默认菜单逻辑被壳替换),所以输入框右键是
+  // 「无声无息」。这里只放编辑类角色(剪切/粘贴等走系统剪贴板与 IME 语义,
+  // role 标签由 Electron 按系统语言本地化),不放 reload/后退等导航项——
+  // reload 会丢未发送草稿与流式回合(见 webui/src/ui/contextMenu.tsx 的收口原则)。
+  // 非编辑区仍由 renderer 应用内菜单负责:renderer preventDefault 后本事件
+  // 不会到达主进程,两条链路天然互斥。
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    if (!params.isEditable) return;
+    // role 的显示文案跟随系统 locale,英文系统上会冒出 Undo/Cut/Paste(用户反馈
+    // 183557 截图);产品是中文优先,这里显式写中文 label,role 只保留行为与快捷键。
+    Menu.buildFromTemplate([
+      { label: "撤销", role: "undo" },
+      { label: "重做", role: "redo" },
+      { type: "separator" },
+      { label: "剪切", role: "cut" },
+      { label: "复制", role: "copy" },
+      { label: "粘贴", role: "paste" },
+      { type: "separator" },
+      { label: "全选", role: "selectAll" },
+    ]).popup({ window: mainWindow ?? undefined });
   });
 
   mainWindow.on("close", (event) => {
@@ -336,34 +514,23 @@ function createMainWindow(): BrowserWindow {
 }
 
 function setupTray(): void {
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    {
-      label: "QAQ-Harness",
-      submenu: [
-        { label: "关于 QAQ-Harness", role: "about" },
-        { type: "separator" },
-        { label: "退出…", accelerator: "CommandOrControl+Q", click: () => requestRendererQuit() },
-      ],
-    },
-    {
-      label: "模型",
-      submenu: [
-        {
-          label: "选择新会话默认模型…",
-          accelerator: "CommandOrControl+Shift+M",
-          click: () => { if (client) openModelPicker(client, null); },
-        },
-        {
-          label: "更改当前会话模型…",
-          click: () => {
-            const seed = client?.getActiveSeed();
-            if (client && seed) openModelPicker(client, seed);
-            else console.info("[model-picker] no active session is attached");
-          },
-        },
-      ],
-    },
-  ]));
+  // 阶段1(spec §5.5):Linux/Windows 摘除 application menu——模型/设置/关于/退出
+  // 已全部迁入 TopBar ⋯ 菜单,Ctrl+Shift+M / Ctrl+Q 由 renderer 键盘接管
+  // (webui App onKey),动作不丢失。macOS 保留系统菜单栏角色(关于/退出)。
+  if (process.platform === "darwin") {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: "QAQ-Harness",
+        submenu: [
+          { label: "关于 QAQ-Harness", role: "about" },
+          { type: "separator" },
+          { label: "退出…", accelerator: "CommandOrControl+Q", click: () => requestRendererQuit() },
+        ],
+      },
+    ]));
+  } else {
+    Menu.setApplicationMenu(null);
+  }
 
   try {
     const iconPath = app.isPackaged

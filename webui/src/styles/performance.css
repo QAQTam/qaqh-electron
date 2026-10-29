@@ -13,11 +13,14 @@
     --glass-blur: 0px !important;
     --dur-normal: 0.05s !important;
     --dur-slow: 0.1s !important;
+    /* 布局/抽屉过渡(motion kit):#app 轨道过渡是逐帧重排,低配机器压短到 0.1s。 */
+    --dur-layout: 0.1s !important;
+    --dur-drawer: 0.1s !important;
   }
 
   /* 精准停用关键组件的毛玻璃滤镜，避免通配符选择器（*）引发的全 DOM 样式重算与布局抖动 */
-  html[data-perf-mode="low"] :is(.session-capsule, .global-nav, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .quit-dialog, .turn-deliverables-card, .approval-stack, #top),
-  html.perf-mode-low :is(.session-capsule, .global-nav, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .quit-dialog, .turn-deliverables-card, .approval-stack, #top) {
+  html[data-perf-mode="low"] :is(.session-capsule, .app-sidebar, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .quit-dialog, .turn-deliverables-card, .approval-stack, #top),
+  html.perf-mode-low :is(.session-capsule, .app-sidebar, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .quit-dialog, .turn-deliverables-card, .approval-stack, #top) {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
@@ -38,8 +41,8 @@
   }
 
   /* 侧栏与顶栏实底化 */
-  html[data-perf-mode="low"] .global-nav,
-  html.perf-mode-low .global-nav,
+  html[data-perf-mode="low"] .app-sidebar,
+  html.perf-mode-low .app-sidebar,
   html[data-perf-mode="low"] .message-sidebar,
   html.perf-mode-low .message-sidebar,
   html[data-perf-mode="low"] #top,
@@ -52,6 +55,8 @@
     .text-shimmer-glow,
     .composer-live-dot,
     .tab-dot.run,
+    .composer-comet-run,
+    .composer-comet-face,
     .session-pending-body::before,
     .session-pending-track,
     .dev-live,
@@ -63,6 +68,8 @@
     .text-shimmer-glow,
     .composer-live-dot,
     .tab-dot.run,
+    .composer-comet-run,
+    .composer-comet-face,
     .session-pending-body::before,
     .session-pending-track,
     .dev-live,

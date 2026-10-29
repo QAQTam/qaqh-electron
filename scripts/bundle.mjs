@@ -18,7 +18,16 @@ function readGitInfo() {
   }
 }
 
-const git = readGitInfo();
+// `just` injects the canonical identity; the git fallback only keeps ad-hoc
+// `node scripts/bundle.mjs` usable outside the packaging entry point.
+const git = process.env.QAQH_GIT_COMMIT?.trim()
+  ? { commit: process.env.QAQH_GIT_COMMIT.trim(), dirty: process.env.QAQH_GIT_DIRTY === "1" }
+  : readGitInfo();
+const build = {
+  version: process.env.QAQH_BUILD_VERSION?.trim() || "",
+  commit: git.commit,
+  dirty: git.dirty,
+};
 
 /** @type {esbuild.BuildOptions} */
 const commonOptions = {
@@ -29,8 +38,9 @@ const commonOptions = {
   external: ["electron"],
   logLevel: "info",
   define: {
-    "process.env.QAQH_GIT_COMMIT": JSON.stringify(git.commit),
-    "process.env.QAQH_GIT_DIRTY": JSON.stringify(git.dirty ? "1" : "0"),
+    "process.env.QAQH_BUILD_VERSION": JSON.stringify(build.version),
+    "process.env.QAQH_GIT_COMMIT": JSON.stringify(build.commit),
+    "process.env.QAQH_GIT_DIRTY": JSON.stringify(build.dirty ? "1" : "0"),
   },
 };
 
@@ -54,7 +64,22 @@ async function buildPreload() {
   });
 }
 
+async function buildBootstrap() {
+  console.log("[bundle] Building bootstrap...");
+  await esbuild.build({
+    ...commonOptions,
+    entryPoints: [resolve(root, "src/main/bootstrap.ts")],
+    outfile: resolve(root, "dist/bootstrap.cjs"),
+    format: "cjs",
+  });
+}
+
 async function run() {
+  console.log(`[bundle] Build ${build.version || "(source version)"}+${build.commit.slice(0, 8)}` +
+    `${build.dirty ? "-dirty" : ""}`);
+  if (mode === "bootstrap" || mode === "all") {
+    await buildBootstrap();
+  }
   if (mode === "main" || mode === "all") {
     await buildMain();
   }

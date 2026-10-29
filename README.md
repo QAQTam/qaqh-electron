@@ -18,14 +18,12 @@ The SDK owns protocol work: Ringing handshake/lease renewal, service methods, co
 
 ## Development
 
-Requirements: Node.js >=22.12, pnpm, Rust/Cargo, and sibling repositories `qaqh-sdk` and `qaqh-backend`. The renderer lives in this repository under `webui/`.
+Requirements: Node.js >=22.12, pnpm, Rust/Cargo, `just`, and sibling repositories `qaqh-sdk` and `qaqh-backend`. The renderer lives in this repository under `webui/`. `just` is the only supported packaging entry point; `pnpm` remains the package manager and runs the JavaScript internals.
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm --dir webui install --frozen-lockfile
-pnpm run dev             # Vite renderer + Electron main/preload, live development window
-pnpm run typecheck
-pnpm test
+just install             # install all three workspaces
+just dev                 # Vite renderer + Electron main/preload, live development window
+just check               # Electron, renderer and SDK typecheck/tests
 ```
 
 The renderer is loaded from Vite at `http://127.0.0.1:5173` in development. `app://localhost` serves packaged resources in production. The Electron main process starts/reuses the backend daemon and initializes the SDK client before loading the renderer so IPC routes exist at frontend boot.
@@ -53,7 +51,7 @@ sudo chown root:root release/linux-unpacked/chrome-sandbox
 sudo chmod 4755 release/linux-unpacked/chrome-sandbox
 ```
 
-`pnpm run dev` passes `--no-sandbox` automatically for the same reason: the npm
+`just dev` passes `--no-sandbox` automatically for the same reason: the npm
 Electron binary also ships an unpacked helper. Do not use that flag for a
 production installer; install the `.deb`/AppImage and launch through the
 desktop entry so the packaged sandbox policy applies. If an older
@@ -65,8 +63,21 @@ build exit immediately; quit the old app or use a separate
 
 ```bash
 just build                # daemon + SDK + renderer + Electron, then AppImage/deb/tar.gz
-just build dir            # unpacked app, no installer archive
-just check                # Electron typecheck/tests and renderer typecheck/tests
+just dir                  # unpacked app, no installer archive
+just appimage             # AppImage only
+just deb                  # deb only
+just tarball              # tar.gz only
+just info                 # print the version/date/commit that will be injected
+just check                # Electron/renderer/SDK typecheck and tests
+```
+
+`just` computes the local pack date and git commit exactly once, then exports `QAQH_BUILD_DATE`, `QAQH_BUILD_VERSION`, `QAQH_GIT_COMMIT`, `QAQH_GIT_DIRTY` and `QAQH_BUILD_ID` to every stage. The Node bundles embed that identity, Cargo injects it into the daemon, and electron-builder writes it into the packaged `package.json` via `extraMetadata.version`. There are intentionally no packaging scripts in `package.json`; invoking the pipeline around `just` would bypass this identity injection.
+
+For a reproducible or backdated build, pin the date (and optionally the full version):
+
+```bash
+QAQH_BUILD_DATE=20261028 just build
+QAQH_BUILD_DATE=20261028 QAQH_BUILD_VERSION=2.0.20261028 just build
 ```
 
 The packaging script rejects unsupported host architectures rather than silently cross-compiling. It validates the packaged ASAR content and daemon resources before replacing `release/`. A successful package check is not a GUI smoke test; start the packaged app on each target distribution before publishing.

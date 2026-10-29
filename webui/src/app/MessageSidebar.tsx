@@ -8,6 +8,7 @@ import { STR } from "../lib/strings";
 import type { ApprovalView } from "../lib/transport";
 import { sessionCatalog, workspaceCatalog, type SidebarSession, type SidebarWorkspace } from "../tabs/store";
 import { WorkspaceMenuItem } from "../workspace/WorkspaceMenu";
+import { Collapse } from "../ui/Collapse";
 import { SessionPendingCard } from "./SessionPendingCard";
 import { pendingPresentation, workingOnly } from "./session-pending";
 
@@ -113,9 +114,10 @@ export const MessageSidebar: Component<{
   };
 
   return (
-    <aside class="message-sidebar" aria-label="工作区与会话">
+    <aside class="message-sidebar" aria-label="会话列表">
       <div class="message-sidebar-head">
-        <span>工作区</span>
+        {/* §8.6:侧栏头部叫「会话」;「工作区」只用于下面的分组名,同屏不出现两个「工作区」。 */}
+        <span>会话</span>
         <span class="message-sidebar-count">{allSessions().filter((item) => !item.archived).length}</span>
         <Show when={props.onCreate != null}>
           <button type="button" class="message-create" aria-label="新建会话" title="新建会话" disabled={props.creating || props.canCreate === false} onClick={() => props.onCreate?.()}><IconPlus /></button>
@@ -140,7 +142,9 @@ export const MessageSidebar: Component<{
                 <span class="message-workspace-title">{group().title}</span>
                 <span class="message-workspace-count">{group().sessions.length}</span>
               </button>
-              <Show when={!collapsed().has(group().id)}>
+              {/* 分组收展(motion kit):走共用 Collapse(0fr↔1fr + opacity),
+                  播完 out 过渡再卸载——历史会话列表的文本量不小,卸载纪律保留。 */}
+              <Collapse open={!collapsed().has(group().id)}>
                 <div class="message-workspace-sessions">
                   <For each={group().sessions} keyed={(session) => session.session_id}>{(session) => {
                     const active = () => props.activeSeed === session().session_id;
@@ -226,7 +230,7 @@ export const MessageSidebar: Component<{
                     );
                   }}</For>
                 </div>
-              </Show>
+              </Collapse>
             </section>
           )}</For>
         </Show>

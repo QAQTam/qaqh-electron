@@ -50,7 +50,8 @@ export const Composer: Component<{
   blocked: () => SendBlockReason;
   running: () => boolean;
   onSend: (text: string) => void | Promise<void>;
-  onStop: () => void;
+  /** 失败必须能冒泡:成功后 `stopping` 只由 `running()` 翻转复位。 */
+  onStop: () => void | Promise<void>;
   focusToken: number;
   autoFocus?: boolean;
   placeholder?: string;
@@ -460,6 +461,15 @@ export const Composer: Component<{
                   <Show when={extras().length > EXTRA_HUD_LIMIT}>
                     <span class="composer-identity-item" title={extras().map(([key, value]) => `${key} ${value}`).join(" · ")}>
                       +{extras().length - EXTRA_HUD_LIMIT}
+                    </span>
+                  </Show>
+                  {/* 状态栏右端的存活指示:zen 主题渲染为 TUI 彗星扫尾(亮块领飞 +
+                      渐暗尾块来回跑),其他主题 display:none。turn 运行中才挂载。 */}
+                  <Show when={props.running()}>
+                    <span class="composer-comet" aria-hidden="true">
+                      <span class="composer-comet-run">
+                        <span class="composer-comet-face"><i /><i /><i /></span>
+                      </span>
                     </span>
                   </Show>
                 </>

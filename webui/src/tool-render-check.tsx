@@ -24,6 +24,9 @@ const [steps, setSteps] = createSignal<ToolStep[]>([
     { title: "待评审的交互细节", status: "pending" },
     { title: "已放弃的旧方案", status: "cancelled" },
   ] }), output: { text: "{\"receipt\":\"internal\"}" } },
+  // 文本范式（本版本）：write 入参是 `list` 纯文本块（apply_patch 形态）。
+  { kind: "tool", id: "todo-text", seq: 10, name: "todo_write", status: "success", argsJson: JSON.stringify({ list: "- [x] 文本范式落地 | | 契约测试绿\n- [~] 前端卡片适配\n- [ ] 收尾验证\n[-] 已放弃的 uuid 方案" }), output: { text: "{\"receipt\":\"internal\"}" } },
+  { kind: "tool", id: "todo-title", seq: 11, name: "todo_update", status: "success", argsJson: JSON.stringify({ title: "前端卡片适配", status: "completed", evidence: "tsc 通过" }), output: { text: "{\"receipt\":\"internal\"}" } },
   { kind: "tool", id: "skill", seq: 8, name: "skill_activate", status: "success", argsJson: JSON.stringify({ name: "mc-source-driven-mod" }), output: { text: source } },
   { kind: "tool", id: "skill-read", seq: 9, name: "read", status: "success", argsJson: JSON.stringify({ path: "C:/Users/test/.agents/skills/example/SKILL.md" }), output: { text: source } },
 ]);

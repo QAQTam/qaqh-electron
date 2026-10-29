@@ -18,13 +18,16 @@ import { createEffect, createMemo, createSignal, For, onSettled, Show, type Comp
 import IconRotate from "~icons/lucide/rotate-ccw";
 import { STR } from "../lib/strings";
 import {
+  gpuRestartPending,
   performanceMode,
+  refreshShellGpuPref,
   setPerformanceMode,
   sessionMaterial,
   setSessionMaterial,
   type PerformanceMode,
   type SessionMaterial,
 } from "../lib/visual";
+import { desktopHost } from "../lib/desktop-host";
 import { applyTheme, applyThemePreset, storedTheme, themePreset, THEME_PRESET_OPTIONS, type ThemePreset } from "../lib/theme";
 import {
   FONT_PRESETS,
@@ -139,6 +142,8 @@ export const SettingsView: Component = () => {
   onSettled(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     page?.querySelector<HTMLElement>("#settings-title")?.focus();
+    // 壳侧 GPU 偏好现状(本次启动 vs 下次启动):撑起「待重启」提示。
+    void refreshShellGpuPref();
     return () => previousFocus?.focus();
   });
 
@@ -155,6 +160,93 @@ export const SettingsView: Component = () => {
     masked === MASK ? "已配置(留空保持不变)" : "未配置";
 
   const bypassPending = createMemo(() => requireBypass() && needsBypassConfirm(patch()));
+
+  /* ── 导航栏拖宽:平滑优先的实现约束 ──
+   * 拖拽期不走 Solid 信号(pointermove 每帧直接写 .settings-body 上的
+   * `--settings-nav-w` 变量),每帧只有一次 grid 重排、零组件重渲染;
+   * rAF 合帧防高频 pointermove 排队。落手(pointerup)才写 localStorage。
+   * 双击重置;聚焦后左右方向键微调(Shift 加速)。 */
+  const NAV_W_KEY = "settings.navWidth";
+  const NAV_W_MIN = 140;
+  const NAV_W_MAX = 320;
+  let bodyEl: HTMLElement | undefined;
+  let resizerEl: HTMLElement | undefined;
+
+  /** 读当前生效的首列宽(变体默认值 168/220 都由 computed style 解出)。 */
+  const currentNavWidth = (): number => {
+    if (!bodyEl) return 168;
+    return parseFloat(getComputedStyle(bodyEl).gridTemplateColumns) || 168;
+  };
+
+  const applyNavWidth = (px: number): void => {
+    bodyEl?.style.setProperty("--settings-nav-w", `${Math.round(px)}px`);
+  };
+
+  const commitNavWidth = (px: number | null): void => {
+    if (px == null) {
+      bodyEl?.style.removeProperty("--settings-nav-w");
+      window.localStorage.removeItem(NAV_W_KEY);
+      resizerEl?.removeAttribute("aria-valuenow");
+      return;
+    }
+    const clamped = Math.round(Math.min(NAV_W_MAX, Math.max(NAV_W_MIN, px)));
+    applyNavWidth(clamped);
+    window.localStorage.setItem(NAV_W_KEY, String(clamped));
+    resizerEl?.setAttribute("aria-valuenow", String(clamped));
+  };
+
+  onSettled(() => {
+    const stored = Number(window.localStorage.getItem(NAV_W_KEY));
+    if (Number.isFinite(stored) && stored >= NAV_W_MIN && stored <= NAV_W_MAX) applyNavWidth(stored);
+    // 拖拽中断(组件卸载/路由切走)也要摘掉 body 级的拖拽态。
+    return () => document.body.classList.remove("settings-resizing");
+  });
+
+  const startNavResize = (event: PointerEvent): void => {
+    if (!bodyEl) return;
+    event.preventDefault();
+    const handle = event.currentTarget as HTMLElement;
+    handle.setPointerCapture(event.pointerId);
+    document.body.classList.add("settings-resizing");
+    handle.classList.add("is-active");
+    // 起点一次性测量:首列左缘 = body 左缘 + 左内边距;move 里只做一次减法。
+    const bodyRect = bodyEl.getBoundingClientRect();
+    const padLeft = parseFloat(getComputedStyle(bodyEl).paddingLeft) || 0;
+    const origin = bodyRect.left + padLeft;
+    let pending = NaN;
+    let raf = 0;
+    const flush = (): void => {
+      raf = 0;
+      applyNavWidth(pending);
+    };
+    const onMove = (e: PointerEvent): void => {
+      pending = e.clientX - origin;
+      if (raf === 0) raf = requestAnimationFrame(flush);
+    };
+    const end = (): void => {
+      if (raf !== 0) cancelAnimationFrame(raf);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      document.body.classList.remove("settings-resizing");
+      handle.classList.remove("is-active");
+      // 没动过(pending 为 NaN)不提交,避免单击误重置。
+      if (!Number.isNaN(pending)) commitNavWidth(pending);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  };
+
+  const nudgeNavWidth = (delta: number): void => {
+    commitNavWidth(currentNavWidth() + delta);
+  };
+
+  const onResizerKeyDown = (event: KeyboardEvent): void => {
+    const step = event.shiftKey ? 24 : 8;
+    if (event.key === "ArrowLeft") { event.preventDefault(); nudgeNavWidth(-step); }
+    else if (event.key === "ArrowRight") { event.preventDefault(); nudgeNavWidth(step); }
+  };
 
   /**
    * 切换式单页:点谁渲染谁。没有滚动联动/锚点跳转,不存在「高亮与视口分家」
@@ -194,7 +286,7 @@ export const SettingsView: Component = () => {
         <Show when={draft()}>
           {(config) => (
             <>
-              <div class="settings-body">
+              <div class="settings-body" ref={(el) => { bodyEl = el; }}>
                 <nav class="settings-nav" aria-label="设置分区">
                   <For each={[...NAV_GROUP_ORDER]}>
                     {(group) => (
@@ -218,6 +310,18 @@ export const SettingsView: Component = () => {
                   </For>
                 </nav>
                 <div class="settings-content">
+                  {/* 导航栏拖宽手柄:盖在列间隙上;拖动/双击重置/方向键微调。 */}
+                  <div
+                    class="settings-nav-resizer"
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="调整导航栏宽度(左右拖动,双击重置)"
+                    tabindex={0}
+                    ref={(el) => { resizerEl = el; }}
+                    onPointerDown={startNavResize}
+                    onDblClick={() => commitNavWidth(null)}
+                    onKeyDown={onResizerKeyDown}
+                  />
                   <Show when={reloadPending()}>
                     <div class="settings-confirm" role="alert">
                       <span>重新读取会放弃 {changedCount()} 项未保存的改动。</span>
@@ -366,7 +470,7 @@ export const SettingsView: Component = () => {
                         ariaLabel="会话标签材质"
                       />
                     </Field>
-                    <Field label="渲染性能模式" hint="针对受限硬件（双核CPU、弱核显）优化，自动/强制停用毛玻璃模糊与耗性能动画，避免光栅化打满CPU。">
+                    <Field label="渲染性能模式" hint="针对受限硬件（双核CPU、弱核显）优化，自动/强制停用毛玻璃模糊与耗性能动画，避免光栅化打满CPU。Performance/auto-低配 同时禁用壳 GPU 加速（省内存）；Quality 启用。更改需重启壳生效。">
                       <Select
                         value={performanceMode()}
                         onChange={(value) => setPerformanceMode(value as PerformanceMode)}
@@ -378,6 +482,17 @@ export const SettingsView: Component = () => {
                         ariaLabel="渲染性能模式"
                       />
                     </Field>
+                    <Show when={gpuRestartPending()}>
+                      <Field label="GPU 偏好待生效" hint="渲染性能模式折算的 GPU 加速偏好已保存，与本次启动的实际状态不一致。重启桌面壳后生效；daemon 与后台任务不受影响。">
+                        <button
+                          type="button"
+                          class="button-secondary"
+                          onClick={() => { void desktopHost()?.relaunch?.(); }}
+                        >
+                          重启壳并生效
+                        </button>
+                      </Field>
+                    </Show>
 
                     <Field label="全局字号缩放" hint="等比缩放界面中所有字阶（90% ~ 120%），纯前端即时生效。">
                       <Select

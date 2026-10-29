@@ -5,5 +5,9 @@ renderer/
 resources/bin/
 .tmp/
 .qaqh/
+.qaqh-bundles/
+crates/qaqh-update/target/
 *.log
 .DS_Store
+resources/baseline/
+.qaqh-baseline/

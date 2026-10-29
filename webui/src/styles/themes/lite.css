@@ -186,8 +186,8 @@ html.theme-lite .text-shimmer-glow {
 /* ── 纯净实底表面 (Solid Structural Surfaces) ───────────────────────── */
 
 /* 1. 外壳与导航栏采用实体底色 */
-:root[data-theme-preset="lite"] :is(#top, .global-nav, .message-sidebar, .session-capsule, .session-header, .settings-page),
-html.theme-lite :is(#top, .global-nav, .message-sidebar, .session-capsule, .session-header, .settings-page) {
+:root[data-theme-preset="lite"] :is(#top, .app-sidebar, .message-sidebar, .session-capsule, .session-header, .settings-page),
+html.theme-lite :is(#top, .app-sidebar, .message-sidebar, .session-capsule, .session-header, .settings-page) {
   background: var(--bg) !important;
   border-color: var(--border) !important;
   box-shadow: none !important;

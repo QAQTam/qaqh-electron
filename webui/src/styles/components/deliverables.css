@@ -198,15 +198,17 @@
   }
 
   /* 2. 审查抽屉工作台 (DiffReviewDrawer) */
+  /* 背板**不用** backdrop-filter:壳为省内存禁了 3D/GPU(主进程 --disable-3d-apis),
+     动画走软件光栅化——blur(4px) 每帧都要对整窗做 CPU 高斯模糊,实测 320ms 只画
+     6 帧(p95 100ms),滑入等于闪现。纯色 tint 无逐帧重算,动画才能满帧。 */
   .diff-drawer-backdrop {
     position: fixed;
     inset: 0;
-    background: rgb(0 0 0 / 45%);
-    backdrop-filter: blur(4px);
+    background: rgb(0 0 0 / 55%);
     z-index: 1000;
     display: flex;
     justify-content: flex-end;
-    animation: drawerFadeIn 180ms var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
+    animation: drawerFadeIn var(--dur-drawer, 240ms) var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
   .diff-drawer-panel {
@@ -217,7 +219,7 @@
     box-shadow: -8px 0 32px rgb(0 0 0 / 22%);
     display: flex;
     flex-direction: column;
-    animation: drawerSlideIn 220ms var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
+    animation: drawerSlideIn var(--dur-drawer, 240ms) var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
     overflow: hidden;
   }
 

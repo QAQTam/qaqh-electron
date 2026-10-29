@@ -82,9 +82,9 @@
   .composer-context-compact:disabled { opacity: .55; cursor: not-allowed; }
   .composer-context-compact svg { width: 14px; height: 14px; }
 
-  /* ── 工作区集合右栏:占会话列第 2 列(真实列宽,不覆盖正文) ─────────────── */
+  /* ── 任务右栏(spec §6.3):#app 的第三列(真实列宽,不覆盖正文) ──────────── */
   .workspace-panel {
-    grid-column: 2; grid-row: 1 / -1;
+    grid-column: 3; grid-row: 2;
     justify-self: end; align-self: stretch;
     display: flex; flex-direction: column;
     min-width: 0;
@@ -92,6 +92,26 @@
     border-left: 1px solid var(--border);
     background: var(--surface);
   }
+  /* 抽屉态(阶段5,cols<3):覆盖 Main,固定 320;App 控制挂载与开关。 */
+  /* 抽屉态(motion kit):transform 滑入/滑出;display 走 allow-discrete,
+     滑出画面后才 display:none(退出动画播得出来);开则从 @starting-style
+     的出画位置滑进来。常驻挂载由 App 控(不再靠 Show 硬切)。 */
+  .workspace-panel.drawer {
+    position: fixed; top: var(--topbar-height, 48px); right: 0; bottom: 0; z-index: 70;
+    grid-column: unset; grid-row: unset; justify-self: unset; align-self: unset;
+    width: var(--workspace-panel-width, 320px);
+    box-shadow: 0 12px 32px color-mix(in srgb, #000 25%, transparent);
+    transform: translateX(102%);
+    transition: transform var(--dur-drawer) var(--ease),
+                display var(--dur-drawer) allow-discrete;
+  }
+  .workspace-panel.drawer.open { transform: none; }
+  @starting-style {
+    .workspace-panel.drawer.open { transform: translateX(102%); }
+  }
+  .workspace-panel.drawer .workspace-panel-surface { width: 100%; }
+  #app.cols-2 .workspace-panel:not(.drawer),
+  #app.cols-1 .workspace-panel:not(.drawer) { display: none; }
   .workspace-panel-surface {
     flex: 1; min-height: 0;
     width: var(--workspace-panel-width);
@@ -105,7 +125,12 @@
   .workspace-panel.collapsed .workspace-panel-surface {
     width: var(--workspace-panel-collapsed-width, 40px);
   }
-  .workspace-panel.collapsed .workspace-panel-head > span { display: none; }
+  /* 标签退场(motion kit):收起时 max-width→0 + opacity→0,与侧栏导航标签同一家族。 */
+  .workspace-panel-head > span:not(.workspace-panel-chevron) {
+    min-width: 0; max-width: 200px; overflow: hidden;
+    transition: max-width var(--dur-layout) var(--ease), opacity var(--dur-fast) var(--ease);
+  }
+  .workspace-panel.collapsed .workspace-panel-head > span:not(.workspace-panel-chevron) { max-width: 0; opacity: 0; }
   html.desktop .workspace-panel-surface {
     background: var(--surface);
     -webkit-backdrop-filter: none;
@@ -132,9 +157,12 @@
     font-variant-numeric: tabular-nums;
   }
   .workspace-panel-chevron {
-    margin-left: auto;
+    margin-left: auto; flex: none;
     display: inline-grid; place-items: center;
+    width: 12px; overflow: hidden;
+    transition: width var(--dur-layout) var(--ease), opacity var(--dur-fast) var(--ease);
   }
+  .workspace-panel.collapsed .workspace-panel-chevron { width: 0; margin-left: 0; opacity: 0; }
   .workspace-panel-chevron svg {
     width: 12px; height: 12px;
     transition: transform var(--dur-layout) var(--ease);

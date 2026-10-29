@@ -176,16 +176,16 @@ export const ContextMenuHost: Component = () => {
         const next = index < 0 ? (step > 0 ? 0 : buttons.length - 1) : (index + step + buttons.length) % buttons.length;
         buttons[next]?.focus({ preventScroll: true });
       };
-      // 任何滚动(消息流、侧栏、设置页)都让菜单失锚,直接关掉比留在原地更不误导。
+      // 滚动**不**关闭菜单:流式输出的"跟随尾部"是程序化滚动,会把用户在旧消息上
+      // 打开的菜单连续刷掉(BUG-2026-10-28)。菜单定在视口坐标、不随内容滚动重定位,
+      // 与原生菜单一致;真正让菜单位置失真的是窗口尺寸变化,那仍由 resize 关闭。
       document.addEventListener("pointerdown", onPointerDown, true);
       document.addEventListener("keydown", onKeyDown, true);
-      window.addEventListener("scroll", dismiss, true);
       window.addEventListener("resize", dismiss);
       window.addEventListener("blur", dismiss);
       return () => {
         document.removeEventListener("pointerdown", onPointerDown, true);
         document.removeEventListener("keydown", onKeyDown, true);
-        window.removeEventListener("scroll", dismiss, true);
         window.removeEventListener("resize", dismiss);
         window.removeEventListener("blur", dismiss);
       };

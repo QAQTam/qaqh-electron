@@ -75,6 +75,9 @@
 
     /* 全局字号缩放基数（默认 100%，由纯前端 typography 模块控制） */
     --font-scale: 1;
+    /* 壳布局 token(spec §3.3):侧栏 288px = Nav 2×2 + 会话列表;TopBar 48px。 */
+    --sidebar-width: 288px;
+    --topbar-height: 48px;
     --fs-xs: calc(14px * var(--font-scale));
     --fs-sm: calc(15px * var(--font-scale));
     --fs-md: calc(16px * var(--font-scale));
@@ -96,6 +99,9 @@
     --dur-out: 140ms;
     --dur-enter: 160ms;
     --dur-layout: 220ms;
+    /* 抽屉滑入/滑出(侧栏/任务面板):比布局过渡略长一点,给「覆盖层滑过正文」
+       的动作留出可读轨迹;退出也走同一时长,不用再抢 --dur-out。 */
+    --dur-drawer: 240ms;
     --ease: cubic-bezier(.2, 0, 0, 1);
 
     --tool-shimmer-highlight: color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, 0.6));

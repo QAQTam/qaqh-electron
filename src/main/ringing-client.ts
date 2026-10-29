@@ -152,7 +152,17 @@ export class RingingClient {
         if (isCurrent()) this.sendReconnectScheduled(seed, attempt, delayMs);
       },
       onTerminated: (info) => {
-        if (isCurrent()) this.reportError(`Timeline stream terminated (${info.code}) for ${seed}: ${info.message}`);
+        if (!isCurrent()) return;
+        // journal_gap 是 daemon 的快照重基线信号（daemon 重启后旧 epoch
+        // cursor 不再被 journal 覆盖时必发，设计内恢复路径；SDK 会丢弃
+        // cursor 重连续传）。内容无损，不升格为用户可见错误——否则渲染层
+        // 会把它当故障横幅展示，且 timeline 流状态回不到 open，输入区
+        // 被 blockedReason 判成 offline 永久禁发。
+        if (info.code === "journal_gap") {
+          console.warn(`[ringing] Timeline re-baselining after journal_gap for ${seed}: ${info.message}`);
+          return;
+        }
+        this.reportError(`Timeline stream terminated (${info.code}) for ${seed}: ${info.message}`);
       },
       onError: (error) => { if (isCurrent()) this.reportError(`Timeline watch error for ${seed}`, error); },
     });

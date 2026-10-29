@@ -97,6 +97,8 @@ export const STR = {
   pendingPlan: "计划评审",
   noSession: "没有可用会话。",
   bootFailed: "连接失败。",
+  /** 切换会话/重新激活时,权威快照尚未落地的过渡态(spec:后台标签卸载转录后重建)。 */
+  syncingMessages: "消息同步中…",
   emptyMessages: "新建对话即可开始。已写的草稿会保留到新对话。",
   noSessionTitle: "暂无会话",
   emptyComposer: "先新建对话，即可发送消息",
@@ -174,7 +176,7 @@ export const STR = {
   hostError: "桌面壳与 daemon 通信异常",
   todoTitle: "待办",
   todoEmpty: "暂无待办",
-  workspacePanelTitle: "工作区",
+  workspacePanelTitle: "任务",
   todoDone: (done: number, total: number) => `${done}/${total}`,
   settings: "设置",
   close: "关闭",

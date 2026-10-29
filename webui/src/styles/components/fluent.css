@@ -52,10 +52,10 @@
   }
   html[data-platform="windows"] ::-webkit-scrollbar-track { background: transparent; }
 
-  /* ── 窗口骨架：48px 命令区 + 48px 导航栏，去掉整宽分隔线 ─────────── */
+  /* ── 窗口骨架：48px 命令区 + 统一 288px 壳侧栏(Nav 2×2 + 会话)，去掉整宽分隔线 ── */
   html[data-platform="windows"] #app {
     --topbar-height: 48px;
-    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
     grid-template-rows: var(--topbar-height) minmax(0, 1fr);
   }
   html[data-platform="windows"] #top {
@@ -237,17 +237,24 @@
   html[data-platform="windows"] .settings-body {
     width: min(1120px, 100%);
     padding: 16px 24px 24px;
-    grid-template-columns: 220px minmax(0, 1fr);
+    grid-template-columns: var(--settings-nav-w, 220px) minmax(0, 1fr);
     gap: 0 24px;
   }
   html[data-platform="windows"] .settings-nav { gap: 2px; }
   html[data-platform="windows"] .settings-nav-group {
+    display: flex; align-items: center; gap: 8px;
     margin: 12px 0 4px;
     padding: 0 10px;
     font-size: 12px;
     line-height: 16px;
     font-weight: 600;
-    letter-spacing: 0;
+    letter-spacing: 0.12em;
+    color: color-mix(in srgb, var(--muted) 65%, transparent);
+    user-select: none;
+  }
+  html[data-platform="windows"] .settings-nav-group::after {
+    content: ""; flex: 1; height: 1px;
+    background: color-mix(in srgb, var(--border) 80%, transparent);
   }
   html[data-platform="windows"] .settings-nav-group:first-child { margin-top: 0; }
   html[data-platform="windows"] .settings-nav-item {
@@ -276,11 +283,14 @@
   }
 
   html[data-platform="windows"] .settings-content {
+    position: relative;
     max-width: 780px;
     display: grid;
     gap: 8px;
     align-content: start;
   }
+  /* Windows 变体手柄:24px 列间隙(居中在 -16px),body 上内边距 16px。 */
+  html[data-platform="windows"] .settings-nav-resizer { left: -16px; top: -16px; }
   html[data-platform="windows"] .settings-section {
     padding: 16px 20px;
     border: 1px solid var(--stroke-control);
@@ -763,6 +773,7 @@
     }
     html[data-platform="windows"] .settings-nav::-webkit-scrollbar { display: none; }
     html[data-platform="windows"] .settings-nav-item { white-space: nowrap; }
+    html[data-platform="windows"] .settings-nav-resizer { display: none; }
     html[data-platform="windows"] .settings-content { max-width: none; }
     html[data-platform="windows"] .settings-section { padding: 14px 16px; }
     html[data-platform="windows"] .settings-head { padding: 0 16px; }

@@ -105,28 +105,27 @@ html.theme-liquid-glass[data-theme="dark"] .tab.active {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), var(--liquid-refract-dark);
 }
 
-/* 3. 左侧导航栏: 流体微浮动 Dock 质感 */
-:root[data-theme-preset="liquid-glass"] .global-nav,
-html.theme-liquid-glass .global-nav {
+/* 3. 壳侧栏: 流体微浮动 Dock 质感 */
+:root[data-theme-preset="liquid-glass"] .app-sidebar,
+html.theme-liquid-glass .app-sidebar {
   background: color-mix(in srgb, var(--surface) 48%, transparent);
   border-right-color: color-mix(in srgb, var(--border) 50%, transparent);
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.15);
 }
 
-:root[data-theme-preset="liquid-glass"][data-theme="dark"] .global-nav,
-html.theme-liquid-glass[data-theme="dark"] .global-nav {
+:root[data-theme-preset="liquid-glass"][data-theme="dark"] .app-sidebar,
+html.theme-liquid-glass[data-theme="dark"] .app-sidebar {
   background: color-mix(in srgb, var(--surface) 60%, transparent);
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.06);
 }
 
-:root[data-theme-preset="liquid-glass"] .global-nav-item,
-html.theme-liquid-glass .global-nav-item {
+:root[data-theme-preset="liquid-glass"] .sidebar-nav-item,
+html.theme-liquid-glass .sidebar-nav-item {
   border-radius: 12px;
-  margin-inline: 4px;
 }
 
-:root[data-theme-preset="liquid-glass"] .global-nav-item.active,
-html.theme-liquid-glass .global-nav-item.active {
+:root[data-theme-preset="liquid-glass"] .sidebar-nav-item.active,
+html.theme-liquid-glass .sidebar-nav-item.active {
   background: var(--accent-soft);
   color: var(--accent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);

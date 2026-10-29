@@ -17,13 +17,17 @@ import { WorkspacePanel } from "./workspace/WorkspacePanel";
 import { Composer } from "./composer/Composer";
 import { ApprovalStack } from "./approval/ApprovalCards";
 import { DiffReviewDrawer } from "./diff/DiffReviewDrawer";
-import { GlobalNav } from "./app/GlobalNav";
-import { MessageSidebar } from "./app/MessageSidebar";
+import { Sidebar } from "./app/Sidebar";
+import { observeShellCols } from "./lib/shell-cols";
+import { buildContextMenu, ContextMenuHost, openContextMenu } from "./ui/contextMenu";
 import IconArrowLeft from "~icons/lucide/arrow-left";
+import IconMenu from "~icons/lucide/menu";
+import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import { ToolsPage } from "./app/ToolsPage";
 import { OAuthPage } from "./oauth/OAuthPage";
 import { SettingsView } from "./settings/SettingsView";
 import { simMemorySnapshot } from "./lib/memwatch-sim";
+import { shouldCollapseSidebar } from "./lib/sidebar-resize";
 import { openDevConsole } from "./lib/devmode";
 import { reload as reloadSettings } from "./settings/store";
 // Session capsule is reserved for Goal, matching the production shell.
@@ -48,6 +52,19 @@ const pendingPreview = previewParams.get("pending") === "1";
 const [currentView, setCurrentView] = createSignal<"messages" | "tools" | "oauth" | "settings">(
   previewView === "settings" || previewView === "tools" || previewView === "oauth" ? previewView : "messages",
 );
+/** 与 App 同位:汉堡收展侧栏(48px 图标栏),夹具不做 localStorage 记忆。 */
+const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
+/* 拖拽调宽(与 App 同位,无记忆):松手提交,< 阈值等效汉堡收回。 */
+const [fixtureSidebarWidth, setFixtureSidebarWidth] = createSignal<number | null>(null);
+const commitFixtureSidebarWidth = (width: number | null): void => {
+  setFixtureSidebarWidth(width);
+  if (width == null) setSidebarCollapsed(false);
+  else if (shouldCollapseSidebar(width)) setSidebarCollapsed(true);
+};
+/** 阶段5:列态由 #app 实宽 ResizeObserver 驱动;抽屉可由 URL 参数预设(截图场景用)。 */
+const [fixtureCols, setFixtureCols] = createSignal<1 | 2 | 3>(3);
+const sidebarDrawerPreview = previewParams.get("sidebarDrawer") === "1";
+const railDrawerPreview = previewParams.get("railDrawer") === "1";
 const TOTAL = isVisualPreview ? 4 : 200;
 /** 假页水位;实时条目序号从 liveSeq 往后走。 */
 let watermark = 2000;
@@ -1501,26 +1518,72 @@ const navigatePreview = (next: "messages" | "tools" | "oauth" | "settings"): voi
   if (next === "settings") void reloadSettings();
   if (next === "messages" && previewView === "settings") void store.resnapshot();
 };
+// 与 App 同位:全局右键菜单(编辑类动作)。visual-capture 的菜单回归场景依赖这条监听。
+window.addEventListener("contextmenu", (event: MouseEvent) => {
+  const menu = buildContextMenu(event);
+  if (menu == null) return;
+  event.preventDefault();
+  openContextMenu(menu);
+});
+// 与 App 同位:壳层 ⋯ 菜单(spec §5.5 阶段1)。夹具里动作是占位的,只验菜单壳。
+const openShellMenuPreview = (anchor: HTMLElement): void => {
+  const rect = anchor.getBoundingClientRect();
+  openContextMenu({
+    x: rect.right - 220,
+    y: rect.bottom + 6,
+    items: [
+      { kind: "action", label: "选择新会话默认模型…", hint: "Ctrl+Shift+M", onSelect: () => {} },
+      { kind: "action", label: "更改当前会话模型…", onSelect: () => {} },
+      { kind: "separator" },
+      { kind: "action", label: "设置…", hint: "Ctrl+,", onSelect: () => navigatePreview("settings") },
+      { kind: "action", label: "关于 QAQ-Harness", onSelect: () => navigatePreview("settings") },
+      { kind: "separator" },
+      { kind: "action", label: "退出…", hint: "Ctrl+Q", onSelect: () => {} },
+    ],
+  });
+};
 // 复刻 App 的标题栏、全局导航、顶部 session tabs 与消息／工具内容区。
 render(
   () => (
-    <div id="app">
-      <header id="top">
-        <Show when={currentView() !== "messages"}>
-          <button type="button" class="titlebar-back" aria-label="返回消息" title="返回消息" onClick={() => navigatePreview("messages")}>
-            <IconArrowLeft />
+    <div id="app" class={{ "sidebar-collapsed": sidebarCollapsed() }}
+      style={{ "--sidebar-width": fixtureCols() > 1 && fixtureSidebarWidth() != null ? `${fixtureSidebarWidth()}px` : undefined }}>
+      <header id="top" role="banner">
+        <div class="topbar-left">
+          <button type="button" class="titlebar-menu" aria-label={sidebarCollapsed() ? "展开侧栏" : "收起侧栏"} aria-expanded={sidebarCollapsed() ? "false" : "true"} aria-controls="app-sidebar" title={sidebarCollapsed() ? "展开侧栏" : "收起侧栏"} onClick={() => setSidebarCollapsed((v) => !v)}>
+            <IconMenu />
           </button>
-        </Show>
-        <span class="titlebar-brand">QAQH</span>
-        <span class="titlebar-session-title">{currentView() === "settings" ? "设置" : currentView() === "tools" ? "工具" : currentView() === "oauth" ? "接入" : "消息"}</span>
+          <Show when={currentView() !== "messages"}>
+            <button type="button" class="titlebar-back" aria-label="返回消息" title="返回消息" onClick={() => navigatePreview("messages")}>
+              <IconArrowLeft />
+            </button>
+          </Show>
+          <span class="titlebar-brand">QAQH</span>
+        </div>
+        <div class="topbar-center">
+          <span class="titlebar-session-title">{currentView() === "settings" ? "设置" : currentView() === "tools" ? "工具" : currentView() === "oauth" ? "接入" : "新会话"}</span>
+        </div>
+        <div class="topbar-right">
+          <button type="button" class="titlebar-menu titlebar-more" aria-label="更多应用菜单" aria-haspopup="menu" title="更多应用菜单" onClick={(e) => openShellMenuPreview(e.currentTarget)}>
+            <IconMoreHorizontal />
+          </button>
+        </div>
       </header>
-      <GlobalNav active={currentView()} onNavigate={navigatePreview} />
-      <div class={currentView() === "settings" ? "workspace workspace-settings" : currentView() === "messages" ? "workspace workspace-messages" : "workspace"}>
+      <Sidebar
+        section={currentView()}
+        onNavigate={navigatePreview}
+        collapsed={sidebarCollapsed()}
+        drawer={fixtureCols() === 1}
+        drawerOpen={fixtureCols() === 1 && sidebarDrawerPreview}
+        width={fixtureSidebarWidth()}
+        onWidthCommit={commitFixtureSidebarWidth}
+        sessions={previewSessions}
+        workspaces={previewWorkspaces}
+        activeSeed={previewActiveSeed()}
+        onSelect={setPreviewActiveSeed}
+      />
+      <div class={currentView() === "settings" ? "workspace workspace-settings" : "workspace"}>
         <Show when={currentView() === "settings"} fallback={
           <>
-        <Show when={currentView() === "messages"}>
-          <MessageSidebar sessions={previewSessions} workspaces={previewWorkspaces} activeSeed={previewActiveSeed()} onSelect={setPreviewActiveSeed} />
-        </Show>
         <div class="workspace-content">
         {/* Future Goal capsule; no session tabs in the current shell.
         <div class="session-tabs-region">
@@ -1562,7 +1625,6 @@ render(
                 sessionWorkspace={() => "qaqh"}
                 lanActive={() => false}
               />
-              <WorkspacePanel store={previewActiveTab().store} />
             </div>
           </Show>
         </main>
@@ -1572,10 +1634,20 @@ render(
           <SettingsView />
         </Show>
       </div>
+      {/* 与 App 同位(spec §6.3):任务右栏 ≥1280 为第三列,<1280 抽屉按参数预设。 */}
+      <Show when={currentView() === "messages"}>
+        <WorkspacePanel store={previewActiveTab().store} drawer={fixtureCols() < 3} drawerOpen={railDrawerPreview} />
+      </Show>
+      <ContextMenuHost />
     </div>
   ),
   document.getElementById("root") as HTMLElement,
 );
+
+{
+  const appEl = document.getElementById("app");
+  if (appEl != null) observeShellCols(appEl, { onChange: (cols) => setFixtureCols(cols) });
+}
 
 if (document.getElementById("messages") != null) churnReset();
 void (async () => {

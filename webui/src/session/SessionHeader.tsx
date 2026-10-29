@@ -115,7 +115,8 @@ export const SessionHeader: Component<SessionHeaderProps> = (props) => {
   });
 
   return (
-    <header class="session-header" role="banner">
+    /* 阶段4:入驻 TopBar 中格,banner 语义归 #top,这里降级为普通块。 */
+    <div class="session-header">
       <div class="session-header-lead" ref={menuContainerRef}>
         <span
           class="session-header-folder-icon"
@@ -193,6 +194,6 @@ export const SessionHeader: Component<SessionHeaderProps> = (props) => {
           </Show>
         </div>
       </div>
-    </header>
+    </div>
   );
 };

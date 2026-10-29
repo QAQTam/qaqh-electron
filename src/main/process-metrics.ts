@@ -1,5 +1,8 @@
 const kinds: Record<string, string> = {
-  Tab: "renderer", Utility: "utility", GPU: "gpu", Zygote: "other",
+  Browser: "browser", Tab: "renderer", Utility: "utility", GPU: "gpu",
+  // Linux 独有:zygote 与子进程共享 fork 出来的页,单独成 kind 让合计端能剔除
+  // (计入会把 renderer 的私有页重复算一遍)。
+  Zygote: "zygote",
   "Sandbox helper": "sandbox_helper", "Pepper Plugin": "ppapi_plugin",
   "Pepper Plugin Broker": "ppapi_broker", Unknown: "unknown",
 };

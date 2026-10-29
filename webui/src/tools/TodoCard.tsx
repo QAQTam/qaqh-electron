@@ -40,16 +40,71 @@ function cardItem(raw: unknown): TodoCardItem | null {
   };
 }
 
+/** 解析 todo_write 的纯文本清单（与后端 parse_todo_text 同构：title 即身份）。
+ * 行格式 `- [ ]|~|x|- title [| description [| evidence]]`，弹头 `- ` 可省略。
+ * 任一行非法 → 整卡放弃（null，回退普通工具行）——与后端"整次覆写被拒"对齐。
+ * 标记显式映射：normalizeStatus 对未知值兜底 pending，会把坏标记伪装成待办。 */
+function parseListText(text: string): TodoCardItem[] | null {
+  const items: TodoCardItem[] = [];
+  for (const raw of text.split("\n")) {
+    let body = raw.trim();
+    if (!body) continue;
+    // 弹头 `- ` 仅在**后随空白**时剥离——`[-]` 取消标记自身以 `-` 开头。
+    if (body.startsWith("- ")) body = body.slice(2).trimStart();
+    if (!body.startsWith("[")) return null;
+    const close = body.indexOf("]");
+    if (close < 0) return null;
+    const marker = body.slice(1, close);
+    const rest = body.slice(close + 1).trim();
+    const status: TodoStatus | null =
+      marker === " " ? "pending" :
+      marker === "~" ? "in_progress" :
+      marker === "x" || marker === "X" ? "completed" :
+      marker === "-" ? "cancelled" : null;
+    if (status == null) return null;
+    if (!rest) return null;
+    const fields = rest.split("|");
+    if (fields.length > 3) return null;
+    const title = (fields[0] ?? "").trim();
+    if (!title) return null;
+    const description = (fields[1] ?? "").trim();
+    const evidence = (fields[2] ?? "").trim();
+    items.push({
+      title,
+      status,
+      evidence: evidence || undefined,
+      description: description || undefined,
+    });
+  }
+  return items;
+}
+
 /** null = 不适合卡片(非成功终态 / 无可展示条目),回退普通工具行。 */
 export function todoCardData(step: ToolStep): TodoCardData | null {
   if (toolPresentation(step) !== "todo" || step.status !== "success" || step.name === "todo_list") return null;
   const args = parseJsonish(step.argsJson);
   if (args == null || typeof args !== "object") return null;
   const record = args as Record<string, unknown>;
+  // 文本范式（本版本）：write 的入参是 `list` 纯文本块（apply_patch 形态）。
+  if (typeof record.list === "string") {
+    const items = parseListText(record.list);
+    if (items == null) return null;
+    return items.length > 0 ? { kind: "list", items } : null;
+  }
+  // legacy 回放：旧 transcript 的 items/todos 数组形态（v4 全量覆写）。
   const rawItems = Array.isArray(record.items) ? record.items : Array.isArray(record.todos) ? record.todos : null;
   if (rawItems != null) {
     const items = rawItems.slice(0, MAX_CARD_ITEMS).map(cardItem).filter((item): item is TodoCardItem => item != null);
     return items.length > 0 ? { kind: "list", items } : null;
+  }
+  // update：新形态 {title, status, evidence?}——title 即身份；旧 {id, ...} 保留回放。
+  if (typeof record.title === "string" && record.title.trim()) {
+    return {
+      kind: "update",
+      id: record.title.trim(),
+      status: normalizeStatus(record.status),
+      evidence: typeof record.evidence === "string" && record.evidence ? record.evidence : undefined,
+    };
   }
   if (typeof record.id === "string" && record.id) {
     return { kind: "update", id: record.id, status: normalizeStatus(record.status), evidence: typeof record.evidence === "string" && record.evidence ? record.evidence : undefined };

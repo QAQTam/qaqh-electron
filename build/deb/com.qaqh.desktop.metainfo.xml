@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.qaqh.desktop</id>
+  <metadata_license>MIT OR Apache-2.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>QAQ-Harness</name>
+  <summary>Next-generation multi-agent coding harness with native Linux support</summary>
+  <description>
+    <p>QAQ-Harness is a next-generation multi-agent coding harness desktop client, packaged with native Linux support via Electron.</p>
+  </description>
+  <launchable type="desktop-id">com.qaqh.desktop.desktop</launchable>
+  <url type="homepage">https://github.com/qaqtam/qaqh-electron</url>
+  <content_rating type="oars-1.1" />
+</component>

@@ -5,8 +5,8 @@
   :root.theme-transition body,
   :root.theme-transition #top,
   :root.theme-transition .session-capsule,
-  :root.theme-transition .global-nav,
-  :root.theme-transition .global-nav-item,
+  :root.theme-transition .app-sidebar,
+  :root.theme-transition .sidebar-nav-item,
   :root.theme-transition .tools-empty,
   :root.theme-transition .tab,
   :root.theme-transition .session-menu,
@@ -21,19 +21,10 @@
   }
 
   @media (max-width: 720px) {
-    #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--topbar-height, 40px) minmax(0, 1fr) auto; }
-    #top { grid-column: 1; grid-row: 1; }
-    .global-nav {
-      grid-column: 1; grid-row: 3;
-      display: flex; align-items: stretch; justify-content: space-around; gap: 4px;
-      padding: 4px 8px calc(4px + env(safe-area-inset-bottom, 0px));
-      border-right: 0; border-top: 1px solid var(--border);
-    }
-    .global-nav-item { flex: 1; min-height: 52px; }
-    .workspace { grid-column: 1; grid-row: 2; }
-    .workspace.workspace-messages { grid-template-columns: 160px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-    .workspace-content { grid-column: 1; grid-template-rows: minmax(0, 1fr); }
-    .workspace-messages > .workspace-content { grid-column: 2; }
+    /* 窄窗(spec §4.6):列态已由 #app 实宽的 cols-N class 接管(阶段5),
+       这里只保留与列无关的小屏修正;抽屉化走 .drawer 规则。 */
+    .sidebar-nav { padding: 8px 8px 6px; }
+    .sidebar-nav-item span { font-size: 10px; }
     .connection-notice { right: 12px; bottom: calc(172px + env(safe-area-inset-bottom, 0px)); }
     .session-tabs-region { justify-content: center; padding: 2px 8px; }
     .session-tabs-region .session-capsule { width: fit-content; max-width: min(100%, 620px); }
@@ -51,6 +42,8 @@
     }
     .settings-nav::-webkit-scrollbar { display: none; }
     .settings-nav-item { white-space: nowrap; }
+    /* 窄屏导航收成顶部横条,拖宽手柄没有意义,隐藏。 */
+    .settings-nav-resizer { display: none; }
     .settings-section { scroll-margin-top: 68px; }
   }
 
@@ -124,9 +117,9 @@
     }
     *, *::before, *::after { box-shadow: none !important; text-shadow: none !important; }
     .session-capsule { background: Canvas; border-color: ButtonText; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
-    .global-nav { background: Canvas; border-color: ButtonText; }
-    .global-nav-item.active { forced-color-adjust: none; background: Highlight; color: HighlightText; }
-    .global-nav-item.active span { background: transparent; color: inherit; }
+    .app-sidebar { background: Canvas; border-color: ButtonText; }
+    .sidebar-nav-item.active { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+    .sidebar-nav-item.active span { background: transparent; color: inherit; }
     .tools-empty { background: Canvas; border-color: ButtonText; }
     .tab.active, .session-menu-row.active { background: Highlight; color: HighlightText; border-color: Highlight; }
     .session-menu, .settings-page, .toast, .connection-notice { background: Canvas; border-color: ButtonText; box-shadow: none; }
@@ -144,7 +137,7 @@
     .tab-dot.run, .tab-dot.warn::after { animation: none; }
     .tab:active:not(.active), .tab-add:active:not(:disabled), .tab-more:active,
     .button-primary:active:not(:disabled) { transform: none !important; }
-    .session-menu, .settings-page, .toast, .todo-row { animation: none !important; }
+    .session-menu, .settings-page, .toast, .todo-row, .todo-card { animation: none !important; }
     .text-shimmer-glow { animation: none !important; }
   }
 }

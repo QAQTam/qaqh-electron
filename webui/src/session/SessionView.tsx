@@ -10,10 +10,10 @@
  */
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack, type Component } from "solid-js";
 import IconArrowDown from "~icons/lucide/arrow-down";
+import IconLoader from "~icons/lucide/loader-circle";
 import { TurnView } from "../turn/TurnView";
 import { anchorScrollTop, clampPlaceholderHeight, EVICT_SCREENS, shouldLoadOlder, TURN_WINDOW } from "../session/pagination";
 import { STR } from "../lib/strings";
-import { SessionHeader } from "./SessionHeader";
 import type { SessionStore, CompactState } from "../session/store";
 import { gapHeight, type Slot, type Wait } from "../session/types";
 import type { Tab } from "../tabs/store";
@@ -309,7 +309,7 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
 
   return (
     <div id="session">
-      <SessionHeader tab={props.tab} />
+      {/* 阶段4:SessionHeader 已迁入 TopBar 中格(spec §6.4),会话页不再有 40px 标题行。 */}
       <Show when={store.providerRetry[0]()}>
         {(retry) => (
           <div class="provider-retry" role="status" aria-live="polite">
@@ -329,6 +329,14 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
         onPointerDown={markUserScrolled}
         onKeyDown={markUserScrolled}
       >
+        {/* 后台标签已卸载转录,重新激活后等 attach 权威首页落地(BUG-2026-10-29):
+            未 hydrate 时显式给「消息同步中」,不闪空态。 */}
+        <Show when={!store.hydrated[0]()}>
+          <div class="sync-note" role="status" aria-live="polite">
+            <IconLoader class="spin" />
+            <span>{STR.syncingMessages}</span>
+          </div>
+        </Show>
         <Show when={state().truncatedBefore}>
           <div class="history-note">{STR.truncatedWindow}</div>
         </Show>

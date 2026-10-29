@@ -60,6 +60,9 @@
   .composer-identity strong { color: var(--text); font-weight: 600; }
   .composer-identity-item { display: inline-flex; align-items: center; gap: 4px; }
   .composer-identity-item svg { width: 12px; height: 12px; flex: none; }
+  /* 状态栏彗星(存活指示):仅 zen-console 主题显示(theme 里定义外观与动画),
+     其余主题不渲染任何可见物——这里是挂载点与默认隐藏。 */
+  .composer-comet { display: none; }
   .composer-identity-item.is-live { color: var(--text); }
   .composer-identity-item.is-live strong { color: var(--accent); }
   .composer-identity-item.is-idle { opacity: 0.65; }
@@ -204,6 +207,14 @@
   .history-note { color: var(--muted); font-size: var(--fs-xs); padding: 4px 0 8px; }
   .history-note.retry { min-height: 28px; }
   .history-note.retry:hover { color: var(--text); }
+  /* 「消息同步中」(BUG-2026-10-29):后台标签卸载转录后重新激活、等权威快照落地的过渡态。
+     空转录时给足高度居中显示,快照一到即被真实内容替换。 */
+  .sync-note {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 180px;
+    color: var(--muted); font-size: var(--fs-sm);
+  }
+  .sync-note svg { width: 15px; height: 15px; }
   /* 只让出块间距:行内方向的 margin-inline: auto 归 timeline.css 的内容列规则,
      这里写 margin 简写会把左右 margin 清零、分隔线贴左而正文居中。 */
   .compact-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: var(--fs-xs); margin-block: 8px; }

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { readDiscovery, DaemonManager } from "./daemon.js";
 import { isAlive } from "@qaqh/sdk/node";
 import { isIP } from "node:net";
@@ -19,6 +20,10 @@ import { scanUserSkills } from "./skills-scanner.js";
 import { applyConfiguredDefault, clearDefaultModelSelection, loadProviderChoices, normalizeSessionSelection, readDefaultModelSelection, type SessionModelSelection } from "./model-selection.js";
 import { isModelPickerWindow, openModelPicker } from "./model-picker.js";
 import { processGroup } from "./process-metrics.js";
+import { readGpuStatus } from "./gpu-info.js";
+import {
+  applyForDaemon, checkForUpdates, spawnApplyOnQuit, stageUpdate, stagedStatus,
+} from "./updater.js";
 
 const SERVICE_METHODS = new Set([
   "daemon.version", "session.list", "session.meta", "session.activity", "session.rename", "session.dashboard", "session.get_activity",
@@ -444,23 +449,78 @@ async function handleCommand(
     }
 
     case "app_version": {
-      const version = app.getVersion();
+      // `just` injects the pack-date version at bundle time. The source
+      // package.json keeps a stable date base, and app.getVersion() is only a
+      // fallback for an ad-hoc dev bundle built without just.
+      const version = process.env.QAQH_BUILD_VERSION || app.getVersion();
       const commit = process.env.QAQH_GIT_COMMIT || "unknown";
-      // The package version is the date base (`2.0.YYYYMMDD`); the build
-      // metadata is the commit hash captured at bundle time, so the displayed
-      // version does not go stale when the version commit itself changes.
       const shortCommit = commit === "unknown" ? "unknown" : commit.slice(0, 8);
       const display = `${version}+${shortCommit}${process.env.QAQH_GIT_DIRTY === "1" ? "-dirty" : ""}`;
       return { display, version, commit };
     }
 
+    case "updater_check": {
+      return checkForUpdates(typeof args.source === "string" && args.source ? args.source : undefined);
+    }
+
+    case "updater_stage": {
+      return stageUpdate(typeof args.source === "string" && args.source ? args.source : undefined);
+    }
+
+    case "updater_status": {
+      return stagedStatus();
+    }
+
+    case "updater_apply": {
+      const staged = stagedStatus();
+      if (!staged) throw new Error("没有已暂存的更新(先执行 updater_stage)");
+      if (staged.restartPolicy === "daemon") {
+        // 纯 backend:停 daemon → 同步应用(只换 backend/)→ 走既有重连链路,壳不重启。
+        const stopped = await client.stopDaemon(true);
+        if (stopped === "busy") throw new Error("daemon_busy");
+        if (stopped === "unsupported") throw new Error("当前 daemon 不支持安全停止");
+        await applyForDaemon();
+        return restartDaemon(client, daemonMgr, { args: ["run"], wantLan: false, force: true });
+      }
+      // electron 策略:挂 detached updater 等 shell 退出,renderer 随后走 request-quit。
+      spawnApplyOnQuit();
+      return { policy: "electron", quit: true };
+    }
+
     case "host_memory": {
       const usage = process.memoryUsage();
-      return { resident_bytes: usage.rss, private_bytes: null, virtual_bytes: null, peak_resident_bytes: null, source: "node:process.memoryUsage.rss", error: null };
+      // Linux 的 procfs 自带进程全生命周期峰值(VmHWM,单位 kB),把一直缺测的
+      // peak 补上;其他平台没有等价读数,保持 null 缺测,不冒充 0。
+      let peak: number | null = null;
+      let source = "node:process.memoryUsage.rss";
+      if (process.platform === "linux") {
+        try {
+          const status = await readFile("/proc/self/status", "utf8");
+          const hwmKb = Number(/^VmHWM:\s+(\d+)\s+kB$/m.exec(status)?.[1]);
+          if (Number.isFinite(hwmKb) && hwmKb > 0) {
+            peak = hwmKb * 1024;
+            source = "node:process.memoryUsage.rss + linux:procfs VmHWM";
+          }
+        } catch {}
+      }
+      return { resident_bytes: usage.rss, private_bytes: null, virtual_bytes: null, peak_resident_bytes: peak, source, error: null };
     }
 
     case "host_process_group": {
       return processGroup(app.getAppMetrics(), process.pid);
+    }
+
+    case "host_gpu_info": {
+      // GPU 后端探针:软渲染时 CSS 层面的省电优化收效有限,面板与 auto 性能档
+      // 都需要这个事实(src/main/gpu-info.ts)。读不出就如实报错,不猜。
+      try {
+        return readGpuStatus(await app.getGPUInfo("complete"));
+      } catch (cause) {
+        return {
+          compositing: null, softwareRendering: null, software: null, vendor: null, renderer: null,
+          source: "electron.app.getGPUInfo", error: cause instanceof Error ? cause.message : String(cause),
+        };
+      }
     }
 
     case "pairing_create": {

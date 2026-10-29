@@ -15,6 +15,7 @@ import { transport } from "../lib/transport";
 import { daemonLanStatus } from "../lib/pairing";
 import { toast } from "../ui/toast";
 import { devConsoleOpen, devMode, openDevConsole, pushUnlockClick } from "../lib/devmode";
+import { desktopHost } from "../lib/desktop-host";
 import { DevConsole } from "./dev/DevConsole";
 
 export const AboutSection: Component = () => {
@@ -25,11 +26,24 @@ export const AboutSection: Component = () => {
   const [daemonProtocol, setDaemonProtocol] = createSignal<string | null>(null);
   /** 连点时间戳;解锁或超窗即清空,不残留半程进度。 */
   const [stamps, setStamps] = createSignal<number[]>([]);
+  /** Chrome DevTools 开关态(来自主进程回执;toggle 失败时不翻转)。 */
+  const [devtoolsOpen, setDevtoolsOpen] = createSignal(false);
+
+  const toggleDevtools = (): void => {
+    const bridge = desktopHost()?.devtools;
+    if (bridge == null) {
+      toast("当前运行环境没有桌面壳,无法打开 DevTools", "err");
+      return;
+    }
+    void bridge.toggle().then(setDevtoolsOpen).catch((error: unknown) => {
+      toast(`切换 DevTools 失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    });
+  };
 
   // 只读一次:构建标识不随配置变,没有刷新语义。
   loadBuildInfo().then(setBuild, () => { setFailed(true); });
   onSettled(() => {
-    // daemon.version is a JSON string (`CARGO_PKG_VERSION`), not an object.
+    // daemon.version is a JSON string (build-injected version), not an object.
     void transport.rpc<unknown>("daemon.version", {}).then((value) => {
       setDaemonVersion(typeof value === "string" && value.trim() !== "" ? value : null);
     }).catch(() => {});
@@ -107,6 +121,12 @@ export const AboutSection: Component = () => {
       <Show when={devMode()}>
         <div class="about-devbar">
           <button type="button" class="primary-mini" onClick={openDevConsole}>打开调试控制台</button>
+          {/* DevTools 是壳层 webContents 的调试器:只在桌面运行时给出(浏览器 dev 环境本就有 F12)。 */}
+          <Show when={desktopHost()?.devtools != null}>
+            <button type="button" class="primary-mini" onClick={toggleDevtools}>
+              {devtoolsOpen() ? "隐藏 DevTools" : "打开 DevTools"}
+            </button>
+          </Show>
           <span class="settings-muted">开发者模式开着:内存面板会每秒采一次样,关掉面板即停。</span>
         </div>
       </Show>

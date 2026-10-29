@@ -1,57 +1,115 @@
 /* QAQ-Harness WebUI —— 全局导航与会话侧边栏 */
 
 @layer components {
-  .global-nav {
+  /* 壳侧栏(spec §6.1):Nav 2×2 + 会话列表同占一列,宽度由 --sidebar-width 控制。 */
+  .app-sidebar {
     grid-column: 1; grid-row: 2;
-    display: grid; grid-auto-rows: max-content; align-content: start; gap: 4px;
-    padding: 12px 6px; border-right: 1px solid var(--border);
+    position: relative;
+    display: grid; grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0; min-height: 0; overflow: hidden;
+    border-right: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 72%, var(--bg));
+  }
+
+  /* 拖拽调宽把手(用户侧需求):右缘 5px 命中,dock 展开态才有;
+     收起/抽屉态隐藏(收起走汉堡,抽屉宽度固定)。 */
+  .app-sidebar-resizer {
+    position: absolute; top: 0; right: 0; bottom: 0; z-index: 6;
+    width: 5px; cursor: col-resize;
+    background: transparent; touch-action: none;
+  }
+  .app-sidebar-resizer::after {
+    content: ""; position: absolute; inset: 0 2px;
+    border-radius: var(--radius-pill); background: var(--accent);
+    opacity: 0; transition: opacity var(--dur-fast) var(--ease);
+  }
+  .app-sidebar-resizer:hover::after,
+  .app-sidebar-resizer:focus-visible::after,
+  html.sidebar-resizing .app-sidebar-resizer::after { opacity: .35; }
+  .app-sidebar.collapsed .app-sidebar-resizer,
+  .app-sidebar.drawer .app-sidebar-resizer { display: none; }
+  /* 拖拽中(motion kit 卡顿防线):禁掉轨道/标签/列表的全部过渡——
+     220ms 过渡会拖住光标形成橡皮筋感,是拖拽卡顿感的真正来源;
+     松手后 class 摘掉,磁性收拢/回弹由既有轨道过渡接管。 */
+  html.sidebar-resizing { cursor: col-resize; user-select: none; }
+  html.sidebar-resizing #app,
+  html.sidebar-resizing #top,
+  html.sidebar-resizing .sidebar-nav-item span,
+  html.sidebar-resizing .message-sidebar { transition: none !important; }
+  html.desktop .app-sidebar {
+    /* 阶段5(spec §10):壳表面实底化,backdrop-filter 只留给抽屉/浮层。 */
     background: var(--surface);
   }
-  html.desktop .global-nav {
-    border-right-color: color-mix(in srgb, var(--border) 72%, transparent);
-    background: color-mix(in srgb, var(--surface) 68%, transparent);
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(130%);
-    backdrop-filter: blur(var(--glass-blur)) saturate(130%);
-  }
-  html.desktop[data-theme="dark"] .global-nav { background: color-mix(in srgb, var(--surface) 78%, transparent); }
-  html.desktop.platform-macos .global-nav {
-    border-right-color: color-mix(in srgb, var(--border) 72%, transparent);
-    background: color-mix(in srgb, var(--surface) 58%, transparent);
-    -webkit-backdrop-filter: saturate(135%);
-    backdrop-filter: saturate(135%);
+  html.desktop.platform-macos .app-sidebar {
     box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 45%, transparent);
   }
-  html.desktop.platform-macos[data-theme="dark"] .global-nav { background: color-mix(in srgb, var(--surface) 72%, transparent); }
-  .global-nav-item {
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
-    min-width: 0; min-height: 56px; padding: 6px 2px;
-    border-radius: var(--r-md); color: var(--muted); font-size: 10px; line-height: 1.2;
+
+  /* 导航 2×2:每项 ≥44px 命中,图标 18px,label 12px;active 用 --accent-soft。 */
+  .sidebar-nav {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px;
+    padding: 10px 10px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-nav-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    min-width: 0; min-height: 44px; padding: 6px 4px;
+    border-radius: var(--r-md); color: var(--muted); font-size: calc(12px * var(--font-scale)); line-height: 1.2;
     transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
   }
-  .global-nav-item svg { width: 18px; height: 18px; }
-  .global-nav-item:hover { color: var(--text); background: var(--surface-2); }
-  .global-nav-item.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+  .sidebar-nav-item svg { width: 18px; height: 18px; }
+  /* 标签退场(motion kit):汉堡收起时 max-width→0 + opacity→0,不用 display:none
+     硬切;height 钉在 1.2em,图标在 44px 命中区里的位置不动。 */
+  .sidebar-nav-item span {
+    max-width: 64px; height: 1.2em; overflow: hidden; opacity: 1;
+    transition: max-width var(--dur-layout) var(--ease), opacity var(--dur-fast) var(--ease);
+  }
+  .sidebar-nav-item:hover { color: var(--text); background: var(--surface-2); }
+  .sidebar-nav-item.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+
+  /* 会话列表现在是 .app-sidebar 的第二段(Nav 之下),表面与边框由壳侧栏统一提供。 */
+  /* 收起态(汉堡切换,#app.sidebar-collapsed):48px 仅图标导航,会话列表隐藏。
+     记忆在 localStorage;<720px 的 160px 窄列被这条 id+class 规则覆盖为 48px。 */
+  #app.sidebar-collapsed { grid-template-columns: 48px minmax(0, 1fr) auto; }
+  #app.sidebar-collapsed #top { grid-template-columns: 48px minmax(0, 1fr) auto; }
+  .app-sidebar.collapsed .sidebar-nav { grid-template-columns: minmax(0, 1fr); padding: 8px 6px; border-bottom: 0; }
+  .app-sidebar.collapsed .sidebar-nav-item { min-height: 40px; }
+  .app-sidebar.collapsed .sidebar-nav-item span { max-width: 0; opacity: 0; }
+  /* 会话列表淡出(motion kit):列宽 288→48 由 #app 的轨道过渡驱动,列表原地淡出;
+     visibility 延迟到淡出播完才隐藏,焦点/无障碍树同步离场。 */
+  .app-sidebar.collapsed .message-sidebar {
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity var(--dur) var(--ease), visibility 0s var(--dur);
+  }
+
+  /* 抽屉态(阶段5,cols-1):覆盖 Main,不占列;宽回到 288(收起态在抽屉里无意义)。
+     动画(motion kit):开合都走 transform 滑入/滑出;display 用 allow-discrete
+     过渡,关抽屉时面板滑出画面后才真正 display:none(退出动画播得出来),
+     开抽屉则立即可渲染、从 @starting-style 的出画位置滑进来。
+     修复:旧规则 `#app.cols-1 .app-sidebar { display:none }` 以 ID 优先级压掉了
+     .drawer.open 的 display:grid,产线(cols-N class 在 #app 上)抽屉根本打不开;
+     夹具没挂 cols-N 才一直没被 capture 抓到。 */
+  .app-sidebar.drawer {
+    position: fixed; top: var(--topbar-height, 48px); left: 0; bottom: 0; z-index: 70;
+    width: var(--sidebar-width, 288px); max-width: 86vw;
+    display: none;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: 0 12px 32px color-mix(in srgb, #000 25%, transparent);
+    transform: translateX(-102%);
+    transition: transform var(--dur-drawer) var(--ease),
+                display var(--dur-drawer) allow-discrete;
+  }
+  .app-sidebar.drawer.open { display: grid; transform: none; }
+  @starting-style {
+    .app-sidebar.drawer.open { transform: translateX(-102%); }
+  }
 
   .message-sidebar {
-    grid-column: 1; grid-row: 1; display: grid; grid-template-rows: auto minmax(0, 1fr);
+    display: grid; grid-template-rows: auto minmax(0, 1fr);
     min-width: 0; min-height: 0; overflow: hidden;
-    border-right: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 72%, var(--bg));
+    /* 汉堡收起时随列宽过渡淡出(motion kit),展开时淡回。 */
+    transition: opacity var(--dur) var(--ease);
   }
-  html.desktop .message-sidebar {
-    border-right-color: color-mix(in srgb, var(--border) 72%, transparent);
-    background: color-mix(in srgb, var(--surface) 68%, transparent);
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(130%);
-    backdrop-filter: blur(var(--glass-blur)) saturate(130%);
-  }
-  html.desktop[data-theme="dark"] .message-sidebar { background: color-mix(in srgb, var(--surface) 78%, transparent); }
-  html.desktop.platform-macos .message-sidebar {
-    border-right-color: color-mix(in srgb, var(--border) 72%, transparent);
-    background: color-mix(in srgb, var(--surface) 58%, transparent);
-    -webkit-backdrop-filter: saturate(135%);
-    backdrop-filter: saturate(135%);
-    box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 45%, transparent);
-  }
-  html.desktop.platform-macos[data-theme="dark"] .message-sidebar { background: color-mix(in srgb, var(--surface) 72%, transparent); }
   .message-sidebar-head { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 14px; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .04em; }
   .message-sidebar-count { margin-left: auto; color: var(--muted); opacity: .72; font-size: 10px; font-weight: 500; }
   .message-create { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-control); color: var(--muted); }
