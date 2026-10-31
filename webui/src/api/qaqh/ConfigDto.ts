@@ -4,6 +4,18 @@ import type { LspDto } from "./LspDto";
 import type { McpDto } from "./McpDto";
 import type { SubagentDto } from "./SubagentDto";
 
+export interface ProfileSummaryDto {
+  name: string;
+  model: string;
+  baseUrl: string;
+  wire: string;
+  effort?: string | null;
+  contextLength: number;
+  maxTokens: number;
+  apiKeySet: boolean;
+  credential: string;
+}
+
 /**
  * 读模型：daemon `config.load` 的完整投影。所有消费者（设置页/Info 面板/
  * TUI/web）从这里取值；不做向前兼容——缺字段即解析失败（见 crate 级兼容策略）。
@@ -46,7 +58,9 @@ notificationsEnabled: boolean, activeProfile: string,
 /**
  * profile 名列表（管理 UI 用；不含敏感字段）。
  */
-profiles: Array<string>, complianceEnabled: boolean, subagent: SubagentDto, 
+profiles: Array<string>, 
+profilesDetail?: Record<string, ProfileSummaryDto>,
+complianceEnabled: boolean, subagent: SubagentDto, 
 /**
  * MCP 客户端配置（Phase 1 只读；写模型随 workspace 隔离权限重构另立）。
  */
@@ -65,6 +79,10 @@ tokenizerPath: string | null,
  * exec 工具默认执行配置（热字段；`exec.default_shell` 被 exec 真正消费）。
  */
 exec: ExecDto, 
+/**
+ * 沙箱执行配置（读模型）。
+ */
+sandbox?: { enabled: boolean },
 /**
  * 空闲会话 worker 自动卸载阈值（秒）。0 = 禁用（缺省）；由 daemon 周期任务读取。
  */

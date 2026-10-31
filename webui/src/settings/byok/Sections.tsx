@@ -19,7 +19,9 @@ import IconEyeOff from "~icons/lucide/eye-off";
 import { STR } from "../../lib/strings";
 import { toast } from "../../ui/toast";
 import { MASK, REASONING_EFFORTS, WIRE_PROTOCOLS } from "../patch";
-import { applyProfile, baseline, busy, deleteProfile, dirty, draft, saveProfileAs, setField } from "../store";
+import { applyProfile, baseline, busy, createAndSaveProfile, deleteProfile, dirty, draft, saveProfileAs, setField } from "../store";
+import { PROVIDER_TEMPLATES, type ModelOption, type ProviderTemplate } from "./templates";
+import { fetchLiveModels } from "./model-fetcher";
 import type { ConfigDto } from "../../api/qaqh/ConfigDto";
 import { Field, Section, TextInput } from "../controls";
 import { Select } from "../../ui/Select";
@@ -200,7 +202,82 @@ export const ByokSection: Component = () => {
 };
 
 export const ProfilesSection: Component = () => {
+  const defaultTmpl = PROVIDER_TEMPLATES[0]!;
   const [profileName, setProfileName] = createSignal("");
+  const [showWizard, setShowWizard] = createSignal(false);
+  const [wizardTemplate, setWizardTemplate] = createSignal<ProviderTemplate>(defaultTmpl);
+  const [wizardName, setWizardName] = createSignal(defaultTmpl.name);
+  const [wizardModel, setWizardModel] = createSignal("");
+  const [wizardKey, setWizardKey] = createSignal("");
+  const [wizardBaseUrl, setWizardBaseUrl] = createSignal(defaultTmpl.baseUrl);
+  const [wizardWire, setWizardWire] = createSignal(defaultTmpl.wire);
+  const [wizardEffort, setWizardEffort] = createSignal("high");
+  const [showAdvanced, setShowAdvanced] = createSignal(false);
+  const [wizardContextLength, setWizardContextLength] = createSignal(defaultTmpl.defaultContextLength);
+  const [wizardMaxTokens, setWizardMaxTokens] = createSignal(defaultTmpl.defaultMaxTokens);
+  const [liveModels, setLiveModels] = createSignal<ModelOption[]>([]);
+  const [fetchingLive, setFetchingLive] = createSignal(false);
+  const [liveError, setLiveError] = createSignal<string | null>(null);
+
+  const pullOnlineModels = async (): Promise<void> => {
+    if (fetchingLive()) return;
+    setFetchingLive(true);
+    setLiveError(null);
+    try {
+      const res = await fetchLiveModels({
+        baseUrl: wizardBaseUrl(),
+        wire: wizardWire(),
+        apiKey: wizardKey().trim() || undefined,
+      });
+      if (res.ok && res.models.length > 0) {
+        setLiveModels(res.models);
+        toast(`成功从端点同步 ${res.models.length} 个在线模型`, "ok");
+      } else {
+        setLiveError(res.error || "未返回模型列表");
+        toast(`未获取到在线模型（${res.error || "网络或凭据原因"}），使用内置推荐表`, "info");
+      }
+    } catch (err) {
+      setLiveError(String(err));
+    } finally {
+      setFetchingLive(false);
+    }
+  };
+
+  const selectTemplate = (tmpl: ProviderTemplate) => {
+    setWizardTemplate(tmpl);
+    setWizardBaseUrl(tmpl.baseUrl);
+    setWizardWire(tmpl.wire);
+    setWizardContextLength(tmpl.defaultContextLength);
+    setWizardMaxTokens(tmpl.defaultMaxTokens);
+    setLiveModels([]);
+    setLiveError(null);
+    setWizardName(`${tmpl.name}`);
+    setWizardModel("");
+  };
+
+  const handleCreateProfile = async (): Promise<void> => {
+    const name = wizardName().trim();
+    const model = wizardModel().trim();
+    if (!name || !model) {
+      toast("请填写预设名称和模型名称", "err");
+      return;
+    }
+    const success = await createAndSaveProfile({
+      name,
+      model,
+      baseUrl: wizardBaseUrl().trim(),
+      wire: wizardWire().trim(),
+      apiKey: wizardKey().trim() || undefined,
+      effort: wizardEffort().trim() || undefined,
+      contextLength: wizardContextLength(),
+      maxTokens: wizardMaxTokens(),
+    });
+    if (success) {
+      setShowWizard(false);
+      setWizardKey("");
+    }
+  };
+
   const config = () => draft() ?? baseline() ?? ({
     baseUrl: "",
     wire: "chat",
@@ -216,46 +293,231 @@ export const ProfilesSection: Component = () => {
   return (
     <Section
       id="section-profiles"
-      title="档案预设"
-      desc="把当前的六字段配置存成命名档案,随时一键切换(切换会整段覆盖草稿,有未保存改动时先保存)。"
-      /* 切档案会整段重写激活配置、**包含 credential**——OAuth 模式下点它等于
-         把刚打开的模式静默切回 BYOK，所以在那种状态下把三个动作都禁掉。 */
+      title="模型档案预设"
+      desc="管理各厂商的模型接入配置。会话中可按需随时切换任意预设，不再受限于单一全局配置。"
       aside={accountRoute() ? "账号额度模式下请先到「接入」页切换服务商" : undefined}
     >
       <Show when={dirty() && !accountRoute()}>
-        <p class="profile-dirty-note">有未保存的改动：先保存或放弃，档案切换/删除/另存才会按当前配置生效。</p>
+        <p class="profile-dirty-note">有未保存的全局草稿：切换或删除档案会重置表单为对应档案配置。</p>
       </Show>
+
+      {/* 预设列表 */}
       <div class="profile-list">
         <For each={config().profiles}>
-          {(name) => (
-            <div class={`profile-row${name === config().activeProfile ? " active" : ""}`}>
-              <span class="profile-name">{name}</span>
-              <Show when={name === config().activeProfile}>
-                <span class="profile-active-tag">使用中</span>
-              </Show>
+          {(name) => {
+            const detail = () => config().profilesDetail?.[name];
+            return (
+              <div class={`profile-row${name === config().activeProfile ? " active" : ""}`}>
+                <span class="profile-name">
+                  <strong>{name}</strong>
+                  <Show when={detail()?.model}>
+                    {(m) => <span style={{ opacity: "0.8", "margin-left": "8px", "font-size": "0.85em" }}>· {m()}</span>}
+                  </Show>
+                  <Show when={detail()?.baseUrl}>
+                    {(u) => <small style={{ opacity: "0.5", "margin-left": "6px", "font-size": "0.75em" }}>({u().replace(/^https?:\/\//, "")})</small>}
+                  </Show>
+                </span>
+                <Show when={name === config().activeProfile}>
+                  <span class="profile-active-tag">● 当前全局默认</span>
+                </Show>
+                <button
+                  type="button"
+                  class="ghost-mini"
+                  disabled={busy() || accountRoute() || name === config().activeProfile}
+                  onClick={() => void applyProfile(name)}
+                >
+                  设为全局
+                </button>
+                <button
+                  type="button"
+                  class="ghost-mini is-danger button-danger"
+                  disabled={busy() || accountRoute() || name === config().activeProfile || name === "default"}
+                  onClick={() => void deleteProfile(name)}
+                >
+                  删除
+                </button>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+
+      {/* 小白向导：快捷添加新预设 */}
+      <Show
+        when={showWizard()}
+        fallback={
+          <div style={{ "grid-column": "1 / -1", "margin-top": "12px", display: "flex", gap: "10px", "align-items": "center" }}>
+            <button
+              type="button"
+              class="ghost-mini"
+              style={{ "font-weight": "600", padding: "8px 16px", height: "auto" }}
+              disabled={busy() || accountRoute()}
+              onClick={() => setShowWizard(true)}
+            >
+              + 快速添加模型预设（向导）
+            </button>
+            <span style={{ "font-size": "var(--fs-xs)", opacity: "0.6" }}>
+              内置 DeepSeek、SiliconFlow、Claude、OpenAI、本地 Ollama 模板，小白轻松配置
+            </span>
+          </div>
+        }
+      >
+        <div class="profile-wizard-card">
+          <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
+            <strong>快速添加模型预设</strong>
+            <button
+              type="button"
+              class="ghost-mini"
+              onClick={() => setShowWizard(false)}
+            >
+              关闭
+            </button>
+          </div>
+
+          <div>
+            <label style={{ "font-size": "var(--fs-xs)", opacity: "0.7", display: "block", "margin-bottom": "6px" }}>
+              1. 选择厂商模板：
+            </label>
+            <div class="provider-template-chips">
+              <For each={PROVIDER_TEMPLATES}>
+                {(tmpl) => (
+                  <button
+                    type="button"
+                    class={`provider-template-chip${wizardTemplate().id === tmpl.id ? " active" : ""}`}
+                    onClick={() => selectTemplate(tmpl)}
+                  >
+                    {tmpl.name}
+                    <small style={{ "margin-left": "4px", opacity: "0.8" }}>({tmpl.badge})</small>
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+
+          <Field label="档案名称" wide>
+            <TextInput value={wizardName()} onInput={setWizardName} placeholder="例如：DeepSeek-R1" />
+          </Field>
+
+          <Field label="模型标识" wide>
+            <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+              <div style={{ flex: "1" }}>
+                <TextInput
+                  value={wizardModel()}
+                  onInput={setWizardModel}
+                  placeholder={wizardTemplate().modelPlaceholder ?? "输入模型代号（如 deepseek-flash / opus5 / gpt-6-sol）"}
+                />
+              </div>
               <button
                 type="button"
                 class="ghost-mini"
-                disabled={busy() || accountRoute() || dirty()}
-                onClick={() => void applyProfile(name)}
+                style={{ "font-size": "11px", height: "32px", "white-space": "nowrap" }}
+                disabled={fetchingLive() || !wizardBaseUrl().trim()}
+                onClick={() => void pullOnlineModels()}
               >
-                切换
-              </button>
-              <button
-                type="button"
-                class="ghost-mini is-danger button-danger"
-                disabled={busy() || accountRoute() || dirty() || name === config().activeProfile}
-                onClick={() => void deleteProfile(name)}
-              >
-                删除
+                {fetchingLive() ? "同步中…" : "🔄 探测在线模型"}
               </button>
             </div>
-          )}
-        </For>
-      </div>
-      <Field label="把当前配置存为" wide>
+            <Show when={liveError()}>
+              {(err) => (
+                <div style={{ color: "var(--err)", "font-size": "11px", "margin-top": "4px" }}>
+                  在线探测提示：{err()}（可直接手动输入模型标识）
+                </div>
+              )}
+            </Show>
+            <Show
+              when={liveModels().length > 0}
+              fallback={
+                <small style={{ "font-size": "11px", opacity: "0.6", display: "block", "margin-top": "4px" }}>
+                  💡 自由输入任意模型代号。填写 API Key 后点击上方【探测在线模型】可实时拉取端点开放的模型清单。
+                </small>
+              }
+            >
+              <div class="model-preset-pills">
+                <span style={{ "font-size": "11px", opacity: "0.6", "line-height": "22px" }}>
+                  端点实时返回模型（点击快速填入）：
+                </span>
+                <For each={liveModels()}>
+                  {(m) => (
+                    <button
+                      type="button"
+                      class={`model-preset-pill${wizardModel() === m.id ? " active" : ""}`}
+                      onClick={() => {
+                        setWizardModel(m.id);
+                        if (m.defaultEffort) setWizardEffort(m.defaultEffort);
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </Field>
+
+          <Field label="API 密钥" wide>
+            <TextInput
+              value={wizardKey()}
+              onInput={setWizardKey}
+              placeholder={wizardTemplate().keyHint}
+              type="password"
+            />
+            <small style={{ "font-size": "11px", opacity: "0.6", display: "block", "margin-top": "4px" }}>
+              密钥直接存入本机 secrets.toml 加密槽位，不会随预设导出泄露。
+            </small>
+          </Field>
+
+          {/* 高级选项折叠 */}
+          <div>
+            <button
+              type="button"
+              class="wizard-advanced-toggle"
+              onClick={() => setShowAdvanced(!showAdvanced())}
+            >
+              {showAdvanced() ? "▼ 收起高级网络参数" : "▶ 展开高级网络参数（BaseURL / 协议 / 窗口）"}
+            </button>
+            <Show when={showAdvanced()}>
+              <div style={{ display: "grid", gap: "8px", "margin-top": "8px", padding: "10px", border: "1px solid var(--border)", "border-radius": "6px" }}>
+                <Field label="Base URL">
+                  <TextInput value={wizardBaseUrl()} onInput={setWizardBaseUrl} />
+                </Field>
+                <Field label="协议形态 (Wire)">
+                  <TextInput value={wizardWire()} onInput={setWizardWire} placeholder="chat / messages / responses" />
+                </Field>
+                <Field label="默认思考档位">
+                  <TextInput value={wizardEffort()} onInput={setWizardEffort} placeholder="low / medium / high" />
+                </Field>
+                <Field label="上下文窗口">
+                  <NumberInput value={wizardContextLength()} onCommit={setWizardContextLength} min={1024} max={2000000} />
+                </Field>
+              </div>
+            </Show>
+          </div>
+
+          <div class="wizard-actions">
+            <button
+              type="button"
+              class="ghost-mini"
+              style={{ background: "var(--accent)", color: "white", "font-weight": "600", padding: "8px 18px", height: "auto" }}
+              disabled={busy() || !wizardName().trim() || !wizardModel().trim()}
+              onClick={() => void handleCreateProfile()}
+            >
+              立即保存此预设
+            </button>
+            <button
+              type="button"
+              class="ghost-mini"
+              onClick={() => setShowWizard(false)}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      </Show>
+
+      {/* 仍保留传统另存为快速入口，供老用户使用 */}
+      <Field label="将当前设置另存为" wide>
         <div class="profile-create">
-          <TextInput value={profileName()} onInput={setProfileName} placeholder="档案名" />
+          <TextInput value={profileName()} onInput={setProfileName} placeholder="输入新档案名称" />
           <button
             type="button"
             class="ghost-mini"
@@ -267,7 +529,7 @@ export const ProfilesSection: Component = () => {
               void saveProfileAs(name);
             }}
           >
-            保存
+            另存为
           </button>
         </div>
       </Field>

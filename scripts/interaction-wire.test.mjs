@@ -87,8 +87,6 @@ test("real SDK reset pauses, then host resync re-bootstraps and resumes projecti
       const path = new URL(url).pathname;
       if (path.endsWith("/clients/open")) return json({ schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease", server_epoch: "epoch", renew_interval_ms: 3600_000 });
       if (path.endsWith("/commands/control")) return json({ status: "accepted", command_id: JSON.parse(init.body).command_id });
-      if (path.endsWith("/timeline")) return json({ schema: "qaqh.Ringing", version: 2, session_id: "session-A" });
-      if (path.endsWith("/timeline/events")) return sse("", true);
       if (path.endsWith("/bootstrap")) {
         bootstraps++;
         return json({ schema: "qaqh.Ringing", version: 2, session_id: "session-A", server_epoch: "epoch", snapshot_cursor: `cursor-${bootstraps}` });
@@ -112,10 +110,10 @@ test("real SDK reset pauses, then host resync re-bootstraps and resumes projecti
   };
   await client.attach("session-A");
   await until(() => timers.jobs.size > 0);
-  assert.equal(client.getTimelineStatus("session-A").status, "closed");
+  assert.equal(client.getProjectionStatus("session-A"), "paused");
   await timers.next();
   await until(() => events.some(e => e.name === "projection://event"));
   assert.equal(bootstraps, 2);
   assert.equal(streams, 2);
-  assert.equal(client.getTimelineStatus("session-A").status, "open");
+  assert.equal(client.getProjectionStatus("session-A"), "live");
 });

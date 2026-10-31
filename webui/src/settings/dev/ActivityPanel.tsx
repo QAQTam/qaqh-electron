@@ -32,8 +32,6 @@ const StoreRows: Component<{ store: SessionStore }> = (props) => {
       <b>{props.store.activity[0]() ?? "—"}</b>
       <span>回合(总/运行/失败)</span>
       <b>{state().totalTurns} / {state().runningTurns} / {state().failedTurns}</b>
-      <span>watermark</span>
-      <b>{num(state().watermark)}</b>
       <span>serverEpoch</span>
       <b>{state().serverEpoch ?? "—"}</b>
       <span>oldestIndex</span>
@@ -93,7 +91,7 @@ export const ActivityPanel: Component = () => {
                   <td>{entry().store.activity[0]() ?? "—"}</td>
                   <td>{entry().store.state[0].totalTurns}</td>
                   <td>{entry().store.pending[0]().length}</td>
-                  <td>{entry().store.state[0].watermark}</td>
+                  <td>{entry().store.state[0].structureVersion}</td>
                 </tr>
               )}
             </For>

@@ -11,7 +11,7 @@ afterEach(() => {
 describe("devlog", () => {
   it("未解锁开发者模式时不记录", () => {
     noteRpc("config.load", Date.now() - 5, null);
-    noteEvent("timeline://entry", { session_id: "s", entry: { index: 3 } });
+    noteEvent("projection://status", { session_id: "s", status: "live" });
     expect(devLogEntries()).toHaveLength(0);
   });
 
@@ -38,7 +38,7 @@ describe("devlog", () => {
 
   it("payload 太大时只留摘要文本,不整包进缓冲", () => {
     openDevConsole();
-    noteEvent("timeline://entry", { type: "message", blob: "x".repeat(50_000) });
+    noteEvent("projection://event", { type: "message", blob: "x".repeat(50_000) });
     const [row] = devLogEntries();
     expect((row?.detail ?? "").length).toBeLessThan(200);
   });

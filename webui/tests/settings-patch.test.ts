@@ -131,13 +131,11 @@ describe("buildPatch", () => {
     expect(same.subagent).toBeUndefined();
   });
 
-  test("wire 变更:比较按规范名、出网按 daemon 认的旧拼写;同义拼写不算改动", () => {
-    // 读模型回显规范名、下拉也摆规范名,但直发规范名会被 daemon 的
-    // `ConfigPatch::validate` 400 掉——出网必须换成旧拼写(chat→openai 等)。
-    expect(buildPatch(dto({ wire: "messages" }), dto()).wire).toBe("openai");
-    expect(buildPatch(dto(), dto({ wire: "messages" })).wire).toBe("anthropic");
+  test("wire 比较和出站使用规范名；本地旧快照可迁移", () => {
+    expect(buildPatch(dto({ wire: "messages" }), dto()).wire).toBe("chat");
+    expect(buildPatch(dto(), dto({ wire: "messages" })).wire).toBe("messages");
     expect(buildPatch(dto(), dto({ wire: "gemini" })).wire).toBe("gemini");
-    // 规范名与旧拼写是同一个值(后端 `Wire::parse` 同一枚举):比较先归一,不产生差异。
+    // 本地旧快照先归一，不把旧别名发送给后端。
     expect(isPatchEmpty(buildPatch(dto({ wire: "openai" }), dto({ wire: "chat" })))).toBe(true);
     // 没改就不发。
     expect(buildPatch(dto(), dto()).wire).toBeUndefined();
@@ -167,27 +165,15 @@ describe("validatePatch", () => {
     expect(validatePatch({ maxTokens: 96000 })).toBeNull();
   });
 
-  test("wire 两种拼写都收;出网落成 daemon 写模型认的旧拼写(规范名被改写)", () => {
-    // 规范名(读模型回显)与旧拼写(更早配置)是同一个枚举的两种写法;收全,
-    // 但落成 daemon `ConfigPatch::validate` 认的那组(直发 chat/messages = 400)。
-    const mappings: Array<[string, string]> = [
-      ["chat", "openai"],
-      ["responses", "responses"],
-      ["messages", "anthropic"],
-      ["gemini", "gemini"],
-    ];
-    for (const [wire, expected] of mappings) {
-      const patch: ConfigPatchWire = { wire };
+  test("wire 只接受后端规范名，校验不修改请求", () => {
+    for (const wire of ["chat", "responses", "messages", "gemini", "  CHAT "]) {
+      const patch: ConfigPatchWire = Object.freeze({ wire });
       expect(validatePatch(patch), wire).toBeNull();
-      expect(patch.wire, wire).toBe(expected);
+      expect(patch.wire).toBe(wire);
     }
-    // 旧拼写直通且幂等。
-    const legacy: ConfigPatchWire = { wire: "anthropic" };
-    expect(validatePatch(legacy)).toBeNull();
-    expect(legacy.wire).toBe("anthropic");
-    // 词表外的值与空串照旧拒绝。
-    expect(validatePatch({ wire: "deepseek" })).toContain("wire");
-    expect(validatePatch({ wire: "" })).toContain("wire");
+    for (const wire of ["openai", "anthropic", "claude", "openai-compatible", "deepseek", ""]) {
+      expect(validatePatch(Object.freeze({ wire }))).toContain("wire");
+    }
   });
 
   test("reasoningEffort 逐档对齐后端词表(六档,ultra 收尾)", () => {

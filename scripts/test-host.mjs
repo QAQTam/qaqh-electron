@@ -65,23 +65,16 @@ export class FakeTimers {
 }
 
 export function mockSdk() {
-  const sessionWatches = [], timelineWatches = [], submissions = [];
+  const sessionWatches = [], submissions = [];
   const sdk = {
     onStateChange: () => () => {}, connect: async () => {}, disconnect: async () => {},
     submit: async (...args) => { submissions.push(args); return { ack: { status: "accepted", command_id: "command-test" } }; },
-    timelinePage: async seed => ({ session_id: seed, snapshot: {} }),
     watchSession: (seed, handlers) => {
       const watch = { seed, handlers, closed: false, resyncs: 0, close() { this.closed = true; handlers.onStatus?.("closed"); }, async resync() { this.resyncs++; handlers.onBootstrap?.({ session_id: seed }); handlers.onStatus?.("live"); } };
       sessionWatches.push(watch);
       handlers.onStatus?.("live");
       return watch;
     },
-    watchTimeline: (seed, handlers) => {
-      const watch = { seed, handlers, closed: false, close() { this.closed = true; handlers.onStatus?.("closed"); } };
-      timelineWatches.push(watch);
-      handlers.onStatus?.("live");
-      return watch;
-    },
   };
-  return { sdk, sessionWatches, timelineWatches, submissions };
+  return { sdk, sessionWatches, submissions };
 }

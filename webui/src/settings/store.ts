@@ -221,13 +221,62 @@ async function runService(
 }
 
 export const applyProfile = (name: string): Promise<void> =>
-  runService("profile.apply", { name }, `已切换到 profile「${name}」`);
+  runService("profile.set_default", { name }, `已将「${name}」设为全局默认预设`);
+
+export const setDefaultProfile = applyProfile;
 
 export const saveProfileAs = (name: string): Promise<void> =>
   runService("profile.save_current", { name }, `已把当前配置存为 profile「${name}」`);
 
 export const deleteProfile = (name: string): Promise<void> =>
   runService("profile.delete", { name }, `已删除 profile「${name}」`);
+
+/**
+ * 直接创建并固化一个新 Profile 实体（小白向导式直写）。
+ * 【彻底消除全局污染】：绝不调用 config.save 覆写全局当前配置，直接调用 profile.create 原子写入！
+ */
+export async function createAndSaveProfile(profile: {
+  id?: string;
+  name: string;
+  model: string;
+  baseUrl: string;
+  wire: string;
+  apiKey?: string;
+  effort?: string;
+  contextLength?: number;
+  maxTokens?: number;
+}): Promise<boolean> {
+  if (busy() || loading()) return false;
+  setBusy(true);
+  setError(null);
+  try {
+    const payload: Record<string, unknown> = {
+      id: profile.id || profile.name.trim(),
+      name: profile.name.trim(),
+      model: profile.model.trim(),
+      baseUrl: profile.baseUrl.trim(),
+      wire: profile.wire.trim(),
+      contextLength: profile.contextLength ?? 128000,
+      maxTokens: profile.maxTokens ?? 8192,
+      reasoningEffort: profile.effort ?? "high",
+    };
+    if (profile.apiKey && profile.apiKey.trim() !== "") {
+      payload.apiKey = profile.apiKey.trim();
+    }
+    // 纯血独立原子创建：绝不覆写全局当前活跃配置！
+    await transport.rpc("profile.create", payload);
+    await fetchConfig();
+    notifyConfigChanged();
+    toast(`已成功创建模型预设「${profile.name}」`, "ok", { dedupeKey: `profile:created:${profile.name}` });
+    return true;
+  } catch (cause) {
+    setError(messageOf(cause));
+    toast(`创建预设失败: ${messageOf(cause)}`, "err");
+    return false;
+  } finally {
+    setBusy(false);
+  }
+}
 
 /** 草稿字段写入:视图只经这两个口子改配置。动过草稿就收掉上一次的成功提示,
  *  否则「已保存 N 项改动」会一直压在脚注上,把当前的「没有改动」挡住。 */
@@ -251,6 +300,11 @@ export function setExec<K extends keyof ConfigDto["exec"]>(
   value: ConfigDto["exec"][K],
 ): void {
   setDraft((prev) => (prev == null ? prev : { ...prev, exec: { ...prev.exec, [key]: value } }));
+  setNote(null);
+}
+
+export function setSandbox(enabled: boolean): void {
+  setDraft((prev) => (prev == null ? prev : { ...prev, sandbox: { enabled } }));
   setNote(null);
 }
 

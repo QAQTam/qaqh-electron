@@ -1,28 +1,25 @@
 /**
- * 一个标签页 = 一个会话的客户端状态机。
+ * 一个标签页 = 一个会话的客户端状态机 (SPEC-2026-10-29-PURGE)。
  *
- * 宿主契约(electron):所有 per-seed 面(命令/审批/RPC/timeline 流/快照)
- * 经 Rust 宿主的类型化 IPC 转发,宿主维护「单一 active seed 持流」(plan D4);
- * 切标签 = attach(宿主切 active + 重建流)+ 快照重建(权威对齐)。后台标签
- * 不收流,状态由标签页轮询 sessions 列表(turn_count/running,后端事实)驱动
- * 状态点。重连/退避/续传责任在宿主(qaqh-client),前端不再有 SSE 循环。
- *
- * 数据单源:transcript 结构/文本只来自 timeline(宿主转发的快照+SSE 帧,
- * `watermark` 去重 + 缺口触发快照);审批只来自 approvals RPC(投影事件仅当
- * 刷新信号);自动标题由 v2 Meta SSE 推送,会话目录与运行态由 sessions 列表对齐。
+ * 彻底肃清 Timeline，全面倒戈纯血 Ringing v2 单流：
+ * - 快照来自 ClientV2Bootstrap.conversation.state
+ * - 实时增量来自 single stream 的 ConversationDelta
+ * - 连接状态来自 projection://status
  */
 import { createSignal, createStore } from "solid-js";
-import { transport, desktopHostSurface, type ApprovalView, type StreamHandlers, type TimelineStatusWire, type TodoItemWire } from "../lib/transport";
+import { transport, desktopHostSurface, type ApprovalView, type StreamHandlers, type ProjectionStatusWire, type TodoItemWire } from "../lib/transport";
 import { now } from "../lib/time";
 import { onConfigChanged } from "../lib/config-events";
-import { applyEntry, applySnapshot, emptySession, forceSealTurn, prependPage } from "./reducer";
+import { applyConversationDelta, applyConversationSnapshot, emptySession, forceSealTurn, pendingContentRefs, resolveContentRef } from "./reducer";
+import { ContentLoader } from "./content-loader";
 import { evictForWindow, fillGapHeights } from "./pagination";
-import type { SessionState, TimelineEntryWire, Wait } from "./types";
+import type { SessionState, Wait } from "./types";
 import { normalizeActivity, projectionActions, readProjection, type SessionActivity } from "./projection";
 import { compactedAnchor, reduceCompact, type CompactState } from "./compact";
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
 import type { ContentRef } from "../api/qaqh/ContentRef";
 import type { UsageInfo } from "../api/qaqh/UsageInfo";
+import type { ConversationDelta } from "../api/qaqh/ConversationDelta";
 
 export type ConnectionKind = "connected" | "reconnecting" | "offline";
 
@@ -73,6 +70,8 @@ export interface ComposerMetrics {
   tokensPerSecond: number | null;
   /** 是否当前正处于模型增量流式生成中。 */
   isStreaming?: boolean;
+  /** Parameter generation activity, not a fabricated token throughput. */
+  isGeneratingToolInput?: boolean;
   contextPercent: number | null;
   /**
    * 百分比的分母本身(`config.load().contextLength`)。
@@ -86,11 +85,6 @@ export interface ComposerMetrics {
   /** 上一轮端点回的原生 usage 整数项(`credit` 等未建模字段);没有就是空对象。 */
   extras: Record<string, number>;
 }
-
-/** 吞吐滑动窗口长度:窗口内的模型增量决定瞬时 tok/s。 */
-const STREAM_WINDOW_MS = 1200;
-/** 超过这个间隔没有新的模型增量,就不算「正在吐字」(工具执行、子进程、网络停顿)。 */
-const STREAM_IDLE_MS = 1200;
 
 /** 轻量、快速、零外部依赖的 token 粗估器 (按 CJK / 拉丁字符特性平滑加权)。 */
 export function estimateTokens(text: string): number {
@@ -121,12 +115,18 @@ export interface SessionProfileView {
   effective: string | null;
   model: string | null;
   catalog: string[];
+  details?: Record<string, import("../api/qaqh/ConfigDto").ProfileSummaryDto>;
 }
 
 /** `session.meta` 条目(`SessionListEntry`,`meta` 字段在 wire 上是平铺的)。 */
-type SessionMetaWire = { profile?: string | null };
-/** `config.load` 里与 profile 选择器有关的三个字段。 */
-type ConfigProfileView = { activeProfile: string; model: string; profiles: string[] };
+type SessionMetaWire = { profile?: string | null; effort?: string | null };
+/** `config.load` 里与 profile 选择器有关的字段。 */
+type ConfigProfileView = {
+  activeProfile: string;
+  model: string;
+  profiles: string[];
+  details?: Record<string, import("../api/qaqh/ConfigDto").ProfileSummaryDto>;
+};
 
 function cacheHitPercent(usage: UsageInfo): number | null {
   if (usage.cache_usage_reported !== true) return null;
@@ -134,25 +134,6 @@ function cacheHitPercent(usage: UsageInfo): number | null {
   return total > 0 ? (usage.prompt_cache_hit_tokens / total) * 100 : null;
 }
 
-/** 一帧之内攒下来的同一种增量(按「种类 + 回合 + 块 + 流」归并)。 */
-interface PendingFragment {
-  turnId: string;
-  blockId: string;
-  /** `text_delta` 的累积文本,或 `tool_progress` 的累积输出。 */
-  fragments: Array<{ seq: number; text: string }>;
-  truncated: boolean;
-  /** 已消费到的 seq(取批次里最大的那个)。 */
-  seq: number;
-  progress: boolean;
-  /** `tool_progress` 的进度流标识("stdout" | "stderr" | null);text_delta 恒为 null。 */
-  stream: string | null;
-}
-
-/** timeline 快照窗口页大小;向上翻页页大小(spec §14.2 limit=30)。 */
-const SNAPSHOT_LIMIT = 50;
-const PAGE_LIMIT = 30;
-/** 缺口触发快照校正的最小间隔(防抖,高吞吐下不连环拉全量)。 */
-const RESNAPSHOT_DEBOUNCE_MS = 2_000;
 /** 压缩终态卡(done/skipped)自动退场的延时;failed 不退,留待用户处理。 */
 const COMPACT_CARD_TTL_MS = 8_000;
 
@@ -178,18 +159,6 @@ function compactDeliveryFailure(error: unknown): string {
 const CANCEL_WATCHDOG_MS = 10_000;
 export { CANCEL_WATCHDOG_MS };
 
-/**
- * 连接状态看门狗(BUG-2026-10-29):connection 完全由宿主推的 `timeline://status`
- * 事件驱动,daemon 重启窗口期发出的事件渲染层可能错过,宿主侧一条流 paused 后
- * combined 也永远回不到 open——横幅就无限期停在「网络波动,正在重连」,直到用户
- * 偶然发出首个请求才间接翻转。非 connected 期间周期性向宿主核对一次缓存状态
- * (纯 IPC,无网络请求),恢复后自动停止;宿主两条流 wedged(closed)时限频自动
- * 重建,不再等用户点「重试」。
- */
-const STATUS_WATCHDOG_MS = 2_500;
-/** 看门狗发现宿主流 wedged(closed)时的自动重建限频:daemon 未起时不打爆 attach。 */
-const AUTO_RETRY_MIN_MS = 10_000;
-
 export class SessionStore {
   readonly seed: string;
   readonly state: [SessionState, (fn: (draft: SessionState) => void) => void];
@@ -200,15 +169,12 @@ export class SessionStore {
   activity = createSignal<SessionActivity | null>(null);
   composerMetrics = createSignal<ComposerMetrics>({ tokensPerSecond: null, isStreaming: false, contextPercent: null, contextWindow: null, cacheHitPercent: null, extras: {} });
   composerProfile = createSignal<SessionProfileView>({ selected: null, activeProfile: null, effective: null, model: null, catalog: [] });
+  composerEffort = createSignal<string | null>(null);
   title = createSignal<string | null>(null);
   pending = createSignal<ApprovalView[]>([]);
   todos = createSignal<TodoItemWire[]>([]);
   loadError = createSignal(false);
-  /**
-   * 权威首页是否已落地(BUG-2026-10-29 第二则)。deactivate 即卸载转录,重新激活
-   * 要等 attach 的快照回来才有内容——SessionView 据此渲染「消息同步中」,
-   * 而不是闪一帧空态。open 但未 hydrate 时由 applyTimelineStatus 兜底补拉一次。
-   */
+  /** 权威快照是否已落地：loadBootstrap 成功落地置 true，SessionView 据此渲染内容或「消息同步中」。 */
   hydrated = createSignal(false);
   hasNewReply = createSignal(false);
   /** 乐观发送中状态：点击发送即刻置 true 消除时差空窗，首个事件到达或结束时置 false。 */
@@ -223,12 +189,7 @@ export class SessionStore {
   private compactTimer: number | null = null;
   /** 取消看门狗定时器;真实终态 delta / 新回合 / dispose 都会先撤掉。 */
   private cancelWatchdog: ReturnType<typeof setTimeout> | null = null;
-  /** 连接状态看门狗;connected / deactivate / dispose 停止。 */
-  private statusWatchdog: ReturnType<typeof setInterval> | null = null;
-  private lastAutoRetryAt = 0;
-  /** 宿主侧是否已为本 seed 尝试过建流;closed 兜底重试只在尝试过之后才允许。 */
-  private attachAttempted = false;
-  /** 待发附件;上传成功前不允许发送(命令里只能出现 `ContentRef`)。 */
+  /** 宿主侧是否已为本 seed 尝试过建流。 */
   pendingAttachments = createSignal<PendingAttachment[]>([]);
   loadingOlder = createSignal(false);
 
@@ -244,25 +205,14 @@ export class SessionStore {
 
   /** 宿主事件反订阅。 */
   private hostUnlisten: (() => void) | null = null;
-  /**
-   * 帧内合并的高频增量(`text_delta` 与 `tool_progress`)。逐条写store 的代价有两层:
-   * 每帧 N 次通知,以及 `tool_progress` 每次都要重做一遍 16KB 尾窗切片
-   * (O(条数 × 16KB) 的字符串复制)。实测 400 个 chunk:合并前 2014ms。
-   */
-  private pendingFragments = new Map<string, PendingFragment>();
-  /**
-   * 已消费(立即应用,或进了 delta 缓冲)到的最大 seq。store 的 `watermark` 要等
-   * 缓冲提交才推进,所以缺口判定必须看这个更高的值 —— 否则同一批里的第二条
-   * delta 就会被当成缺口丢掉(夹具实测:连续喂 78 条只落地 10 条,文本每 2s 跳一次)。
-   */
-  private consumedSeq = 0;
-  private rafHandle: number | null = null;
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastResnapshotAt = 0;
-  private resnapshotTimer: number | null = null;
   private waitFrom: { kind: Wait["kind"]; at: number } | null = null;
   private lastTurnCount: number | null = null;
   private disposed = false;
+  private bootstrapRequestId = 0;
+  private contentLoader = new ContentLoader(
+    (ref) => transport.readContentText(ref),
+    (ref, text, resolved) => this.mutate((draft) => resolveContentRef(draft, ref, text, resolved)),
+  );
   private todoRefresh: Promise<void> | null = null;
   private todoRefreshPending = false;
   private activeTurnStartedAt: number | null = null;
@@ -273,28 +223,19 @@ export class SessionStore {
   private activeModelBlockIds = new Set<string>();
   private activeOutputStartedAt: number | null = null;
   private activeOutputEndedAt: number | null = null;
-  /** 最后一次模型增量到达时刻;超过 `STREAM_IDLE_MS` 没动静即视为没在吐字。 */
-  private lastModelDeltaAt: number | null = null;
-  /**
-   * 本回合「模型确实在产出」的累计毫秒。相邻增量间隔在 `STREAM_IDLE_MS` 内才累加,
-   * 工具执行与网络停顿的那段被跳过——`updateComposerUsage` 的速率分母用它,
-   * 否则「已完成检查 30 秒再写两行」会被算成模型很慢。
-   */
   private activeOutputActiveMs = 0;
   private contextRefreshId = 0;
   /** 分母:最近一次 `config.load` 读到的窗口。 */
   private contextLength: number | null = null;
   /** `session.meta.profile`(会话级选择);null = 跟随全局 `active_profile`。 */
   private metaProfile: string | null = null;
+  /** `session.meta.effort`(会话级选择);null = 跟随全局或 profile 默认。 */
+  private metaEffort: string | null = null;
   /** 最近一次 `config.load` 的 profile 面:名录 + 活跃项 + 活跃项的 model。 */
   private configProfile: ConfigProfileView | null = null;
   private profileRefreshId = 0;
   /** 分子:上一轮服务端 usage 的 `prompt_tokens`,即真正发出去的上下文。 */
   private measuredContextTokens: number | null = null;
-  /** 流式吐字滑动窗口(最近 1200ms 内到达的 delta token 采样)。 */
-  private activeStreamWindow: Array<{ at: number; tokens: number }> = [];
-  /** 当前轮次当前流式输出的累积估算 token 数。 */
-  private activeStreamTokens = 0;
   /** 配置广播的退订函数(见 `lib/config-events`)。 */
   private unsubscribeConfig: (() => void) | null = null;
 
@@ -328,9 +269,7 @@ export class SessionStore {
 
   // ── 生命周期 ────────────────────────────────────────────────────────────────
 
-  /** 成为活动标签:先订阅宿主事件(attach 发出的 timeline://status 事件不丢),
-   *  再 attach——宿主取的权威首页会作为 `timeline://snapshot` 推回来,所以这里
-   *  不再自己补一次 `resnapshot()`(那等于一次 attach 传两页、整表重建两遍)。 */
+  /** 成为活动标签:先订阅宿主事件，再 attach + loadBootstrap 取权威快照。 */
   async activate(): Promise<void> {
     if (this.disposed) return;
     this.hasNewReply[1](false);
@@ -338,33 +277,26 @@ export class SessionStore {
     this.reconnect[1](null);
     this.hydrated[1](false);
     await this.connectHost();
-    this.attachAttempted = true;
-    await transport.attach(this.seed, SNAPSHOT_LIMIT);
+    await transport.attach(this.seed);
+    await this.loadBootstrap();
     void this.refreshApprovals();
     void this.refreshTodos();
-    void this.refreshActivity();
     void this.refreshConfigView();
     void this.refreshProfile();
   }
 
   /**
-   * 失去活动资格(别的标签接管):退订宿主事件 + **立即卸载转录**(BUG-2026-10-29
-   * 第二则)。宿主本就只给单一 active seed 建流,后台不收流;真正的内存过载来自
-   * 非活动 store 的全量转录(turns 的文本/工具输出)与 fragments 常驻——每开一个
-   * 会话只增不减。后台标签只保留轻量生命周期(title/connection/activity/
-   * hasNewReply),待授权/待回答等状态由 sessions 列表轮询(15s/聚焦)驱动;
-   * 重新激活时 attach 权威快照重建,配合 SessionView 的「消息同步中」。
+   * 失去活动资格(别的标签接管):退订宿主事件 + 立即卸载转录。
    */
   deactivate(): void {
     this.closeHost();
-    this.stopStatusWatchdog();
     this.providerRetry[1](null);
     this.reconnect[1](null);
     this.setConnection("reconnecting");
     this.unloadForBackground();
   }
 
-  /** 卸载重状态:转录、增量缓冲、审批/待办全量列表。轻量信号(title 等)保留。 */
+  /** 卸载重状态:转录、审批/待办全量列表。轻量信号(title 等)保留。 */
   private unloadForBackground(): void {
     this.releaseBuffers();
     this.clearCancelWatchdog();
@@ -376,10 +308,10 @@ export class SessionStore {
     this.hydrated[1](false);
     this.loadError[1](false);
     this.loadingOlder[1](false);
-    this.consumedSeq = 0;
     this.waitFrom = null;
     this.activeTurnStartedAt = null;
     this.activeModelBlockIds.clear();
+    this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
     this.pending[1]([]);
     this.todos[1]([]);
     // 顶层键逐个换血(emptySession 覆盖全部顶层键):turns 的嵌套 store 节点整体
@@ -389,40 +321,32 @@ export class SessionStore {
     });
   }
 
-  /** 释放帧内合并缓冲与挂起的定时器(deactivate/dispose 共用)。 */
+  /** 卸载时丢弃引用缓存与排队任务，旧异步响应不得恢复后台转录。 */
   private releaseBuffers(): void {
-    this.pendingFragments.clear();
-    if (this.rafHandle != null) cancelAnimationFrame(this.rafHandle);
-    this.rafHandle = null;
-    if (this.flushTimer != null) clearTimeout(this.flushTimer);
-    this.flushTimer = null;
-    if (this.resnapshotTimer != null) {
-      clearTimeout(this.resnapshotTimer);
-      this.resnapshotTimer = null;
-    }
+    this.bootstrapRequestId++;
+    this.contentLoader.clear();
+  }
+
+  private hydrateContent(): void {
+    for (const ref of pendingContentRefs(this.stateGet)) this.contentLoader.request(ref);
   }
 
   dispose(): void {
     this.disposed = true;
-    this.stopStatusWatchdog();
     this.providerRetry[1](null);
     this.reconnect[1](null);
     this.unsubscribeConfig?.();
     this.unsubscribeConfig = null;
     this.clearCancelWatchdog();
     this.closeHost();
-    // 退订后还挂在队列里的 rAF 回调会带着已废弃标签的缓冲写进 store;统一在
-    // releaseBuffers 里撤(与 deactivate 的卸载共用一份释放逻辑)。
-    this.releaseBuffers();
     this.unloadForBackground();
   }
 
   retry(): void {
-    // 重连/退避在宿主侧,这里只触发宿主重建流(用户点「重试」/窗口聚焦/看门狗兜底)。
+    // 重连/退避在宿主侧,这里只触发宿主重建流(用户点「重试」/窗口聚焦)。
     this.providerRetry[1](null);
     this.reconnect[1](null);
     this.setConnection("reconnecting");
-    this.attachAttempted = true;
     this.host()
       .streamsRetry(this.seed)
       .catch(() => this.setConnection("offline"));
@@ -437,18 +361,27 @@ export class SessionStore {
     this.hostUnlisten = null;
   }
 
-  // ── 宿主事件订阅(timeline://*, projection://*) ─────────────────────────────
+  // ── 宿主事件订阅 (projection://*, conn://*) ────────────────────────────────
 
   private async connectHost(): Promise<void> {
     if (this.disposed) return;
     this.closeHost();
     this.setConnection("reconnecting");
     const handlers: StreamHandlers = {
-      onTimelineEntry: (seed, entry) => {
-        if (seed === this.seed) this.onTimelineEntry(entry as TimelineEntryWire);
-      },
-      onTimelineStatus: (status) => {
-        this.applyTimelineStatus(status);
+      onProjectionStatus: (status: ProjectionStatusWire) => {
+        if (status.session_id != null && status.session_id !== this.seed) return;
+        if (status.status === "live") {
+          const reconnected = this.connection[0]() !== "connected";
+          this.setConnection("connected");
+          this.reconnect[1](null);
+          if (reconnected) void this.refreshTodos();
+          if (!this.hydrated[0]()) void this.loadBootstrap();
+        } else if (status.status === "closed" || status.status === "paused") {
+          this.reconnect[1](null);
+          this.setConnection("offline");
+        } else {
+          this.setConnection("reconnecting");
+        }
       },
       onProjectionEvent: (seed, envelope) => {
         if (seed !== this.seed) return;
@@ -457,22 +390,11 @@ export class SessionStore {
       onProjectionReset: (seed) => {
         if (seed !== this.seed) return;
         this.providerRetry[1](null);
-        // 宿主的 v2 流会自动以 snapshot cursor 重订阅;这里刷新派生信号即可。
         this.onSessionsChanged?.();
+        void this.loadBootstrap();
         void this.refreshApprovals();
         void this.refreshTodos();
         void this.refreshActivity();
-      },
-      onTimelineSnapshot: (page) => {
-        // attach 的权威首页与宿主侧缺口恢复都走这里(前端不再自己补拉首页)。
-        if (page.session_id != null && page.session_id !== this.seed) return;
-        this.providerRetry[1](null);
-        this.mutate((draft) => {
-          applySnapshot(draft, page);
-        });
-        this.rebaseConsumed(page.snapshot?.watermark ?? 0);
-        this.loadError[1](false);
-        this.hydrated[1](true);
       },
       onIncompatible: () => {},
       onHostError: () => {},
@@ -486,309 +408,71 @@ export class SessionStore {
       this.hostUnlisten = await this.host().subscribe(handlers);
     } catch {
       this.setConnection("offline");
-      return;
     }
-    // 兜底事件竞态:宿主可能在订阅完成前已发出 open(Electron 事件不保留给晚到
-    // 订阅者),订阅成功后主动查询一次宿主侧当前状态对齐。
+  }
+
+  /** 从 ClientV2Bootstrap 读取 authoritative conversation 快照。 */
+  async loadBootstrap(): Promise<void> {
+    if (this.disposed) return;
+    const requestId = ++this.bootstrapRequestId;
     try {
-      const status = await this.host().timelineStatus(this.seed);
-      if (status != null) this.applyTimelineStatus(status);
+      const bootstrap = (await transport.sessionBootstrap(this.seed)) as any;
+      if (this.disposed || requestId !== this.bootstrapRequestId) return;
+      if (bootstrap?.conversation?.state) {
+        this.mutate((draft) => {
+          applyConversationSnapshot(draft, bootstrap.conversation.state);
+        });
+        this.contentLoader.retryFailed();
+        this.hydrateContent();
+        this.loadError[1](false);
+        this.hydrated[1](true);
+      }
+      if (bootstrap?.control?.state?.activity) {
+        this.activity[1](normalizeActivity(bootstrap.control.state.activity, "projection"));
+      }
     } catch {
-      // best-effort:后续 status 事件仍会持续驱动。
-    }
-    this.startStatusWatchdog();
-  }
-
-  /** timeline 流状态 → connection 信号(其他 seed 的状态忽略)。 */
-  private applyTimelineStatus(status: TimelineStatusWire): void {
-    if (status.session_id != null && status.session_id !== this.seed) return;
-    if (status.status === "open") {
-      this.stopStatusWatchdog();
-      const reconnected = this.connection[0]() !== "connected";
-      this.setConnection("connected");
-      this.reconnect[1](null);
-      if (reconnected) void this.refreshTodos();
-      // 流已 open 但权威首页还没到(snapshot 事件丢失/晚到):按后端分页口径
-      // 主动补拉一次首页,不等下一个内容事件。hydrated 后不再走这条。
-      if (!this.hydrated[0]()) void this.resnapshot();
-    } else if (status.status === "closed") {
-      this.reconnect[1](null);
-      this.setConnection("offline");
-    } else {
-      this.setConnection("reconnecting");
+      if (!this.disposed && requestId === this.bootstrapRequestId) this.loadError[1](true);
     }
   }
 
-  /**
-   * 连接状态看门狗:非 connected 期间每 2.5s 向宿主核对一次缓存流状态(纯 IPC),
-   * 补上丢失的 status 事件;宿主回报 closed(paused 流,事件驱动永不自愈)时
-   * 限频自动重建双流。恢复 connected / 标签失活 / dispose 时停止。
-   */
-  private startStatusWatchdog(): void {
-    if (this.statusWatchdog != null || this.disposed) return;
-    this.statusWatchdog = setInterval(() => {
-      if (this.disposed || this.connection[0]() === "connected") {
-        this.stopStatusWatchdog();
-        return;
-      }
-      void Promise.resolve()
-        .then(() => this.host().timelineStatus(this.seed))
-        .then((status) => {
-          if (status == null || this.disposed) return;
-          this.applyTimelineStatus(status);
-          if (status.status === "closed" && this.attachAttempted) {
-            const at = Date.now();
-            if (at - this.lastAutoRetryAt >= AUTO_RETRY_MIN_MS) {
-              this.lastAutoRetryAt = at;
-              this.retry();
-            }
-          }
-        })
-        .catch(() => {});
-    }, STATUS_WATCHDOG_MS);
-  }
+  // ── 投影事件 (单流驱动) ─────────────────────────────────────────────────────
 
-  private stopStatusWatchdog(): void {
-    if (this.statusWatchdog == null) return;
-    clearInterval(this.statusWatchdog);
-    this.statusWatchdog = null;
-  }
-
-  private onTimelineEntry(entry: TimelineEntryWire): void {
-    if (typeof entry?.timeline_seq !== "number" || !entry.turn_id) return;
-    if (this.isSending[0]()) this.isSending[1](false);
-    // 「已经知道到哪」要同时看已提交的水位和已消费的 seq:delta 进缓冲时不写水位。
-    const known = Math.max(this.stateGet.watermark, this.consumedSeq);
-    if (entry.timeline_seq <= known) return; // 重复(重放)直接丢弃(幂等)
-    if (entry.timeline_seq > known + 1 && known > 0) {
-      // seq 缺口:丢弃该事件并触发一次快照校正(spec §15.2)。校正按 2s 防抖,
-      // 且回合槽按 key 挂载 → 重建只更新数据,不再拆掉整屏 DOM。
-      this.scheduleResnapshot();
-      return;
-    }
-    const event = entry.event;
-    if (event.type === "provider_retrying") {
-      this.providerRetry[1]({
-        turnId: entry.turn_id,
-        attempt: event.attempt,
-        maxRetries: event.max_retries,
-        delaySecs: event.delay_secs,
-        error: event.error,
-      });
-      // Still advance the seq/watermark: this is a real timeline entry, just
-      // not a turn/block mutation.
-      this.mutate((draft) => {
-        this.flushFragmentsInto(draft);
-        draft.watermark = entry.timeline_seq;
-      });
-      this.consumedSeq = Math.max(this.consumedSeq, entry.timeline_seq);
-      return;
-    }
-    this.providerRetry[1](null);
-    if (event.type === "block_opened" && (event.block.kind === "text" || event.block.kind === "reasoning")) {
-      this.activeModelBlockIds.add(event.block.block_id);
-    } else if (event.type === "text_delta" && this.activeModelBlockIds.has(event.block_id)) {
-      const at = now();
-      this.activeOutputStartedAt ??= at;
-      this.activeOutputEndedAt = at;
-      // 只累加「模型在产出」的区间;工具执行/网络停顿那段不计入速率分母。
-      if (this.lastModelDeltaAt != null && at - this.lastModelDeltaAt <= STREAM_IDLE_MS) {
-        this.activeOutputActiveMs += at - this.lastModelDeltaAt;
-      }
-      this.lastModelDeltaAt = at;
-      const tokens = estimateTokens(event.delta);
-      this.activeStreamTokens += tokens;
-      this.activeStreamWindow.push({ at, tokens });
-      const cutoff = at - STREAM_WINDOW_MS;
-      while (this.activeStreamWindow.length > 0 && this.activeStreamWindow[0]!.at < cutoff) {
-        this.activeStreamWindow.shift();
-      }
-    } else if (event.type === "block_opened" && event.block.kind === "tool") {
-      // 工具块一开就停表:模型不再产出,而 tool_progress 不是吐字。少了这一步,
-      // 无进度流的工具(read/write/grep)期间根本不会有 flush 去调 updateLiveMetrics,
-      // 脉冲点会一直亮着谎报「正在吐字」。
-      this.composerMetrics[1]((current) => (current.isStreaming ? { ...current, isStreaming: false } : current));
-    } else if (event.type === "turn_sealed") {
-      this.activeModelBlockIds.clear();
-      this.activeStreamWindow = [];
-      this.composerMetrics[1]((current) => ({ ...current, isStreaming: false }));
-    }
-    if (event.type === "text_delta" || event.type === "tool_progress") {
-      // 高频增量按「种类 + 块」归并到帧末再写一次(spec §6/§10.2):每帧至多一次
-      // store 写入,16KB 尾窗切片也一帧只做一遍。
-      const progress = event.type === "tool_progress";
-      const blockId = event.block_id;
-      const piece = event.type === "tool_progress" ? event.chunk : event.delta;
-      // `truncated` 只有 tool_progress 带(text_delta 无此槽)。
-      const truncated = event.type === "tool_progress" && event.truncated === true;
-      // 进度流是归并桶的一部分:stdout 与 stderr 不能在帧内被并成一段伪交织,
-      // 否则 reducer 就再也分不开(09-18 契约 §5.1)。
-      const stream = progress ? event.stream ?? null : null;
-      const key = `${progress ? "p" : "t"}\u0000${entry.turn_id}\u0000${blockId}\u0000${stream ?? ""}`;
-      const buffered = this.pendingFragments.get(key);
-      if (buffered) {
-        buffered.fragments.push({ seq: entry.timeline_seq, text: piece });
-        buffered.truncated = buffered.truncated || truncated;
-        buffered.seq = Math.max(buffered.seq, entry.timeline_seq);
-      } else {
-        this.pendingFragments.set(key, { turnId: entry.turn_id, blockId, fragments: [{ seq: entry.timeline_seq, text: piece }], truncated, seq: entry.timeline_seq, progress, stream });
-      }
-      this.consumedSeq = Math.max(this.consumedSeq, entry.timeline_seq);
-      this.scheduleFlush();
-    } else {
-      // 流中 usage 采样（瞬态、~1s 节流）：温和路径只同步官方分子/缓存命中，
-      // 不清流窗口、不改 tok/s、不灭脉冲——结算语义仍归 block seal / 回合终态。
-      if (event.type === "usage_sampled") this.applyUsageSampled(event.usage);
-      this.mutate((draft) => {
-        // 结构事件是顺序屏障:同一事务先落地较早的增量,不能用更高水位吞掉它们。
-        this.flushFragmentsInto(draft);
-        applyEntry(draft, entry);
-        draft.watermark = entry.timeline_seq;
-      });
-      this.consumedSeq = Math.max(this.consumedSeq, entry.timeline_seq);
-    }
-  }
-
-  private scheduleFlush(): void {
-    if (this.rafHandle != null) return;
-    const commit = (): void => {
-      if (this.rafHandle != null) globalThis.cancelAnimationFrame?.(this.rafHandle);
-      this.rafHandle = null;
-      if (this.flushTimer != null) clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-      if (this.pendingFragments.size === 0) return;
-      this.mutate((draft) => this.flushFragmentsInto(draft));
-      this.updateLiveMetrics();
-    };
-    this.rafHandle = requestAnimationFrame(commit);
-    // 窗口被遮挡时 Chromium 可暂停 rAF;后台仍提交数据,不无限积累片段。
-    this.flushTimer = setTimeout(commit, 100);
-  }
-
-  private flushFragmentsInto(draft: SessionState): void {
-    let maxSeq = draft.watermark;
-    for (const item of this.pendingFragments.values()) {
-      // 权威快照可能只覆盖合并批次的一部分;只追加水位之后的片段。
-      if (item.seq <= draft.watermark) continue;
-      const text = item.fragments.filter((part) => part.seq > draft.watermark).map((part) => part.text).join("");
-      applyEntry(draft, {
-        timeline_seq: item.seq,
-        turn_id: item.turnId,
-        event: item.progress
-          ? { type: "tool_progress", block_id: item.blockId, chunk: text, truncated: item.truncated, stream: item.stream }
-          // 合并后块内片段号不再有意义;顺序真相是 timeline_seq。
-          : { type: "text_delta", block_id: item.blockId, fragment_seq: 0, delta: text },
-      });
-      maxSeq = Math.max(maxSeq, item.seq);
-    }
-    // 所有块提交完再推进水位,避免跨块合并批次互相覆盖。
-    draft.watermark = maxSeq;
-    this.pendingFragments.clear();
-    if (this.rafHandle != null) globalThis.cancelAnimationFrame?.(this.rafHandle);
-    this.rafHandle = null;
-    if (this.flushTimer != null) clearTimeout(this.flushTimer);
-    this.flushTimer = null;
-  }
-
-  /**
-   * 权威快照落地后重基线消费指针:快照覆盖到 `pageWatermark`,缓冲里比它更新的
-   * delta 仍然要保留(那部分文本快照里没有)。这里按快照重设而不是取历史最大值
-   * —— 换 epoch 后 seq 可能从更小的数重新开始。
-   */
-  private rebaseConsumed(pageWatermark: number): void {
-    // 取 max 而不是直接重设:这一页可能被 applySnapshot 当陈旧页整页丢弃(那时
-    // draft.watermark 停在更高处),把消费指针拉到更低就会让重复/丢失判定错位。
-    // 换 epoch 时 applySnapshot 先把 draft.watermark 重设,这里自然跟着降。
-    let seq = Math.max(pageWatermark, this.stateGet.watermark);
-    for (const item of this.pendingFragments.values()) seq = Math.max(seq, item.seq);
-    this.consumedSeq = seq;
-  }
-
-  private scheduleResnapshot(): void {
-    const at = Date.now();
-    const elapsed = at - this.lastResnapshotAt;
-    if (elapsed < RESNAPSHOT_DEBOUNCE_MS) {
-      // 处于防抖期内：挂尾随定时器，确保防抖窗口一过立即补拉一次，绝不丢失被缺口跳过的事件！
-      if (this.resnapshotTimer == null) {
-        this.resnapshotTimer = window.setTimeout(() => {
-          this.resnapshotTimer = null;
-          this.lastResnapshotAt = Date.now();
-          void this.resnapshot();
-        }, RESNAPSHOT_DEBOUNCE_MS - elapsed);
-      }
-      return;
-    }
-    if (this.resnapshotTimer != null) {
-      clearTimeout(this.resnapshotTimer);
-      this.resnapshotTimer = null;
-    }
-    this.lastResnapshotAt = at;
-    void this.resnapshot();
-  }
-
-  /** 快照重建(attach/缺口校正后的权威对齐)。 */
-  async resnapshot(): Promise<void> {
-    try {
-      const page = await transport.timelinePage(this.seed, `?limit=${SNAPSHOT_LIMIT}`);
-      this.mutate((draft) => {
-        applySnapshot(draft, page);
-      });
-      this.rebaseConsumed(page.snapshot?.watermark ?? 0);
-      this.loadError[1](false);
-      this.hydrated[1](true);
-    } catch {
-      // 快照失败不致命:流还在,下一次触发再试。
-    }
-  }
-
-  // ── 投影事件(刷新信号,宿主转发) ─────────────────────────────────────────────
-
-  /** 前端只把投影事件当刷新信号;数据一律走 approvals RPC / sessions 列表。 */
   private applyProjection(streamKey: unknown, payload: unknown): void {
     const delta = readProjection(streamKey, payload);
     if (!delta.channel || !delta.kind) return;
     if (delta.channel === "conversation") {
-      if (delta.kind === "turn_started") {
-        // 新回合已开:旧取消的看门狗作废,不得误伤新一轮的乐观发送态。
+      const outer = (payload != null && typeof payload === "object") ? (payload as Record<string, any>) : {};
+      const convDelta = (outer.data != null && typeof outer.data === "object") ? (outer.data as ConversationDelta) : null;
+      if (convDelta && typeof convDelta === "object" && convDelta.kind) {
+        this.mutate((draft) => {
+          applyConversationDelta(draft, convDelta);
+        });
+        // 流式帧不带正文引用，扫一遍待补载清单纯属浪费。
+        const streaming =
+          convDelta.kind === "assistant_block_progress" || convDelta.kind === "tool_input_progress";
+        if (!streaming) this.hydrateContent();
+      }
+
+      if (delta.kind === "input_accepted") {
+        if (this.isSending[0]()) this.isSending[1](false);
+      } else if (delta.kind === "turn_started") {
         this.clearCancelWatchdog();
         this.isSending[1](false);
         this.activeTurnStartedAt = now();
         this.activeModelBlockIds.clear();
         this.activeOutputStartedAt = null;
         this.activeOutputEndedAt = null;
-        this.lastModelDeltaAt = null;
         this.activeOutputActiveMs = 0;
-        this.activeStreamWindow = [];
-        this.activeStreamTokens = 0;
-        this.composerMetrics[1]((current) => ({ ...current, isStreaming: false }));
-      }
-      if (delta.kind === "assistant_block_sealed" || delta.kind === "turn_finished" || delta.kind === "turn_interrupted") {
+        this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
+      } else if (delta.kind === "assistant_block_sealed" || delta.kind === "turn_finished" || delta.kind === "turn_interrupted") {
         const usage = delta.body.usage as UsageInfo | null | undefined;
         if (usage != null) this.updateComposerUsage(usage);
         if (delta.kind === "turn_finished" || delta.kind === "turn_interrupted") {
-          // 真实终态到达:取消看门狗撤防。
           this.clearCancelWatchdog();
           this.isSending[1](false);
           this.activeTurnStartedAt = null;
           this.activeModelBlockIds.clear();
-          this.activeStreamWindow = [];
-          this.activeStreamTokens = 0;
-          this.composerMetrics[1]((current) => ({ ...current, isStreaming: false }));
-
-          // 双流防御自愈：V2 投影流已确认回合终态，若 Timeline 流未推 turn_sealed 或因缺口被丢弃，
-          // 本地立刻强制收口 running 回合，杜绝假死，并补拉快照对齐权威落盘细节！
-          const body = delta.body;
-          const turnId = typeof body.turn_id === "string" ? body.turn_id : null;
-          const terminal = typeof body.terminal === "string"
-            ? body.terminal
-            : delta.kind === "turn_interrupted" ? "cancelled" : undefined;
-          const error = body.error as { message?: string } | null | undefined;
-          this.mutate((draft) => {
-            forceSealTurn(draft, turnId, terminal, error);
-          });
-          void this.resnapshot();
-
-          // 换 profile 的重载就在 turn 边界生效,回合结束正好把新配置与新选择读回来。
+          this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
           void this.refreshConfigView();
           void this.refreshProfile();
         }
@@ -839,90 +523,7 @@ export class SessionStore {
     }
   }
 
-  /**
-   * 增量流式生成时的实时测算（只在模型真在产出时被调用）：
-   * 1. tok/s：取滑动窗口（最近 `STREAM_WINDOW_MS`）内的 token 增量算瞬时速率，
-   *    EMA 滤波消除分块抖动；窗口太薄就保留上一个值，不拿总时长凑一个假数；
-   * 2. 上下文：基准 prompt_tokens + 当前轮次已生成的 token，动态反映增长。
-   */
-  private updateLiveMetrics(): void {
-    if (this.activeModelBlockIds.size === 0 || this.activeOutputStartedAt == null) return;
-    const at = now();
-    // 距最后一次模型增量已超过 `STREAM_IDLE_MS` = 现在没在吐字(工具在执行、子进程在跑、
-    // 网络卡住)。这里必须**停表**并把脉冲点灭掉:继续往下走会落到旧的回退分支,
-    // 用「累计 token ÷ 从首个增量算起的总时长」出数,而那个分母含工具墙钟——
-    // 表现为工具一跑,速率就一路衰减,像模型突然变慢。
-    if (this.lastModelDeltaAt == null || at - this.lastModelDeltaAt > STREAM_IDLE_MS) {
-      this.composerMetrics[1]((current) => (current.isStreaming ? { ...current, isStreaming: false } : current));
-      return;
-    }
-    const cutoff = at - STREAM_WINDOW_MS;
-    while (this.activeStreamWindow.length > 0 && this.activeStreamWindow[0]!.at < cutoff) {
-      this.activeStreamWindow.shift();
-    }
-
-    let liveTps: number | null = null;
-    if (this.activeStreamWindow.length >= 2) {
-      const first = this.activeStreamWindow[0]!;
-      const last = this.activeStreamWindow[this.activeStreamWindow.length - 1]!;
-      const windowDuration = (last.at - first.at) / 1000;
-      if (windowDuration >= 0.15) {
-        let windowTokens = 0;
-        for (let i = 1; i < this.activeStreamWindow.length; i += 1) {
-          windowTokens += this.activeStreamWindow[i]!.tokens;
-        }
-        liveTps = windowTokens / windowDuration;
-      }
-    }
-
-    if (liveTps != null && Number.isFinite(liveTps)) {
-      this.composerMetrics[1]((current) => ({
-        ...current,
-        tokensPerSecond: current.tokensPerSecond == null
-          ? liveTps!
-          : current.tokensPerSecond * 0.35 + liveTps! * 0.65,
-        isStreaming: true,
-      }));
-    } else {
-      this.composerMetrics[1]((current) => ({
-        ...current,
-        isStreaming: true,
-      }));
-    }
-
-    if (this.contextLength != null && this.contextLength > 0) {
-      const baseTokens = this.measuredContextTokens ?? 0;
-      const currentTotal = baseTokens + this.activeStreamTokens;
-      this.composerMetrics[1]((current) => ({
-        ...current,
-        contextPercent: Math.min(100, (currentTotal / this.contextLength!) * 100),
-      }));
-    }
-  }
-
-  /**
-   * 流中 usage 采样（`usage_sampled` timeline 事件，后端 ~1s 节流）的温和消费：
-   *  - `prompt_tokens` 是本轮请求的实时官方上下文，比「上一轮 prompt」新鲜——
-   *    有就重基线（`updateComposerUsage` 的最终结算随后会覆盖成权威终值）；
-   *  - 端点可能只报 output（Anthropic `message_delta`），没有 prompt 就不动
-   *    分子，更不能清零——那会把表盘打到 0%。
-   *  - 只动 contextPercent / cacheHitPercent；tok/s、`isStreaming`、流窗口
-   *    都是吐字速率的状态机，采样事件不得碰（那是块 seal 的职责）。
-   */
-  private applyUsageSampled(usage: UsageInfo): void {
-    if (usage.prompt_tokens > 0) this.measuredContextTokens = usage.prompt_tokens;
-    this.composerMetrics[1]((current) => ({
-      ...current,
-      cacheHitPercent: usage.cache_usage_reported === false
-        ? null
-        : cacheHitPercent(usage) ?? current.cacheHitPercent,
-    }));
-    this.publishContextPercent();
-  }
-
   private updateComposerUsage(usage: UsageInfo): void {
-    this.activeStreamWindow = [];
-    this.activeStreamTokens = 0;
     // 速率分母只算「模型确实在产出」的累计区间（见 activeOutputActiveMs 的累加规则）。
     // 下面那条首末差一直自称 "excluding tool and user-wait time"，其实没排除：
     // 中间跑一个 30 秒的 exec，40 tok/s 能被压成 2 tok/s。首末差只留给
@@ -946,6 +547,7 @@ export class SessionStore {
       // 反映上一轮为准:端点这轮没报 extras 就清空,不留陈旧的芯片。
       extras: usage.extras ?? {},
       isStreaming: false,
+      isGeneratingToolInput: false,
     }));
     this.publishContextPercent();
   }
@@ -975,7 +577,12 @@ export class SessionStore {
       if (this.disposed || refreshId !== this.contextRefreshId) return;
       const length = config?.contextLength;
       if (length != null && Number.isFinite(length) && length > 0) this.contextLength = length;
-      this.configProfile = { activeProfile: config.activeProfile, model: config.model, profiles: [...config.profiles] };
+      this.configProfile = {
+        activeProfile: config.activeProfile,
+        model: config.model,
+        profiles: [...config.profiles],
+        details: config.profilesDetail,
+      };
       this.publishContextPercent();
       this.publishProfileView();
     } catch {
@@ -983,19 +590,20 @@ export class SessionStore {
     }
   }
 
-  /** 三份来源拼一个视图:`session.meta` 的选择 + 全局名录 + 全局活跃项。 */
+  /** 三份来源拼一个视图:`session.meta` 的选择 + 全局名录 + profilesDetail。 */
   private publishProfileView(): void {
     const config = this.configProfile;
     const selected = this.metaProfile;
-    // 只有生效项就是全局活跃 profile 时,扁平 model 才真的是它的 model;
-    // 选了别的 profile 就留空,由 UI 显示「model 未公开」而不是拿创建时刻的快照充数。
-    const followsGlobal = selected == null || selected === config?.activeProfile;
+    const effective = selected ?? config?.activeProfile ?? null;
+    const effectiveDetail = effective != null ? config?.details?.[effective] : undefined;
+    const model = effectiveDetail?.model ?? (selected == null || selected === config?.activeProfile ? config?.model ?? null : null);
     this.composerProfile[1]({
       selected,
       activeProfile: config?.activeProfile ?? null,
-      effective: selected ?? config?.activeProfile ?? null,
-      model: followsGlobal ? config?.model ?? null : null,
+      effective,
+      model,
       catalog: config?.profiles ?? [],
+      details: config?.details,
     });
   }
 
@@ -1010,6 +618,8 @@ export class SessionStore {
       const meta = await transport.rpc<SessionMetaWire>("session.meta", {}, this.seed);
       if (this.disposed || refreshId !== this.profileRefreshId) return;
       this.metaProfile = typeof meta?.profile === "string" && meta.profile !== "" ? meta.profile : null;
+      this.metaEffort = typeof meta?.effort === "string" && meta.effort !== "" ? meta.effort : null;
+      this.composerEffort[1](this.metaEffort);
     } catch {
       // best-effort:选择器退回「跟随全局」,下一次 turn 结束再取。
     }
@@ -1020,6 +630,13 @@ export class SessionStore {
   async setSessionProfile(name: string | null): Promise<void> {
     await transport.rpc("session.set_profile", { name: name ?? "" }, this.seed);
     await this.refreshProfile();
+  }
+
+  /** 会话级换思考强度 effort;`null` = 清除选择、回到跟随 profile 默认。 */
+  async setSessionEffort(effort: string | null): Promise<void> {
+    await transport.rpc("session.set_effort", { effort: effort ?? "" }, this.seed);
+    this.metaEffort = effort;
+    this.composerEffort[1](effort);
   }
 
   async refreshActivity(): Promise<void> {
@@ -1245,16 +862,14 @@ export class SessionStore {
       this.isSending[1](false);
       this.activeTurnStartedAt = null;
       this.activeModelBlockIds.clear();
-      this.activeStreamWindow = [];
-      this.activeStreamTokens = 0;
-      this.composerMetrics[1]((current) => ({ ...current, isStreaming: false }));
+      this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
       // 蓝点:后端仍报 working(卡死的 actor),本地先按已中断呈现;
       // 真实 activity 投影到达时会被覆盖。
       if (this.activity[0]() === "working") this.activity[1]("interrupted");
       this.mutate((draft) => {
         forceSealTurn(draft, turnId, "cancelled");
       });
-      void this.resnapshot();
+      void this.loadBootstrap();
     }, CANCEL_WATCHDOG_MS);
   }
 
@@ -1304,24 +919,9 @@ export class SessionStore {
     await transport.command("control", { channel: "control", type: "session_create", close_current: false });
   }
 
-  /** 向上翻页(spec §14.2)。返回是否真的加载了内容(调用方做滚动补偿)。 */
+  /** 向上翻页：单流由 bootstrap 提供全量快照，无 timeline 分页。 */
   async loadOlder(): Promise<boolean> {
-    const state = this.stateGet;
-    if (this.loadingOlder[0]() || !state.hasMore || state.oldestIndex == null) return false;
-    this.loadingOlder[1](true);
-    this.loadError[1](false);
-    try {
-      const page = await transport.timelinePage(this.seed, `?limit=${PAGE_LIMIT}&before_index=${state.oldestIndex}`);
-      this.mutate((draft) => {
-        prependPage(draft, page);
-      });
-      return true;
-    } catch {
-      this.loadError[1](true); // 顶部「加载失败,点击重试」,不自动重试
-      return false;
-    } finally {
-      this.loadingOlder[1](false);
-    }
+    return false;
   }
 
   /**

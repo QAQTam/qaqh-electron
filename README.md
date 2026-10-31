@@ -71,16 +71,46 @@ just info                 # print the version/date/commit that will be injected
 just check                # Electron/renderer/SDK typecheck and tests
 ```
 
-`just` computes the local pack date and git commit exactly once, then exports `QAQH_BUILD_DATE`, `QAQH_BUILD_VERSION`, `QAQH_GIT_COMMIT`, `QAQH_GIT_DIRTY` and `QAQH_BUILD_ID` to every stage. The Node bundles embed that identity, Cargo injects it into the daemon, and electron-builder writes it into the packaged `package.json` via `extraMetadata.version`. There are intentionally no packaging scripts in `package.json`; invoking the pipeline around `just` would bypass this identity injection.
+`just` reads the release version and its date from `package.json`, resolves the git commit once, then exports `QAQH_BUILD_DATE`, `QAQH_BUILD_VERSION`, `QAQH_GIT_COMMIT`, `QAQH_GIT_DIRTY` and `QAQH_BUILD_ID` to every stage. The Node bundles embed that identity, Cargo injects it into the daemon, and electron-builder writes it into the packaged `package.json` via `extraMetadata.version`. There are intentionally no packaging scripts in `package.json`; invoking the pipeline around `just` would bypass this identity injection.
 
-For a reproducible or backdated build, pin the date (and optionally the full version):
+For an explicit build override, keep the date consistent with the full version:
 
 ```bash
-QAQH_BUILD_DATE=20261028 just build
-QAQH_BUILD_DATE=20261028 QAQH_BUILD_VERSION=2.0.20261028 just build
+QAQH_BUILD_DATE=20261031 QAQH_BUILD_VERSION=2.1.20261031-1 just build
 ```
 
 The packaging script rejects unsupported host architectures rather than silently cross-compiling. It validates the packaged ASAR content and daemon resources before replacing `release/`. A successful package check is not a GUI smoke test; start the packaged app on each target distribution before publishing.
+
+## Installation implementation spec
+
+Linux installer/uninstaller/updater fast-release implementation scope and minimal
+acceptance checks: [SPEC](docs/spec-install-maintenance-mvp.md). This is a future
+implementation specification, not a claim that those maintenance flows exist today.
+
+## Writable components and deb upgrades
+
+`just deb` builds the shell package (`release-shell/`); `just build deb` and
+`just deb-full` build the full package. The shell's system-owned bootstrap acquires
+the single-instance lock and reconciles `resources/baseline/baseline.json` **before**
+loading user application code. Existing `install-state.json` is not a permanent
+skip flag: older components are upgraded, missing entry files are repaired, and
+higher numeric component versions are retained. On reconciliation failure this
+launch uses the packaged app/backend and retries next launch.
+
+For equal versions, a changed content-addressed system baseline wins once. A
+`baseline-receipt.json` records that baseline so subsequent same-version hot
+updates survive unchanged-package launches. Without a publication sequence there
+is no chronological ordering between two different same-version builds; use a
+higher `QAQH_BUILD_VERSION` for unambiguous newer hot releases. This is not a
+runtime/protocol compatibility solver or a directory-level atomic update system.
+
+Bootstrap, daemon and updater share `QAQH_COMPONENT_ROOT`, defaulting to
+`${XDG_DATA_HOME:-~/.local/share}/QAQ-Harness`. `QAQH_APP_DIR` is an explicit
+non-managed development override; bootstrap-generated values inherited across
+relaunches do not bypass reconciliation. `QAQH_BASELINE_SEED=0` disables baseline
+writes, not stale-overlay detection. A second instance does not rewrite running
+application files. Existing detached daemons are not forcibly terminated by this
+migration; use the application's controlled daemon restart when needed.
 
 ## Runtime behavior
 

@@ -78,9 +78,7 @@ const given = (value: string | undefined): boolean =>
 /**
  * 切到某一家时写进 daemon 的字段（K3 合并补丁：只发这几个键）。
  *
- * 字段值必须是 daemon **写模型**能收的拼写：`wire` 尤其——读模型回显规范名
- * （`chat`/`messages`），但 `ConfigPatch::validate` 目前只收旧拼写；桥在
- * `../settings/patch::wireForDaemon`（直发规范名 = 400 action_failed）。
+ * wire 读写均使用规范名；本地旧快照在恢复时迁移为 `chat`/`messages`。
  *
  * `apiBase` 未知（daemon 没连通，拿不到官方端点）时**不动 endpoint**：让后端的
  * 保存期校验给出可读错误，而不是猜一个 URL 填进用户配置。
@@ -110,11 +108,11 @@ export function switchFields(
   if (provider.kind === "account") {
     return {
       credential: "deepseek_account",
-      // DeepSeek 账号余额走 OpenAI 兼容的 chat completions；官方 base 由后端的
-      // `apply_deepseek_account` 钉死，这里只在**已知**时写（`apiBase` 取自
-      // `dsaccount.status.inferenceOrigin`，前端不拼 URL）。
-      // 写 daemon 校验认的旧拼写 `openai`（= 规范名 `chat`；写模型不收规范名）。
-      wire: "openai",
+      // DeepSeek 账号余额与套餐一样只走 Responses 协议（后端 OAuth 路由不再维护
+      // chat/anthropic 面）；官方 base 由后端的 `apply_deepseek_account` 钉死，
+      // 这里只在**已知**时写（`apiBase` 取自 `dsaccount.status.inferenceOrigin`，
+      // 前端不拼 URL）。
+      wire: "responses",
       // 分母跟着这一家走（实测 1M）：不写就沿用上一家的值，压缩时机就错了。
       contextLength: saved.contextLength ?? DSACCOUNT_CONTEXT_LENGTH,
       ...(apiBase == null ? {} : { baseUrl: apiBase }),
@@ -124,8 +122,7 @@ export function switchFields(
   // 切回自带 key：把当初抓下来的模型/端点/协议写回去。
   // 这一条就是"关掉 OAuth 不丢配置" —— 没有它，套餐的 slug 会留在你的端点上。
   // 协议先过 `wireForDaemon`：快照里可能是规范名（读模型回显）或更早版本存下的
-  // 旧拼写，出网必须是 daemon 认的那个；认不出的值不发（让保存期校验报错，而不是
-  // 制造一个必然 400 的请求）。
+  // 旧拼写，恢复时统一迁移为规范名；认不出的值不发。
   const wire = wireForDaemon(saved.wire);
   return {
     credential: "api_key",

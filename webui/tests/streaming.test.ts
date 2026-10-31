@@ -1,94 +1,20 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { SessionStore } from "../src/session/store";
-import { applyEntry, buildTurn, emptySession } from "../src/session/reducer";
-import { turnSegments } from "../src/turn/segments";
+import { turnSegments, workSegmentEnd } from "../src/turn/segments";
 import { splitBlocks } from "../src/markdown/split";
-import type { TimelineEntryWire } from "../src/session/types";
+import { emptySession, applyConversationDelta } from "../src/session/reducer";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
-function harness() {
-  let frame: FrameRequestCallback = () => {};
-  vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => { frame = fn; return 1; });
-  const store = new SessionStore("test");
-  let seq = 0;
-  const feed = (event: unknown) => (store as unknown as { onTimelineEntry(entry: TimelineEntryWire): void }).onTimelineEntry({ timeline_seq: ++seq, turn_id: "t", event } as TimelineEntryWire);
-  return { store, feed, frame: () => frame(0) };
-}
 
-test("3000 buffered deltas survive a same-frame seal without duplicate replay", () => {
-  const { store, feed, frame } = harness();
-  feed({ type: "block_opened", block: { block_id: "r", kind: "reasoning", state: "open" } });
-  for (let i = 0; i < 3000; i += 1) feed({ type: "text_delta", block_id: "r", delta: "字" });
-  feed({ type: "block_sealed", block_id: "r" });
-  frame();
-  expect(store.state[0].turns.t!.steps[0]).toMatchObject({ text: "字".repeat(3000) });
-  expect(store.state[0].watermark).toBe(3002);
-});
-
-test("paused animation frames still commit buffered data within 100ms", () => {
-  vi.useFakeTimers();
-  const { store, feed } = harness();
-  feed({ type: "block_opened", block: { block_id: "a", kind: "text", state: "open" } });
-  feed({ type: "text_delta", block_id: "a", delta: "background" });
-  vi.advanceTimersByTime(100);
-  expect(store.state[0].turns.t!.answer?.text).toBe("background");
-  store.dispose();
-});
-
-test("structural flush re-arms background fallback for the next batch", () => {
-  vi.useFakeTimers();
-  const { store, feed } = harness();
-  feed({ type: "block_opened", block: { block_id: "a", kind: "text", state: "open" } });
-  feed({ type: "text_delta", block_id: "a", delta: "first" });
-  feed({ type: "block_sealed", block_id: "a" });
-  feed({ type: "block_opened", block: { block_id: "b", kind: "text", state: "open" } });
-  feed({ type: "text_delta", block_id: "b", delta: "second" });
-  vi.advanceTimersByTime(100);
-  expect(store.state[0].turns.t!.answer?.text).toBe("second");
-  store.dispose();
-});
-
-test("snapshot covering part of a merged batch only drops covered fragments", () => {
-  const { store, feed, frame } = harness();
-  feed({ type: "block_opened", block: { block_id: "a", kind: "text", state: "open" } });
-  feed({ type: "text_delta", block_id: "a", delta: "old" });
-  feed({ type: "text_delta", block_id: "a", delta: "new" });
-  store.state[1]((draft) => { draft.watermark = 2; (draft.turns.t!.steps[0] as any).text = "old"; });
-  frame();
-  expect(store.state[0].turns.t!.answer?.text).toBe("oldnew");
-});
-
-test("checkpoint overwrites preceding buffered delta, including empty checkpoints", () => {
-  const { store, feed, frame } = harness();
-  feed({ type: "block_opened", block: { block_id: "a", kind: "text", state: "open" } });
-  feed({ type: "text_delta", block_id: "a", delta: "old" });
-  feed({ type: "block_checkpoint", block_id: "a", text: "new" });
-  frame();
-  expect(store.state[0].turns.t!.answer?.text).toBe("new");
-  feed({ type: "block_checkpoint", block_id: "a", text: "" });
-  expect(store.state[0].turns.t!.answer?.text).toBe("");
-});
-
-test("tool terminal update cannot swallow progress buffered before it", () => {
-  const { store, feed, frame } = harness();
-  feed({ type: "block_opened", block: { block_id: "a", kind: "tool", tool: { name: "read", state: "running" } } });
-  feed({ type: "tool_progress", block_id: "a", chunk: "last output" });
-  feed({ type: "tool_updated", block_id: "a", tool: { name: "read", state: "succeeded" } });
-  frame();
-  expect(store.state[0].turns.t!.steps[0]).toMatchObject({ progressTail: "last output", status: "success" });
-});
-
-test("snapshot and live text-before-work have identical answer classification", () => {
-  for (const kind of ["tool", "reasoning"]) {
-    const state = emptySession();
-    const blocks = [{ block_id: "a", kind: "text", state: "sealed", block_order: 0, text: "中途回复" }, { block_id: "b", kind, state: "open", block_order: 1 }];
-    blocks.forEach((block, i) => applyEntry(state, { timeline_seq: i + 1, turn_id: "t", event: { type: "block_opened", block } } as TimelineEntryWire));
-    const snapshot = buildTurn({ turn_id: "t", user_text: "q", state: "running", rounds: [{ round_num: 0, sealed: false, is_final: false, blocks }] } as any, 1);
-    expect(snapshot.answerStepId).toBe(state.turns.t!.answerStepId);
-    expect(snapshot.answer).toBeNull();
-    const segments = turnSegments(state.turns.t!.steps, false);
-    expect(segments.map((segment) => segment.kind)).toEqual(["text", "work"]);
-  }
+test("work clock follows the slowest completion, never the last listed tool", () => {
+  const steps: any[] = [
+    { id: "slow", kind: "tool", status: "running", startedAt: 100 },
+    { id: "fast", kind: "tool", status: "success", startedAt: 100, endedAt: 200 },
+  ];
+  const group = { key: "g", kind: "work" as const, steps, closed: false };
+  expect(workSegmentEnd(group)).toBeUndefined();
+  steps[0].status = "success";
+  steps[0].endedAt = 900;
+  expect(workSegmentEnd(group)).toBe(900);
 });
 
 test("new work leaves older work closed with stable segment keys", () => {
@@ -104,4 +30,25 @@ test("new work leaves older work closed with stable segment keys", () => {
 test("shorter fence inside longer fence remains code", () => {
   const blocks = splitBlocks("````js\n```\nconst x = 1;\n````\nend");
   expect(blocks[0]!.content).toBe("````js\n```\nconst x = 1;\n````");
+});
+
+test("single stream turn segments: tool followed by answer", () => {
+  const state = emptySession();
+  applyConversationDelta(state, {
+    kind: "turn_started",
+    data: { revision: 1, turn_id: "t1", input_id: "in1", mode: "normal" },
+  });
+  applyConversationDelta(state, {
+    kind: "tool_call_declared",
+    data: { revision: 2, turn_id: "t1", call_id: "call1", tool_name: "read", args: { kind: "inline", data: { text: "{}" } }, args_hash: "h" },
+  });
+  applyConversationDelta(state, {
+    kind: "assistant_block_sealed",
+    data: { revision: 3, turn_id: "t1", block_id: "ans1", block_kind: "answer", content: { kind: "inline", data: { text: "done" } }, model: "m", usage: null },
+  });
+
+  const turn = state.turns.t1!;
+  expect(turn.steps).toHaveLength(2);
+  const segments = turnSegments(turn.steps, false);
+  expect(segments.length).toBeGreaterThan(0);
 });

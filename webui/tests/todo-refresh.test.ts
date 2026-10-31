@@ -16,7 +16,6 @@ test("real host projection dispatch refreshes todos after tool completion withou
   let handlers!: StreamHandlers;
   const unlisten = vi.fn();
   vi.spyOn(host, "subscribe").mockImplementation(async (value) => { handlers = value; return unlisten; });
-  vi.spyOn(host, "timelineStatus").mockResolvedValue(null);
   vi.spyOn(host, "sessionBootstrap").mockResolvedValue({ control: { state: { activity: "idle" } } });
   vi.spyOn(transport, "attach").mockResolvedValue();
   vi.spyOn(transport, "approvals").mockResolvedValue([]);

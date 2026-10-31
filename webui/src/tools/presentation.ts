@@ -22,6 +22,13 @@ export function toolPresentation(step: Pick<ToolStep, "name" | "display">): Tool
   return "other";
 }
 
+export function toolPhaseLabel(step: Pick<ToolStep, "status" | "permission" | "streamEstimate">): string | undefined {
+  if ((step.status === "pending" || step.status === "running") && step.permission) return "等待授权";
+  if (step.status === "running") return "执行中";
+  if (step.status !== "pending") return undefined;
+  return step.streamEstimate != null ? "正在生成修改内容" : "准备工具调用";
+}
+
 export function isSkillStep(step: Pick<ToolStep, "name" | "display" | "argsJson">): boolean {
   if (toolPresentation(step) === "skill") return true;
   if (toolPresentation(step) !== "read") return false;

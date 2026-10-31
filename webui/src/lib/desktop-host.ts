@@ -17,9 +17,8 @@ export type HostCommand =
   | "create_session"
   | "service_rpc"
   | "skills_user_scan"
-  | "timeline_page"
   | "session_bootstrap"
-  | "timeline_status"
+  | "content_read_text"
   | "streams_retry"
   | "stop_stale_daemon"
   | "pick_directory"
@@ -45,24 +44,15 @@ export type HostCommand =
   | "updater_apply";
 
 export type HostEvent =
-  | "timeline://entry"
-  | "timeline://status"
-  | "timeline://snapshot"
+  | "projection://status"
   | "projection://event"
   | "projection://reset"
   | "conn://incompatible"
   | "conn://error"
   | "conn://liveness"
   | "conn://reconnect"
-  | "model-picker:changed"
   | "app://window-state"
   | "app://quit-requested";
-
-export interface ModelPickerBridge {
-  load(args?: { sessionId?: string | null }): Promise<any>;
-  save(args: { sessionId?: string | null; selection: unknown; alsoDefault?: boolean }): Promise<null>;
-  open(args?: { sessionId?: string | null }): Promise<number>;
-}
 
 export interface WindowState {
   visible: boolean;
@@ -121,7 +111,6 @@ export interface DesktopHostBridge {
   readonly platform: "electron";
   invoke<T = unknown>(command: HostCommand, args?: Record<string, unknown>): Promise<T>;
   listen(event: HostEvent, callback: (payload: any) => void): () => void;
-  modelPicker?: ModelPickerBridge;
   windowControls?: DesktopWindowControls;
   devtools?: DevToolsBridge;
   powerBlocker?: PowerBlockerBridge;

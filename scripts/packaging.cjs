@@ -32,28 +32,29 @@ function parseBuildIdentity(env = process.env) {
   const date = String(env.QAQH_BUILD_DATE ?? "").trim();
   const commit = String(env.QAQH_GIT_COMMIT ?? "").trim();
   const dirty = String(env.QAQH_GIT_DIRTY ?? "") === "1";
-  if (!/^2\.0\.\d{8}$/.test(version)) {
-    throw new Error("QAQH_BUILD_VERSION must be 2.0.YYYYMMDD; run `just build`.");
+  const match = /^\d+\.\d+\.(\d{8})(?:-\d+)?$/.exec(version);
+  if (!match) {
+    throw new Error("QAQH_BUILD_VERSION must be major.minor.YYYYMMDD[-revision]; run `just build`.");
   }
   if (date !== "" && !/^\d{8}$/.test(date)) {
     throw new Error(`QAQH_BUILD_DATE must be YYYYMMDD; got ${date}.`);
   }
-  if (date !== "" && version !== `2.0.${date}`) {
+  if (date !== "" && date !== match[1]) {
     throw new Error("QAQH_BUILD_VERSION (" + version + ") and QAQH_BUILD_DATE (" +
       date + ") disagree; run `just build`.");
   }
   if (commit === "") throw new Error("QAQH_GIT_COMMIT is missing; run `just build`.");
-  return { version, date: date || version.slice(4), commit, dirty };
+  return { version, date: date || match[1], commit, dirty };
 }
 
 /**
  * electron-builder writes the injected version into the packaged package.json.
  * afterPack therefore compares against the injected value, not the source
- * manifest (which intentionally keeps a stable date base).
+ * manifest, since explicit build overrides may carry a different revision.
  */
 function expectedPackageVersion(sourceVersion, env = process.env) {
   const injected = String(env.QAQH_BUILD_VERSION ?? "").trim();
-  if (injected !== "" && !/^2\.0\.\d{8}$/.test(injected)) {
+  if (injected !== "" && !/^\d+\.\d+\.\d{8}(?:-\d+)?$/.test(injected)) {
     throw new Error(`Invalid injected package version: ${injected}.`);
   }
   return injected || sourceVersion;

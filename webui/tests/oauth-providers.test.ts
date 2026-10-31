@@ -209,14 +209,14 @@ describe("模型特判合集", () => {
 });
 
 describe("每 provider 状态：切换与还原", () => {
-  it("DeepSeek 账号的切换字段：openai wire + 端点自报的 1M 分母", () => {
+  it("DeepSeek 账号的切换字段：responses wire + 端点自报的 1M 分母", () => {
     const entry = providerById(DSACCOUNT_PROVIDER_ID);
     expect(entry?.kind).toBe("account");
     if (entry == null) return;
     expect(switchFields(entry, {}, "https://api.deepseek.com")).toMatchObject({
       credential: "deepseek_account",
-      // 写模型用 daemon 校验认的旧拼写(规范名 `chat` 会被 400 掉)。
-      wire: "openai",
+      // OAuth 路由只支持 responses 协议（chat/anthropic 面会被后端 400 拒绝）。
+      wire: "responses",
       baseUrl: "https://api.deepseek.com",
       contextLength: DSACCOUNT_CONTEXT_LENGTH,
     });
@@ -261,25 +261,24 @@ describe("每 provider 状态：切换与还原", () => {
     // 2) 切到套餐。
     const toPlan = switchFields(plan, states, "https://api.openai.com/v1");
     expect(toPlan.credential).toBe("chatgpt_plan");
-    // 3) 关套餐。快照里的 `chat` 是读模型回显的规范名，出网要换成旧拼写。
+    // 3) 关套餐，保留快照里的规范协议名。
     const back = switchFields(byok, states, "https://api.openai.com/v1");
     expect(back).toEqual({
       credential: "api_key",
       model: "deepseek-v4.1-flash",
       baseUrl: "https://api.deepseek.com",
-      wire: "openai",
+      wire: "chat",
     });
     // 没抓过的槽位不写空值（合并补丁的空串 = 保持现值，写空等于没写还更容易误读）。
     states = rememberState(states, plan.id, {});
     expect(switchFields(byok, states, null)).toEqual(back);
   });
 
-  it("还原 wire 时统一换成 daemon 认的拼写;认不出的值不发(不制造必然 400 的请求)", () => {
+  it("还原本地旧 wire 时迁移为规范名；认不出的值不发", () => {
     const byok = providerById(BYOK_PROVIDER_ID)!;
-    // 规范名(读模型回显)与更早版本存下的旧拼写都归一到 daemon 词表。
-    expect(switchFields(byok, { [byok.id]: { wire: "messages" } }, null).wire).toBe("anthropic");
-    expect(switchFields(byok, { [byok.id]: { wire: "claude" } }, null).wire).toBe("anthropic");
-    expect(switchFields(byok, { [byok.id]: { wire: "openai" } }, null).wire).toBe("openai");
+    expect(switchFields(byok, { [byok.id]: { wire: "messages" } }, null).wire).toBe("messages");
+    expect(switchFields(byok, { [byok.id]: { wire: "claude" } }, null).wire).toBe("messages");
+    expect(switchFields(byok, { [byok.id]: { wire: "openai" } }, null).wire).toBe("chat");
     // 坏数据落在本地存储里时宁可少发一个键,也不发一个 daemon 必拒的串。
     expect("wire" in switchFields(byok, { [byok.id]: { wire: "deepseek" } }, null)).toBe(false);
   });

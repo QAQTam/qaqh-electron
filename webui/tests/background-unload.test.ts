@@ -4,82 +4,93 @@ import { transport, desktopHostSurface, type StreamHandlers } from "../src/lib/t
 
 afterEach(() => vi.restoreAllMocks());
 
-const page = {
-  server_epoch: "e1",
-  snapshot: {
-    watermark: 7,
-    turns: [{ turn_id: "t9", turn_index: 3, user_text: "hi", state: "completed", rounds: [{ round_num: 0, blocks: [{ block_id: "b1", kind: "text", state: "sealed", text: "答" }] }] }],
+const mockBootstrap = {
+  schema: "qaqh.Ringing",
+  version: 2,
+  session_id: "unload-session",
+  snapshot_cursor: "cursor-1",
+  conversation: {
+    channel: "conversation",
+    state: {
+      session_id: "unload-session",
+      turns: [{ turn_id: "t9", input_id: "in1", mode: "normal", outcome: { kind: "finished", data: { terminal: "completed", usage: null, error: null } } }],
+      context: [{
+        source_fact_seq: 1,
+        kind: {
+          kind: "assistant_block",
+          data: {
+            turn_id: "t9",
+            block_id: "b1",
+            block_kind: "answer",
+            content: { kind: "inline", data: { text: "答" } },
+            model: "model-1",
+            usage: null,
+          },
+        },
+      }],
+      compaction: null,
+      current_turn_id: null,
+      revision: 1,
+      last_fact_seq: 1,
+    },
   },
-  has_more: true,
-  total_turns: 10,
-  truncated_before: false,
 };
 
 function mockHost(seed: string) {
   const host = desktopHostSurface(transport)!;
   let handlers!: StreamHandlers;
   vi.spyOn(host, "subscribe").mockImplementation(async (value) => { handlers = value; return vi.fn(); });
-  vi.spyOn(host, "timelineStatus").mockResolvedValue({ status: "reconnecting", session_id: seed });
   vi.spyOn(transport, "attach").mockResolvedValue();
   vi.spyOn(transport, "approvals").mockResolvedValue([]);
   vi.spyOn(transport, "rpc").mockImplementation(async () => ({ items: [] }) as never);
-  return { pushSnapshot: () => handlers.onTimelineSnapshot({ session_id: seed, ...page } as never) };
+  const bootstrapSpy = vi.spyOn(transport, "sessionBootstrap").mockResolvedValue(mockBootstrap);
+  return {
+    getHandlers: () => handlers,
+    bootstrapSpy,
+  };
 }
 
-/**
- * BUG-2026-10-29 第二则:后台标签立即卸载转录,重激活走「消息同步中」→ 权威快照。
- * 宿主只给单一 active seed 建流,内存过载的来源是非活动 store 的全量 turns 常驻。
- */
 test("deactivate unloads transcript immediately; re-activate hydrates via authoritative snapshot", async () => {
-  const { pushSnapshot } = mockHost("unload-session");
+  const { bootstrapSpy } = mockHost("unload-session");
   const store = new SessionStore("unload-session");
   await store.activate();
-  expect(store.hydrated[0]()).toBe(false);
-  pushSnapshot();
   expect(store.hydrated[0]()).toBe(true);
-  expect(Object.keys(store.state[0].turns).length).toBe(1);
+  expect(store.state[0].slots.length).toBe(1);
+  expect(store.state[0].totalTurns).toBe(1);
 
   store.deactivate();
   // 卸载:转录/派生状态清零,轻量生命周期保留。
   expect(store.hydrated[0]()).toBe(false);
   expect(Object.keys(store.state[0].turns).length).toBe(0);
   expect(store.state[0].slots.length).toBe(0);
-  expect(store.state[0].watermark).toBe(0);
   expect(store.state[0].totalTurns).toBe(0);
   expect(store.pending[0]()).toEqual([]);
   expect(store.todos[0]()).toEqual([]);
 
-  // 再激活:attach 重建流,快照到达前保持未 hydrate(SessionView 渲染「消息同步中」)。
+  // 再激活:attach 重建流，权威快照装配完成
   await store.activate();
-  expect(store.hydrated[0]()).toBe(false);
-  pushSnapshot();
   expect(store.hydrated[0]()).toBe(true);
-  expect(store.state[0].turns["#3"] != null || Object.keys(store.state[0].turns).length === 1).toBe(true);
+  expect(store.state[0].slots.length).toBe(1);
+  expect(store.state[0].totalTurns).toBe(1);
+  expect(bootstrapSpy).toHaveBeenCalledTimes(2);
   store.dispose();
 });
 
-test("status open before the snapshot event falls back to one authoritative pull", async () => {
-  const host = desktopHostSurface(transport)!;
-  let handlers!: StreamHandlers;
-  vi.spyOn(host, "subscribe").mockImplementation(async (value) => { handlers = value; return vi.fn(); });
-  vi.spyOn(host, "timelineStatus").mockResolvedValue({ status: "reconnecting", session_id: "fallback" });
-  vi.spyOn(transport, "attach").mockResolvedValue();
-  vi.spyOn(transport, "approvals").mockResolvedValue([]);
-  vi.spyOn(transport, "rpc").mockImplementation(async () => ({ items: [] }) as never);
-  const timelinePage = vi.spyOn(transport, "timelinePage").mockResolvedValue({
-    session_id: "fallback",
-    ...page,
-  } as never);
-
+test("projection://status live triggers loadBootstrap when not hydrated", async () => {
+  const { getHandlers, bootstrapSpy } = mockHost("fallback");
   const store = new SessionStore("fallback");
+  store.hydrated[1](false);
   await store.activate();
-  // 快照推送事件丢失,但状态已 open:applyTimelineStatus 兜底按分页口径补拉一次。
-  handlers.onTimelineStatus({ status: "open", session_id: "fallback" });
+  expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+
+  store.hydrated[1](false);
+  getHandlers().onProjectionStatus?.({ status: "live", session_id: "fallback" });
   await vi.waitFor(() => expect(store.hydrated[0]()).toBe(true));
-  expect(timelinePage).toHaveBeenCalledTimes(1);
-  // 已 hydrate 后,后续 open 不再重复补拉。
-  handlers.onTimelineStatus({ status: "open", session_id: "fallback" });
-  await Promise.resolve();
-  expect(timelinePage).toHaveBeenCalledTimes(1);
+  expect(bootstrapSpy).toHaveBeenCalledTimes(2);
+
+  // 已 hydrate 后不再重复拉取
+  getHandlers().onProjectionStatus?.({ status: "live", session_id: "fallback" });
+  expect(bootstrapSpy).toHaveBeenCalledTimes(2);
+
   store.dispose();
 });

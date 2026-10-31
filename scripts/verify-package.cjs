@@ -81,10 +81,50 @@ function verifyShellLayout(context, root) {
     }
   }
   // 出厂基线 zip:postinst seed 的输入,缺一不可。
-  for (const bundle of ["app.zip", "backend.zip"]) {
+  for (const bundle of ["app.zip", "backend.zip", "baseline.json"]) {
     const path = join(resources, "baseline", bundle);
     if (!statSync(path, { throwIfNoEntry: false })?.isFile() || statSync(path).size === 0) {
       throw new Error(`Shell package baseline bundle missing or empty: ${bundle}`);
+    }
+  }
+  const baseline = JSON.parse(readFileSync(join(resources, "baseline/baseline.json"), "utf8"));
+  if (baseline.formatVersion !== 1) throw new Error("Unsupported baseline index.");
+  if (process.env.QAQH_BUILD_CHANNEL === "production" || process.env.NODE_ENV === "production") {
+    const legal = baseline.legal;
+    if (!legal?.version || !legal?.documents?.userAgreement || !legal?.documents?.privacyPolicy) {
+      throw new Error("Production shell package requires product-approved user agreement and privacy policy metadata.");
+    }
+    for (const name of ["userAgreement", "privacyPolicy"]) {
+      const document = legal.documents[name];
+      const file = document?.file;
+      if (!file || !/^[A-Za-z0-9_.-]+$/.test(file) ||
+          !/^[a-f0-9]{64}$/i.test(document.sha256 ?? "") ||
+          !statSync(join(resources, "baseline", "legal", file), { throwIfNoEntry: false })?.isFile() ||
+          digest(readFileSync(join(resources, "baseline", "legal", file))) !== document.sha256) {
+        throw new Error("Production shell package legal document is missing, placeholder, or checksum-invalid.");
+      }
+      const body = readFileSync(join(resources, "baseline", "legal", file), "utf8");
+      if (/\bdraft\b|TODO|占位/i.test(body)) {
+        throw new Error("Production shell package contains draft or placeholder legal text.");
+      }
+    }
+  }
+  for (const [name, bundle] of [["frontend", "app.zip"], ["backend", "backend.zip"]]) {
+    const meta = baseline.components?.[name];
+    if (!meta?.buildId || meta.bundle !== bundle ||
+        meta.sha256 !== digest(readFileSync(join(resources, "baseline", bundle))) ||
+        meta.size !== statSync(join(resources, "baseline", bundle)).size ||
+        meta.version !== expectedPackageVersion(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version)) {
+      throw new Error(`Shell baseline metadata/checksum mismatch: ${name}`);
+    }
+  }
+  if (baseline.legal) {
+    for (const entry of Object.values(baseline.legal.documents ?? {})) {
+      const packagedLegal = join(resources, "baseline", "legal", entry.file);
+      if (!statSync(packagedLegal, { throwIfNoEntry: false })?.isFile() ||
+          digest(readFileSync(packagedLegal)) !== entry.sha256) {
+        throw new Error(`Shell package legal payload missing or stale: ${entry.file}`);
+      }
     }
   }
   const pkg = JSON.parse(readFileSync(join(appDir, "package.json"), "utf8"));
@@ -93,5 +133,5 @@ function verifyShellLayout(context, root) {
   if (pkg.main !== "dist/bootstrap.cjs" || pkg.version !== expectedVersion) {
     throw new Error(`Shell baseline entrypoint/version mismatch: expected ${expectedVersion}, got ${pkg.version}.`);
   }
-  console.log(`[verify] shell layout: plain app dir (${sourceRenderer.length} renderer files), 3 CLIs, 2 baseline zips.`);
+  console.log(`[verify] shell layout: plain app dir (${sourceRenderer.length} renderer files), 3 CLIs, 2 baseline zips + index.`);
 }

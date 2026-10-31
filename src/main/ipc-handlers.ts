@@ -17,8 +17,6 @@ import {
   uploadAttachment,
 } from "./native-dialogs.js";
 import { scanUserSkills } from "./skills-scanner.js";
-import { applyConfiguredDefault, clearDefaultModelSelection, loadProviderChoices, normalizeSessionSelection, readDefaultModelSelection, type SessionModelSelection } from "./model-selection.js";
-import { isModelPickerWindow, openModelPicker } from "./model-picker.js";
 import { processGroup } from "./process-metrics.js";
 import { readGpuStatus } from "./gpu-info.js";
 import {
@@ -31,16 +29,18 @@ const SERVICE_METHODS = new Set([
   "fs.list", "fs.read", "todo.list", "todo.status", "plan.read",
   "git.diff", "git.branch", "git.branches", "git.file_diff",
   "config.load", "config.save", "profile.apply", "profile.save_current", "profile.delete",
-  "session.set_profile",
+  "profile.create", "profile.set_default", "profile.list", "provider.upsert", "provider.delete",
+  "session.set_profile", "session.set_effort", "session.create",
   "diagnostics.memory.start", "diagnostics.memory.stop", "diagnostics.memory.snapshot",
   "siwc.status", "siwc.profiles", "siwc.models", "siwc.sign_in.start", "siwc.sign_in.status", "siwc.sign_in.cancel", "siwc.profile.select", "siwc.sign_out",
   "dsaccount.status", "dsaccount.balance", "dsaccount.bonuses", "dsaccount.sign_in.start", "dsaccount.sign_in.status", "dsaccount.sign_in.cancel", "dsaccount.sign_out", "dsaccount.bonus.ack", "dsaccount.models", "dsaccount.verify",
 ]);
 const SESSION_EXEMPT_METHODS = new Set([
-  "daemon.version", "session.list", "session.activity",
+  "daemon.version", "session.list", "session.activity", "session.create",
   "fs.list", "fs.read",
   "workspace.list", "workspace.create", "workspace.move_session", "workspace.detach",
   "config.load", "config.save", "profile.apply", "profile.save_current", "profile.delete",
+  "profile.create", "profile.set_default", "profile.list", "provider.upsert", "provider.delete",
   "diagnostics.memory.start", "diagnostics.memory.stop", "diagnostics.memory.snapshot",
   "siwc.status", "siwc.profiles", "siwc.models", "siwc.sign_in.start", "siwc.sign_in.status",
   "siwc.sign_in.cancel", "siwc.profile.select", "siwc.sign_out",
@@ -169,77 +169,8 @@ export function registerIpcHandlers(
   const getClient = () => typeof clientOrConnect === "function" ? clientOrConnect() : Promise.resolve(clientOrConnect);
   // Compatibility command name is intentionally closed to a fixed allowlist.
   ipcMain.handle("qaqh:invoke", async (event, cmd: string, args: Record<string, any> = {}) => {
-    if (isModelPickerWindow(event.sender.id) || event.senderFrame !== event.sender.mainFrame || !isTrustedRenderer(event.senderFrame?.url ?? "")) throw new Error("IPC sender is not the application renderer");
-    return handleCommand(cmd, args, await getClient(), daemonMgr, challenges);
-  });
-
-  // Native Electron picker: keeps provider/model selection in the host UI
-  // until the dedicated qaqh-desktop renderer is brought into this repo.
-  ipcMain.handle("model-picker:load", async (event, args: { sessionId?: string | null } = {}) => {
-    if (!isModelPickerWindow(event.sender.id) || event.senderFrame !== event.sender.mainFrame || !isTrustedPicker(event.senderFrame?.url ?? "")) throw new Error("model picker IPC is restricted to the native picker window");
-    const client = await getClient();
-    const [choices, fallback] = await Promise.all([
-      loadProviderChoices(client),
-      readDefaultModelSelection(app.getPath("userData")),
-    ]);
-    let selection = fallback;
-    if (args.sessionId) {
-      const meta = await client.serviceRpc<any>("session.meta", { session_id: args.sessionId });
-      selection = meta?.model_selection ?? (meta?.profile ? {
-        provider_id: meta.profile,
-        model_id: meta.model,
-        ...(meta.effort ? { reasoning_effort: meta.effort } : {}),
-      } : null);
-    }
-    return { ...choices, selection, activeProfile: (await client.adminService<any>("profile.list", {})).active_profile };
-  });
-
-  ipcMain.handle("model-picker:save", async (event, args: {
-    sessionId?: string | null;
-    selection: SessionModelSelection | null;
-    alsoDefault?: boolean;
-  }) => {
-    if (!isModelPickerWindow(event.sender.id) || event.senderFrame !== event.sender.mainFrame || !isTrustedPicker(event.senderFrame?.url ?? "")) throw new Error("model picker IPC is restricted to the native picker window");
-    const client = await getClient();
-    if (args.selection != null && (typeof args.selection.provider_id !== "string" || typeof args.selection.model_id !== "string")) {
-      throw new Error("invalid provider/model selection");
-    }
-    if (args.sessionId) {
-      const normalized = args.selection == null ? null : await normalizeSessionSelection(client, args.selection);
-      await client.adminSessionService("session.set_model_selection", args.sessionId, { selection: normalized });
-    }
-    if (args.alsoDefault || !args.sessionId) {
-      if (!args.selection) {
-        await clearDefaultModelSelection(app.getPath("userData"));
-        for (const window of BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed() && !isModelPickerWindow(window.webContents.id)) {
-            window.webContents.send("qaqh:event:model-picker:changed", {
-              sessionId: args.sessionId ?? null,
-              selection: null,
-              alsoDefault: args.alsoDefault === true,
-            });
-          }
-        }
-        return null;
-      }
-      await applyConfiguredDefault(client, app.getPath("userData"), args.selection);
-    }
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !isModelPickerWindow(window.webContents.id)) {
-        window.webContents.send("qaqh:event:model-picker:changed", {
-          sessionId: args.sessionId ?? null,
-          selection: args.selection,
-          alsoDefault: args.alsoDefault === true,
-        });
-      }
-    }
-    return null;
-  });
-
-  ipcMain.handle("model-picker:open", async (event, args: { sessionId?: string | null } = {}) => {
     if (event.senderFrame !== event.sender.mainFrame || !isTrustedRenderer(event.senderFrame?.url ?? "")) throw new Error("IPC sender is not the application renderer");
-    const client = await getClient();
-    return openModelPicker(client, args.sessionId ?? null).id;
+    return handleCommand(cmd, args, await getClient(), daemonMgr, challenges);
   });
 }
 
@@ -311,7 +242,7 @@ async function handleCommand(
       } catch (error) {
         console.warn(`[approvals] Failed to read pending interactions for ${seed}:`, error);
         BrowserWindow.getAllWindows().forEach(window => {
-          if (!window.isDestroyed() && !isModelPickerWindow(window.webContents.id)) {
+          if (!window.isDestroyed()) {
             window.webContents.send("qaqh:event:conn://error", { message: `Pending interactions unavailable for ${seed}: ${error instanceof Error ? error.message : String(error)}` });
           }
         });
@@ -389,33 +320,6 @@ async function handleCommand(
       }, null);
       if (ack.status === "rejected") {
         throw new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
-      }
-      let defaultSelection = await readDefaultModelSelection(app.getPath("userData"));
-      if (defaultSelection) {
-        try {
-          defaultSelection = await normalizeSessionSelection(client, defaultSelection);
-        } catch (error) {
-          console.warn("[model-picker] saved default is no longer valid:", error);
-          await clearDefaultModelSelection(app.getPath("userData"));
-          defaultSelection = null;
-        }
-      }
-      if (defaultSelection) {
-        for (let attempt = 0; attempt < 20; attempt += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          const sessions = await client.serviceRpc<any[]>("session.list", {});
-          const created = sessions.find((item) => !before.has(String(item.session_id)));
-          if (created) {
-            try {
-              await client.adminSessionService("session.set_model_selection", String(created.session_id), {
-                selection: defaultSelection,
-              });
-            } catch (error) {
-              console.warn("[model-picker] saved default was not applied to new session:", error);
-            }
-            break;
-          }
-        }
       }
       return ack;
     }
@@ -598,21 +502,17 @@ async function handleCommand(
       return scanUserSkills();
     }
 
-    case "timeline_page": {
-      const seed = String(args.seed || "");
-      const limit = args.limit != null ? Number(args.limit) : null;
-      const beforeIndex = args.beforeIndex != null ? Number(args.beforeIndex) : null;
-      return client.timelinePage(seed, limit, beforeIndex);
-    }
-
     case "session_bootstrap": {
       const seed = requireId(args.seed, "session_id");
       return client.bootstrap(seed);
     }
 
-    case "timeline_status": {
-      const seed = String(args.seed || "");
-      return client.getTimelineStatus(seed);
+    case "content_read_text": {
+      const contentRef = args.contentRef;
+      if (typeof contentRef !== "string" || !/^sha256:[a-f0-9]{64}$/.test(contentRef)) {
+        throw new Error("invalid content_ref");
+      }
+      return client.readContentText(contentRef);
     }
 
     case "streams_retry": {

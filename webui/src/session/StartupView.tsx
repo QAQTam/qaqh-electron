@@ -61,8 +61,7 @@ const SUGGESTIONS = [
 export const StartupView: Component<{
   /** 应用内截图（⌘⇧S 同一份实现）；缺省 = 宿主不提供，按钮不出现。 */
   onScreenshot?: () => void;
-  /** 原生模型选择器;缺省 = 当前形态没有独立窗口。 */
-  onOpenModelPicker?: () => void;
+  onManageProfiles?: () => void;
 }> = (props) => {
   let textarea: HTMLTextAreaElement | undefined;
   const [draftText, setDraftText] = createSignal("");
@@ -72,6 +71,7 @@ export const StartupView: Component<{
     activeProfile: string;
     model: string;
     profiles: string[];
+    details?: Record<string, import("../api/qaqh/ConfigDto").ProfileSummaryDto>;
   } | null>(null);
 
   void (async () => {
@@ -82,6 +82,7 @@ export const StartupView: Component<{
           activeProfile: config.activeProfile,
           model: config.model,
           profiles: config.profiles,
+          details: config.profilesDetail,
         });
       }
     } catch {
@@ -194,8 +195,8 @@ export const StartupView: Component<{
           >
             <IconSparkles />
             <span>{profileLabel()}</span>
-            <Show when={configProfiles()?.model}>
-              <span class="composer-profile-model">→ {configProfiles()!.model}</span>
+            <Show when={selectedProfile() ? configProfiles()?.details?.[selectedProfile()!]?.model : configProfiles()?.model}>
+              {(m) => <span class="composer-profile-model">→ {m()}</span>}
             </Show>
             <IconChevronDown />
           </button>
@@ -215,23 +216,54 @@ export const StartupView: Component<{
                 <small>{configProfiles()?.activeProfile ?? ""}</small>
               </button>
               <For each={configProfiles()?.profiles ?? []}>
-                {(name) => (
-                  <button
-                    type="button"
-                    role="menuitemradio"
-                    class={selectedProfile() === name ? "selected" : undefined}
-                    onClick={() => {
-                      setSelectedProfile(name);
-                      setOpenMenu(null);
-                    }}
-                  >
-                    <span>{name}</span>
-                    <Show when={name === configProfiles()?.activeProfile}>
-                      <small>{configProfiles()!.model}</small>
-                    </Show>
-                  </button>
-                )}
+                {(name) => {
+                  const modelName = () => configProfiles()?.details?.[name]?.model ?? (name === configProfiles()?.activeProfile ? configProfiles()?.model : null);
+                  return (
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      class={selectedProfile() === name ? "selected" : undefined}
+                      onClick={() => {
+                        setSelectedProfile(name);
+                        setOpenMenu(null);
+                      }}
+                    >
+                      <span>{name}</span>
+                      <Show when={modelName()}>
+                        {(m) => <small>{m()}</small>}
+                      </Show>
+                    </button>
+                  );
+                }}
               </For>
+              <Show when={props.onManageProfiles != null}>
+                <button
+                  type="button"
+                  style={{
+                    "font-size": "var(--fs-xs)",
+                    opacity: "0.85",
+                    "text-align": "left",
+                    padding: "6px 10px",
+                    display: "flex",
+                    "align-items": "center",
+                    gap: "6px",
+                    "border-top": "1px solid var(--border)",
+                    "margin-top": "4px",
+                    color: "var(--accent)",
+                    cursor: "pointer",
+                    background: "transparent",
+                    border: "none",
+                    width: "100%",
+                  }}
+                  onClick={() => {
+                    setOpenMenu(null);
+                    props.onManageProfiles?.();
+                  }}
+                >
+                  <span style={{ "font-weight": "bold" }}>+</span>
+                  <span>管理 / 添加更多模型预设…</span>
+                </button>
+              </Show>
             </div>
           </Show>
         </div>
@@ -321,17 +353,6 @@ export const StartupView: Component<{
                     onClick={() => props.onScreenshot?.()}
                   >
                     <IconCamera />
-                  </button>
-                </Show>
-                <Show when={props.onOpenModelPicker != null}>
-                  <button
-                    type="button"
-                    class="composer-tool-button"
-                    aria-label="选择新会话默认模型"
-                    title="在原生窗口中选择新会话默认模型"
-                    onClick={() => props.onOpenModelPicker?.()}
-                  >
-                    <IconSparkles />
                   </button>
                 </Show>
               </div>

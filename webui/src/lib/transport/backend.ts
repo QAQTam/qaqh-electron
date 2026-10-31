@@ -8,7 +8,6 @@
 
 import type { ContentRef } from "../../api/qaqh/ContentRef";
 import type { RingingCommandAck } from "../../api/qaqh/RingingCommandAck";
-import type { TimelineSnapshot } from "../../api/qaqh/TimelineSnapshot";
 import { isDesktopRuntime } from "../desktop-host";
 
 export { isDesktopRuntime };
@@ -32,22 +31,11 @@ export type ApprovalView = {
   details: Record<string, any>;
 };
 
-export type TimelinePageResponse = {
-  server_epoch?: string;
+/** Electron 宿主转发的 projection 状态(projection://status)。 */
+export interface ProjectionStatusWire {
+  status: "connecting" | "live" | "reconnecting" | "paused" | "closed";
   session_id?: string;
-  /** 权威快照:形状由 ts-rs 生成(回合/轮/块整条链)。 */
-  snapshot?: TimelineSnapshot | null;
-  has_more?: boolean;
-  total_turns?: number;
-  truncated_before?: boolean;
-};
-
-/** Electron 宿主转发的 timeline 状态(timeline://status,serde tagged)。 */
-export type TimelineStatusWire = {
-  status: "connecting" | "open" | "reconnecting" | "closed";
-  session_id?: string;
-  [key: string]: unknown;
-};
+}
 
 /** Electron host scheduled SSE reconnect (conn://reconnect). */
 export type ReconnectStatusWire = {
@@ -101,11 +89,9 @@ export function attachmentRefsOf(command: Record<string, unknown>): ContentRef[]
 
 /** 宿主事件的订阅面(事件 payload 与现行 SSE 帧同形)。 */
 export interface StreamHandlers {
-  onTimelineEntry(seed: string, entry: Record<string, any>): void;
-  onTimelineStatus(status: TimelineStatusWire): void;
+  onProjectionStatus?(status: ProjectionStatusWire): void;
   onProjectionEvent(seed: string, envelope: Record<string, any>): void;
   onProjectionReset(seed: string, reset: Record<string, any>): void;
-  onTimelineSnapshot(page: TimelinePageResponse): void;
   onIncompatible(details: Record<string, any>): void;
   onHostError(message: string): void;
   onReconnect?(info: ReconnectStatusWire): void;
@@ -115,7 +101,7 @@ export interface TransportBackend {
   /** 会话列表(宿主把 `session.list` 的 G2 条目投影成侧栏卡片字段)。 */
   sessions(): Promise<any[]>;
 
-  /** attach:宿主切 active seed + attach + 激活 timeline 流。 */
+  /** attach:宿主切 active seed + attach + 激活 single stream。 */
   attach(seed: string, limit?: number): Promise<void>;
 
   /** 待审批(challenge 由宿主签发,canonical id 不出宿主)。 */
@@ -127,8 +113,11 @@ export interface TransportBackend {
 
   rpc<T = unknown>(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<T>;
 
-  /** Timeline 快照/翻页;`query` 形如 `?limit=30&before_index=12`。 */
-  timelinePage(seed: string, query?: string): Promise<TimelinePageResponse>;
+  /** per-session bootstrap RPC(获取权威快照)。 */
+  sessionBootstrap(seed: string): Promise<unknown>;
+
+  /** 由宿主经 SDK 读取引用正文，认证信息留在主进程。 */
+  readContentText(contentRef: string): Promise<string>;
 
   /** 原生目录选择(新建会话的目标工作区);null = 用户取消或该形态无对话框。 */
   pickDirectory(): Promise<string | null>;
@@ -194,8 +183,6 @@ export type UserSkillsWire = {
 export interface DesktopHostSurface {
   /** 订阅宿主转发事件;返回反订阅函数。 */
   subscribe(handlers: StreamHandlers): Promise<() => void>;
-  /** 查询宿主 timeline 流当前状态(null = 从未激活;兜底订阅晚于事件的竞态)。 */
-  timelineStatus(seed: string): Promise<TimelineStatusWire | null>;
   /** per-session bootstrap RPC(刷新 activity)。 */
   sessionBootstrap(seed: string): Promise<unknown>;
   /** 宿主侧重连(用户点「重试」/窗口聚焦)。 */

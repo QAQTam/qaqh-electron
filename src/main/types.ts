@@ -20,10 +20,9 @@ export interface ApprovalView {
   details: Record<string, any>;
 }
 
-export interface TimelineStatusWire {
-  status: "connecting" | "open" | "reconnecting" | "closed";
+export interface ProjectionStatusWire {
+  status: "connecting" | "live" | "reconnecting" | "paused" | "closed";
   session_id?: string;
-  [key: string]: unknown;
 }
 
 /** Scheduled SSE reconnect after a transport drop (conn://reconnect). */

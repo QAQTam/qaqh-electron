@@ -63,6 +63,7 @@ import {
   setConfirmDiscard,
   setField,
   setExec,
+  setSandbox,
   setSubagent,
 } from "./store";
 import { Field, Section, Switch, TextInput } from "./controls";
@@ -423,6 +424,12 @@ export const SettingsView: Component = () => {
                         placeholder="auto"
                       />
                     </Field>
+                    <Switch
+                      label="命令沙箱强制隔离 (Sandbox)"
+                      hint="启用系统级沙箱隔离运行命令（Windows AppContainer / Linux Landlock & Seccomp）；关闭后将在宿主无隔离环境下直接执行。"
+                      checked={config().sandbox?.enabled ?? true}
+                      onToggle={(value) => setSandbox(value)}
+                    />
                     <Field label={STR.settingsIdleUnload} hint={STR.settingsIdleUnloadHint} compact>
                       <NumberInput
                         value={config().sessionIdleUnloadSecs}

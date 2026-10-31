@@ -19,7 +19,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { userComponentRoot } from "./component-paths.js";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { app } from "electron";
@@ -64,12 +64,11 @@ export interface UpdaterPaths {
 }
 
 export function updaterPaths(): UpdaterPaths {
-  const componentRoot = process.env.QAQH_COMPONENT_ROOT?.trim()
-    || join(homedir(), ".local", "share", "QAQ-Harness");
+  const componentRoot = userComponentRoot();
   return {
     componentRoot,
     sourceDir: process.env.QAQH_UPDATE_SOURCE?.trim() || join(componentRoot, "update-source"),
-    stagingDir: process.env.QAQH_UPDATE_STAGING?.trim() || join(componentRoot, ".update-staging"),
+    stagingDir: join(componentRoot, "staging"),
   };
 }
 

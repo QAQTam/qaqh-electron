@@ -1,27 +1,18 @@
 /**
- * 前端数据模型(spec §6),按后端 timeline 协议适配:
+ * 前端数据模型 (spec §6)，纯血 Ringing v2 单流适配：
  *
- * - `seq` = 后端 `timeline_seq`(会话内单调递增,由 daemon 分配);顺序与去重
- *   一律以它为准。
- * - [契约缺口 TS-1] 后端条目目前不带 epoch-ms 时间戳,`startedAt/endedAt` 由
- *   前端时钟采样(见 lib/time.ts 模块注释),仅用于耗时展示。
- * - 后端模型是 turn/round/block;此处把它归约为 spec 的 Turn/Step:
- *   reasoning 块 → ThinkingStep,tool 块 → ToolStep,text 块 → 答案或(多轮回合
- *   时)中间叙述 TextStep。
+ * 结构与顺序事实只来自后端 ConversationSnapshot / ConversationDelta。
  */
-import type { TimelineEntry } from "../api/qaqh/TimelineEntry";
 import type { ReasoningKind } from "../api/qaqh/ReasoningKind";
+import type { ConversationSnapshot } from "../api/qaqh/ConversationSnapshot";
+import type { ConversationDelta } from "../api/qaqh/ConversationDelta";
 import type { TimelineToolDisplay } from "../api/qaqh/TimelineToolDisplay";
 import type { TimelineToolPermission } from "../api/qaqh/TimelineToolPermission";
 
-/**
- * wire 契约的本地别名。形状由 ts-rs 从 Rust 单一真相生成(`just ts-export` →
- * `src/api/qaqh/`),这里**不再手抄字段**——后端加槽/改语义时,漂移会变成
- * typecheck 失败而不是静默读空。
- */
+export type { ConversationSnapshot, ConversationDelta };
+
 export type ToolDisplay = TimelineToolDisplay;
 export type ToolPermission = TimelineToolPermission;
-export type TimelineEntryWire = TimelineEntry;
 
 export type Seq = number;
 
@@ -38,7 +29,7 @@ export interface Turn {
   key: string;
   /** 会话内全局序号;实时路径开出来的回合先为 null,由权威页补记(也是翻页游标)。 */
   turnIndex: number | null;
-  user: { text: string };
+  user: { text: string; contentRef?: string };
   /** 按 seq 升序(后端真相)。 */
   steps: Step[];
   /** 最终作答:最后一个文本块;运行中指向当前流式文本块,若其后又开了工具则回退为中间叙述。 */
@@ -62,6 +53,7 @@ export interface ThinkingStep {
   endedAt?: number;
   /** 完整思考文本,始终保留(spec §10.2)。 */
   text: string;
+  contentRef?: string;
   /**
    * 思考类别(wire `TimelineBlock.reasoning_kind`)。订阅套餐路径只有 `summary`
    * ——服务端给的**摘要**,不是模型原文(完整思考在 `encrypted_content` 里,客户端
@@ -79,6 +71,7 @@ export interface TextStep {
   startedAt?: number;
   endedAt?: number;
   text: string;
+  contentRef?: string;
 }
 
 export type ToolStatus = "pending" | "running" | "success" | "error" | "denied" | "aborted" | "backgrounded";
@@ -101,8 +94,10 @@ export interface ToolStep {
   name: string;
   /** 原始入参 JSON 串(MUST NOT 改写;展示层解析)。 */
   argsJson?: string;
+  argsRef?: string;
   status: ToolStatus;
   output?: ToolOutput;
+  outputRef?: string;
   error?: string;
   /** 运行中输出尾窗(16KB 有界);stdout 与未知流(`stream` 缺失的历史数据)。 */
   progressTail?: string;
@@ -139,7 +134,6 @@ export interface SessionState {
   slots: Slot[];
   /** 结构提交版本。消息列表只订阅它,token 更新不重读所有槽位 key。 */
   structureVersion: number;
-  watermark: number;
   serverEpoch: string | null;
   hasMore: boolean;
   truncatedBefore: boolean;
@@ -195,7 +189,6 @@ export function emptySession(): SessionState {
     turns: {},
     slots: [],
     structureVersion: 0,
-    watermark: 0,
     serverEpoch: null,
     hasMore: false,
     truncatedBefore: false,

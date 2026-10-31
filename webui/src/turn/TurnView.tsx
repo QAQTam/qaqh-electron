@@ -12,7 +12,7 @@ import { STR, formatWorkDuration } from "../lib/strings";
 import { workDurationMs } from "../lib/time";
 import type { SessionStore } from "../session/store";
 import type { Step, Turn, Wait } from "../session/types";
-import { turnSegments, type TurnSegment, type WorkSegment } from "./segments";
+import { turnSegments, workSegmentEnd, type TurnSegment, type WorkSegment } from "./segments";
 import { thinkingLabel, thinkingRichSummary, thinkingTitle } from "./thinking-label";
 import { sessionCatalog } from "../tabs/store";
 
@@ -128,7 +128,7 @@ const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; cwd?
   const label = () => {
     const steps = props.group.steps;
     const start = steps[0]?.startedAt ?? props.turn.workStartedAt;
-    const end = props.group.until ?? steps[steps.length - 1]?.endedAt;
+    const end = workSegmentEnd(props.group);
     let duration = workDurationMs(start, end, waits());
 
     // 防御自愈：若当前段已关闭，实时算出了有效耗时，则写入持久账本；

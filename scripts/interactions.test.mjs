@@ -17,7 +17,7 @@ async function ipcFixture(pending = ask()) {
     approvals: async () => { if (view instanceof Error) throw view; return view; },
     command: async (...args) => { calls.push(args); return ack; },
     getActiveSeed: () => "active-B",
-    getTimelineStatus: seed => ({ status: "closed", session_id: seed }),
+    getProjectionStatus: seed => "closed",
     serviceRpc: async () => [],
   };
   const challenges = new host.ChallengeManager();
@@ -133,7 +133,7 @@ test("decision vocabularies do not cross kinds and renderer fields cannot overri
   }), { channel: "tool", type: "tool_permission_respond", tool_call_id: "canonical", approved: false, trust_folder: false });
 });
 
-test("cancel/compact target the requested session and status reflects both streams", async () => {
+test("cancel/compact target the requested session", async () => {
   const host = await ipcFixture();
   await host.invoke("cancel_turn", { seed: "session-A", turnId: "turn-A" });
   await host.invoke("compact_context", { seed: "session-A" });
@@ -141,7 +141,6 @@ test("cancel/compact target the requested session and status reflects both strea
     ["conversation", { type: "conversation_cancel", turn_id: "turn-A" }, "session-A"],
     ["conversation", { type: "conversation_compact" }, "session-A"],
   ]);
-  assert.equal((await host.invoke("timeline_status", { seed: "active-B" })).status, "closed");
 });
 
 test("session list forwards authoritative working and canceled states after cancel", async () => {
@@ -303,14 +302,14 @@ test("projection resets resync after pause and bootstrap refreshes pending inter
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-A");
   const watch = f.sessionWatches[0];
-  assert.equal(f.client.getTimelineStatus("session-A").status, "open");
+  assert.equal(f.client.getProjectionStatus("session-A"), "live");
   watch.handlers.onReset({ reason: "cursor_expired", session_id: "session-A" });
   watch.handlers.onStatus("paused");
   assert.equal(watch.resyncs, 0);
-  assert.equal(f.client.getTimelineStatus("session-A").status, "closed");
+  assert.equal(f.client.getProjectionStatus("session-A"), "paused");
   assert.equal(await f.timers.next(), 250);
   assert.equal(watch.resyncs, 1);
-  assert.equal(f.client.getTimelineStatus("session-A").status, "open");
+  assert.equal(f.client.getProjectionStatus("session-A"), "live");
   assert.ok(f.events.some(e => e.name === "projection://reset" && e.payload.reason === "bootstrap"));
 });
 
@@ -318,37 +317,13 @@ test("scheduled SSE reconnects are forwarded with attempt and delay", async t =>
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-A");
   f.sessionWatches[0].handlers.onReconnectScheduled({ attempt: 2, delayMs: 1500 });
-  f.timelineWatches[0].handlers.onReconnectScheduled({ attempt: 3, delayMs: 3000 });
   const reconnects = f.events.filter(e => e.name === "conn://reconnect");
-  assert.equal(reconnects.length, 2);
+  assert.equal(reconnects.length, 1);
   assert.equal(reconnects[0].payload.session_id, "session-A");
   assert.equal(reconnects[0].payload.attempt, 2);
   assert.equal(reconnects[0].payload.delay_ms, 1500);
-  assert.equal(reconnects[1].payload.attempt, 3);
-  assert.equal(reconnects[1].payload.delay_ms, 3000);
   assert.ok(reconnects.every(e => typeof e.payload.at === "number" && e.payload.at > 0));
-  assert.equal(f.client.getTimelineStatus("session-A").status, "open");
-});
-
-test("provider retry timeline entries are forwarded unchanged", async t => {
-  const f = await streamFixture(); t.after(() => f.client.destroy());
-  await f.client.attach("session-A");
-  const entry = {
-    timeline_seq: 7,
-    turn_id: "turn-A",
-    round_num: 0,
-    event: {
-      type: "provider_retrying",
-      attempt: 2,
-      max_retries: 5,
-      delay_secs: 4,
-      error: "429 Too Many Requests",
-    },
-  };
-  f.timelineWatches[0].handlers.onEntry({ session_id: "session-A", entry });
-  const forwarded = f.events.find(e => e.name === "timeline://entry");
-  assert.equal(forwarded.payload.session_id, "session-A");
-  assert.deepEqual(forwarded.payload.entry, entry);
+  assert.equal(f.client.getProjectionStatus("session-A"), "live");
 });
 
 test("resync is bounded and unrecoverable resets/termination stay paused", async t => {
@@ -367,7 +342,7 @@ test("resync is bounded and unrecoverable resets/termination stay paused", async
   watch.handlers.onReset({ reason: "upgrade_required", session_id: "session-A" });
   watch.handlers.onStatus("paused");
   assert.equal(f.timers.jobs.size, 0);
-  assert.equal(f.client.getTimelineStatus("session-A").status, "closed");
+  assert.equal(f.client.getProjectionStatus("session-A"), "paused");
   watch.handlers.onTerminated({ code: "forbidden", message: "lease lost" });
   assert.equal(f.timers.jobs.size, 0);
 });
@@ -379,7 +354,7 @@ test("failed resync reports errors, retries and detaching cancels pending recove
   watch.resync = async () => { throw new Error("bootstrap failed"); };
   watch.handlers.onReset({ reason: "epoch_mismatch", session_id: "session-A" });
   await f.timers.next();
-  assert.equal(f.client.getTimelineStatus("session-A").status, "closed");
+  assert.equal(f.client.getProjectionStatus("session-A"), "paused");
   assert.equal(f.timers.jobs.size, 1);
   assert.ok(f.events.some(e => e.name === "conn://error" && /bootstrap failed/.test(e.payload.message)));
   await f.client.attach("session-B");
@@ -390,17 +365,12 @@ test("failed resync reports errors, retries and detaching cancels pending recove
   assert.equal(f.events.length, count);
 });
 
-test("overlapping attaches cannot publish stale snapshots or replace the current watches", async t => {
+test("overlapping attaches replace the current watch cleanly", async t => {
   const f = await streamFixture(); t.after(() => f.client.destroy());
-  let resolveA;
-  f.sdk.timelinePage = seed => seed === "session-A" ? new Promise(resolve => { resolveA = resolve; }) : Promise.resolve({ session_id: seed });
-  const attachA = f.client.attach("session-A");
-  while (!resolveA) await Promise.resolve();
+  await f.client.attach("session-A");
   await f.client.attach("session-B");
-  resolveA({ session_id: "session-A" });
-  await attachA;
-  assert.deepEqual(f.sessionWatches.map(w => w.seed), ["session-B"]);
-  assert.ok(!f.events.some(e => e.name === "timeline://snapshot" && e.payload.session_id === "session-A"));
+  assert.deepEqual(f.sessionWatches.map(w => w.seed), ["session-A", "session-B"]);
+  assert.equal(f.client.getActiveSeed(), "session-B");
 });
 
 test("command supports tool, explicit null target and exposes failed timeout outcomes", async t => {

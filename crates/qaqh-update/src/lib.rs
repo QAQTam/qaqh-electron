@@ -5,13 +5,14 @@ mod install_root;
 mod model;
 mod planner;
 mod source;
+mod snapshot;
 mod staging;
 mod state;
 
 pub use apply::{apply_bundle_zip, read_bundle_manifest_zip, rollback_bundle_zip};
 pub use install_root::{
-    INSTALL_ROOT_MARKER, is_reparse_or_symlink, safe_join_under_root, verify_install_root,
-    write_install_root_marker,
+    INSTALL_ROOT_MARKER, InstallRootLock, initialize_install_root, is_reparse_or_symlink,
+    lock_install_root, safe_join_under_root, verify_install_root,
 };
 pub use model::{
     Artifact, ArtifactKind, ArtifactPayload, ArtifactRequires, ArtifactStrategy, BundleFile,
@@ -20,6 +21,11 @@ pub use model::{
 };
 pub use planner::{build_delta_manifest, plan_delta, plan_update};
 pub use source::{DirectoryUpdateSource, UpdateSource, sha256_reader, validate_relative_path};
+pub use snapshot::{
+    ActiveState, PendingOperation, SnapshotPhase, activate_snapshot, activate_snapshot_locked,
+    begin_snapshot_boot, confirm_snapshot, current_snapshot_path, load_active_state,
+    rollback_snapshot, rollback_snapshot_locked,
+};
 pub use staging::{
     STAGED_BUNDLES_DIR, STAGED_OPERATION_FILE, ApplyStagedOptions, StageOutcome, apply_staged,
     read_staged_operation, rollback_staged, stage_update,

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { extractTurnDeliverables, getTurnFileDiff, splitPath } from "../src/diff/deliverables";
 import { diffReviewStore } from "../src/diff/review-store";
-import { applyEntry, emptySession } from "../src/session/reducer";
+import { outputFromDisplay } from "../src/session/reducer";
 import type { ToolStep, Turn } from "../src/session/types";
 
 describe("splitPath", () => {
@@ -216,20 +216,28 @@ describe("交付物提取接后端真实 wire 槽位", () => {
 `;
 
   function turnFromWriteTool(tool: Record<string, unknown>): Turn {
-    const state = emptySession();
-    applyEntry(state, {
-      timeline_seq: 1,
-      turn_id: "t1",
-      round_num: 0,
-      event: { type: "block_opened", block: { block_id: "w1", kind: "tool", tool: { name: "write", state: "running" } } },
-    });
-    applyEntry(state, {
-      timeline_seq: 2,
-      turn_id: "t1",
-      round_num: 0,
-      event: { type: "tool_updated", block_id: "w1", tool: { name: "write", state: "succeeded", ...tool } },
-    });
-    return state.turns.t1!;
+    const display = tool.display as any;
+    const legacy = tool.output || tool.diff ? { text: tool.output as string, diffText: tool.diff as string } : undefined;
+    const step: ToolStep = {
+      kind: "tool",
+      id: "w1",
+      seq: 0,
+      name: "write",
+      status: "success",
+      display,
+      output: outputFromDisplay(display, legacy),
+    };
+    return {
+      id: "t1",
+      key: "t1",
+      turnIndex: null,
+      user: { text: "write" },
+      steps: [step],
+      answer: null,
+      answerStepId: null,
+      status: "done",
+      expanded: false,
+    };
   }
 
   const display = {
@@ -310,27 +318,26 @@ describe("apply_patch 多文件 display.diff", () => {
   };
 
   function applyPatchTurn(): Turn {
-    const state = emptySession();
-    applyEntry(state, {
-      timeline_seq: 1,
-      turn_id: "t1",
-      round_num: 0,
-      event: {
-        type: "block_opened",
-        block: { block_id: "p1", kind: "tool", tool: { name: "apply_patch", state: "running" } },
-      },
-    });
-    applyEntry(state, {
-      timeline_seq: 2,
-      turn_id: "t1",
-      round_num: 0,
-      event: {
-        type: "tool_updated",
-        block_id: "p1",
-        tool: { name: "apply_patch", state: "succeeded", display },
-      },
-    });
-    return state.turns.t1!;
+    const step: ToolStep = {
+      kind: "tool",
+      id: "p1",
+      seq: 0,
+      name: "apply_patch",
+      status: "success",
+      display: display as any,
+      output: outputFromDisplay(display as any, undefined),
+    };
+    return {
+      id: "t1",
+      key: "t1",
+      turnIndex: null,
+      user: { text: "patch" },
+      steps: [step],
+      answer: null,
+      answerStepId: null,
+      status: "done",
+      expanded: false,
+    };
   }
 
   test("跨文件按 diff 段切成两个交付物,而不是只认 header 的 first_path", () => {

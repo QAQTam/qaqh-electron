@@ -8,7 +8,7 @@ import { invoke } from "./host";
 import { isDesktopRuntime } from "./transport";
 
 export interface BuildInfo {
-  /** `2.0.YYYYMMDD+<git短hash>`,脏工作树再缀 `-dirty`。 */
+  /** `2.1.YYYYMMDD-N+<git短hash>`，脏工作树再缀 `-dirty`。 */
   display: string;
   version: string;
   commit: string;

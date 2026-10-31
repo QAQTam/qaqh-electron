@@ -26,4 +26,4 @@ export type ConversationDelta = { "kind": "input_accepted", "data": { revision: 
 /**
  * 终态原因（中文，失败/跳过/取消时给出）。加法字段：旧客户端忽略。
  */
-reason?: string | null, } };
+reason?: string | null, } } | { "kind": "assistant_block_progress", "data": { revision: number, turn_id: TurnId, block_id: BlockId, block_kind: AssistantBlockKind, model: string, text: string, } } | { "kind": "tool_input_progress", "data": { revision: number, turn_id: TurnId, call_id: ToolCallId, tool_name: string, args: string, } };

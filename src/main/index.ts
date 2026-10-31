@@ -1,14 +1,13 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, powerSaveBlocker, type IpcMainInvokeEvent } from "electron";
 import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { readDiscovery } from "./daemon.js";
 import { pathToFileURL } from "node:url";
 import { DaemonManager } from "./daemon.js";
 import { RingingClient } from "./ringing-client.js";
 import { ChallengeManager } from "./challenges.js";
 import { registerIpcHandlers, registerQuitIpcHandler, isTrustedRenderer } from "./ipc-handlers.js";
-import { ensureBaselineSeeded } from "./baseline.js";
-import { MODEL_PICKER_HTML, openModelPicker } from "./model-picker.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
 protocol.registerSchemesAsPrivileged([
@@ -322,6 +321,7 @@ function ensureClient(): Promise<RingingClient> {
 async function bootstrapApp(): Promise<void> {
   console.log("[app] Bootstrapping QAQ-Harness Electron shell...");
   loadWindowPrefs();
+  const pendingOperation = process.env.QAQH_PENDING_OPERATION?.trim() || null;
 
   // 0. 注册 app:// 协议处理器，使 /assets 等 SPA 绝对路径无缝映射到本地文件
   registerAppProtocol();
@@ -329,8 +329,7 @@ async function bootstrapApp(): Promise<void> {
   // 1. Start/reuse daemon and establish the SDK client before the renderer loads,
   // so every IPC handler exists before frontend boot invokes anything.
   registerIpcHandlers(ensureClient, daemonMgr, challenges);
-  // 首跑提升(打包形态):系统 seed 基线 → 用户组件根,updater 的 plan 才有 install-state。
-  await ensureBaselineSeeded();
+  // System bootstrap already reconciled components before loading this main.
   try {
     await ensureClient();
   } catch (err) {
@@ -339,6 +338,45 @@ async function bootstrapApp(): Promise<void> {
 
   // 2. Create renderer after IPC registration.
   createMainWindow();
+  if (pendingOperation && process.platform === "linux" && process.resourcesPath && process.env.QAQH_COMPONENT_ROOT) {
+    const ready = await new Promise<boolean>((resolveReady) => {
+      const window = mainWindow;
+      if (!window || window.isDestroyed()) return resolveReady(false);
+      const timeout = setTimeout(() => resolveReady(false), 30_000);
+      window.webContents.once("did-finish-load", () => {
+        clearTimeout(timeout);
+        resolveReady(true);
+      });
+      window.webContents.once("did-fail-load", () => {
+        clearTimeout(timeout);
+        resolveReady(false);
+      });
+    });
+    if (!ready || !client) {
+      try {
+        execFileSync(
+          join(process.resourcesPath, "bin", "qaqh-maint"),
+          ["rollback", "--root", process.env.QAQH_COMPONENT_ROOT, "--json"],
+          { stdio: "ignore", timeout: 5_000 },
+        );
+      } catch (error) {
+        console.error("[app] timed-out generation rollback failed:", error);
+      }
+      app.quit();
+      return;
+    }
+    try {
+      execFileSync(
+        join(process.resourcesPath, "bin", "qaqh-maint"),
+        ["confirm", "--root", process.env.QAQH_COMPONENT_ROOT, "--operation", pendingOperation, "--json"],
+        { stdio: "ignore", timeout: 5_000 },
+      );
+    } catch (error) {
+      console.error("[app] generation confirmation failed:", error);
+      app.quit();
+      return;
+    }
+  }
   // 3. Install tray.
   setupTray();
 }
@@ -371,15 +409,6 @@ function registerAppProtocol(): void {
   protocol.handle("app", async (request) => {
     try {
       const parsedUrl = new URL(request.url);
-      if (parsedUrl.pathname === "/model-picker") {
-        return new Response(MODEL_PICKER_HTML, {
-          headers: {
-            "content-type": "text/html; charset=utf-8",
-            "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'",
-            "x-content-type-options": "nosniff",
-          },
-        });
-      }
       let pathname = decodeURIComponent(parsedUrl.pathname);
       if (pathname === "/" || pathname === "") {
         pathname = "/index.html";
@@ -541,20 +570,6 @@ function setupTray(): void {
     tray.setToolTip("QAQ-Harness");
 
     const contextMenu = Menu.buildFromTemplate([
-      {
-        label: "选择新会话默认模型…",
-        click: () => {
-          if (client) openModelPicker(client, null);
-        },
-      },
-      {
-        label: "更改当前会话模型…",
-        click: () => {
-          const seed = client?.getActiveSeed();
-          if (client && seed) openModelPicker(client, seed);
-        },
-      },
-      { type: "separator" },
       {
         label: "打开 QAQH",
         click: () => showMainWindow(),

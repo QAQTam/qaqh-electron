@@ -1,0 +1,46 @@
+name: Update Model Presets Catalog
+
+on:
+  schedule:
+    # 每周一 03:00 UTC (北京时间 11:00) 自动检查并更新
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-models:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch latest models catalog
+        run: node scripts/update-models.mjs
+
+      - name: Typecheck WebUI
+        run: pnpm --dir webui run typecheck
+
+      - name: Commit & Create Pull Request if changed
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(models): auto-update model presets catalog"
+          title: "chore(models): 自动同步主流厂商最新模型目录"
+          body: "此 PR 由 GitHub Actions 定时任务自动生成，同步主流厂商（DeepSeek、Anthropic、OpenAI、SiliconFlow、Ollama）的最新模型版本与预设。"
+          branch: "auto-update/model-catalog"
+          delete-branch: true

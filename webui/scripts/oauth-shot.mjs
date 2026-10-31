@@ -125,7 +125,7 @@ try {
       localStorage.setItem('qaqh.oauth.lastAccountProvider', signedIn ? 'deepseek-account' : 'openai');
       const expiresAtMs = Date.now() + 60000;
       const FIXTURES = {
-        "config.load": { credential: signedIn ? "deepseek_account" : "api_key", model: signedIn ? "deepseek-flash" : "saved-byok-model", reasoningEffort: "high", wire: "chat", baseUrl: "https://api.deepseek.com", contextLength: 1048576, profiles: [], activeProfile: null },
+        "config.load": { credential: signedIn ? "deepseek_account" : "api_key", model: signedIn ? "deepseek-flash" : "saved-byok-model", reasoningEffort: "high", wire: signedIn ? "responses" : "chat", baseUrl: "https://api.deepseek.com", contextLength: 1048576, profiles: [], activeProfile: null },
         "siwc.status": { status: "disconnected", sharing: false },
         "siwc.models": [{ slug: "gpt-5.2", displayName: "GPT-5.2" }],
         "dsaccount.status": {

@@ -20,8 +20,7 @@ import {
   type ScreenshotWire,
   type ShotMode,
   type StreamHandlers,
-  type TimelinePageResponse,
-  type TimelineStatusWire,
+  type ProjectionStatusWire,
   type ReconnectStatusWire,
   type TransportBackend,
   type UserSkillsWire,
@@ -112,17 +111,6 @@ export class ElectronTransport implements TransportBackend {
     return invoke<UserSkillsWire>("skills_user_scan");
   }
 
-  async timelinePage(seed: string, query = ""): Promise<TimelinePageResponse> {
-    const params = new URLSearchParams(query.startsWith("?") ? query.slice(1) : query);
-    const limit = params.get("limit");
-    const beforeIndex = params.get("before_index");
-    return invoke<TimelinePageResponse>("timeline_page", {
-      seed,
-      limit: limit != null && limit !== "" ? Number(limit) : null,
-      beforeIndex: beforeIndex != null && beforeIndex !== "" ? Number(beforeIndex) : null,
-    });
-  }
-
   // ── Electron 宿主专属面(DesktopHostSurface) ────────────────────────────────
 
   pickDirectory(): Promise<string | null> {
@@ -151,11 +139,7 @@ export class ElectronTransport implements TransportBackend {
         run(event.payload);
       }));
     };
-    await on<{ session_id: string; entry: Record<string, any> }>("timeline://entry", (payload) => {
-      if (typeof payload?.session_id === "string") handlers.onTimelineEntry(payload.session_id, payload.entry);
-    });
-    await on<TimelineStatusWire>("timeline://status", (payload) => handlers.onTimelineStatus(payload));
-    await on<TimelinePageResponse>("timeline://snapshot", (payload) => handlers.onTimelineSnapshot(payload));
+    await on<ProjectionStatusWire>("projection://status", (payload) => handlers.onProjectionStatus?.(payload));
     await on<Record<string, any>>("projection://event", (payload) => {
       const seed = typeof payload?.session_id === "string" ? payload.session_id : "";
       handlers.onProjectionEvent(seed, payload);
@@ -176,8 +160,8 @@ export class ElectronTransport implements TransportBackend {
     return invoke<unknown>("session_bootstrap", { seed });
   }
 
-  async timelineStatus(seed: string): Promise<TimelineStatusWire | null> {
-    return invoke<TimelineStatusWire | null>("timeline_status", { seed });
+  readContentText(contentRef: string): Promise<string> {
+    return invoke<string>("content_read_text", { contentRef });
   }
 
   async streamsRetry(seed?: string): Promise<void> {

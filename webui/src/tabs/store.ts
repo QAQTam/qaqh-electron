@@ -311,17 +311,75 @@ export async function closeTab(tabId: string): Promise<void> {
   }
 }
 
+export interface CreateSessionOptions {
+  cwd?: string | null;
+  profile?: string | null;
+  effort?: string | null;
+  title?: string | null;
+}
+
 /**
- * 依据指定 cwd 创建新会话并返回新分配的 session_id。
+ * daemon / 宿主不认识 `session.create` 时才允许降级。
+ *
+ * 只有"方法不存在"值得走旧通道；业务拒绝（例如工作目录不存在）必须原样
+ * 抛出——否则用户要等完 20 次轮询才看到一句"会话创建超时"，真实原因被吞掉。
  */
-export async function createSessionWithCwd(cwd?: string | null): Promise<string> {
+function isMissingCreateRpc(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /unknown[ _]?(service )?method|unknown_method|method not (found|allowed|implemented)|not implemented|unsupported method/i.test(
+    message,
+  );
+}
+
+/**
+ * 依据指定选项原子创建新会话并返回新分配的 session_id。
+ * 优先调用原子 RPC `session.create`；毫秒级完成，杜绝轮询比对与竞态。
+ */
+export async function createSessionWithCwd(
+  cwdOrOptions?: string | null | CreateSessionOptions,
+): Promise<string> {
+  const options: CreateSessionOptions =
+    typeof cwdOrOptions === "string" || cwdOrOptions === null || cwdOrOptions === undefined
+      ? { cwd: cwdOrOptions ?? null }
+      : cwdOrOptions;
+
+  let rpcFailure: unknown = null;
+  try {
+    const res = await transport.rpc<{ session_id: string }>("session.create", {
+      cwd: options.cwd ?? null,
+      profile: options.profile ?? null,
+      effort: options.effort ?? null,
+      title: options.title ?? null,
+    });
+    if (res?.session_id) {
+      // 会话已经建出来了：侧栏刷新失败不能再走一次创建，否则会多出一个会话。
+      try {
+        const list = await transport.sessions();
+        applySessionList(list as SidebarSession[]);
+      } catch (err) {
+        console.warn("session.create 已成功，但会话列表刷新失败：", err);
+      }
+      return String(res.session_id);
+    }
+    rpcFailure = new Error("session.create 未返回 session_id");
+  } catch (err) {
+    if (!isMissingCreateRpc(err)) throw err;
+    rpcFailure = err;
+  }
+  console.warn("session.create RPC 不可用，降级至旧通道：", rpcFailure);
+
+  // 兜底回退：旧通道 control session_create + 轮询
   const before = new Set((await transport.sessions()).map((item) => String(item.session_id)));
-  await transport.command("control", {
+  const ack = await transport.command("control", {
     channel: "control",
     type: "session_create",
     close_current: false,
-    cwd: cwd ?? null,
+    cwd: options.cwd ?? null,
   });
+  // 现有 transport 对 rejected 直接抛出；这里兜住不上抛的后端实现。
+  if (ack?.status === "rejected") {
+    throw new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
+  }
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 300));
     const list = await transport.sessions();
@@ -331,14 +389,11 @@ export async function createSessionWithCwd(cwd?: string | null): Promise<string>
       return fresh;
     }
   }
-  throw new Error("会话创建超时");
+  throw new Error("会话创建超时（控制通道已受理，但新会话未出现在列表中）");
 }
 
 /**
- * 新建会话:控制通道 SessionCreate → 轮询 sessions 找新 seed(≤6s)。
- *
- * `cwd` 取输入区的目标工作区(`newSessionCwd`);daemon 透传给 `session.new`,
- * 落 `SessionMeta.cwd` 并触发 workspace 自动归属。
+ * 新建会话：调用原子 session.create，落 SessionMeta 并触发 workspace 归属。
  */
 export async function createSession(cwd?: string | null): Promise<void> {
   if (creating()) return;
@@ -356,23 +411,27 @@ export async function createSession(cwd?: string | null): Promise<void> {
 export interface StartupSubmitOptions {
   cwd: string | null;
   profile?: string | null;
+  effort?: string | null;
   text: string;
   attachmentPaths?: string[];
 }
 
 /**
- * Startup 首页延迟创建会话与首包发送事务:
- * 1. 带目标 cwd 创建会话
- * 2. 绑定 profile (若指定)
- * 3. 上传本地暂存的附件 (若有)
- * 4. 打开会话并发送第一条用户消息
+ * Startup 首页原子创建会话与首包发送事务:
+ * 1. 原子创建会话并绑定目标 cwd / profile / effort
+ * 2. 上传本地暂存的附件 (若有)
+ * 3. 打开会话并发送第一条用户消息
  */
 /** 返回是否成功提交;false = 创建/发送失败(调用方据此保留草稿)。 */
 export async function submitStartupSession(options: StartupSubmitOptions): Promise<boolean> {
   if (creating()) return false;
   setCreating(true);
   try {
-    const fresh = await createSessionWithCwd(options.cwd);
+    const fresh = await createSessionWithCwd({
+      cwd: options.cwd,
+      profile: options.profile,
+      effort: options.effort,
+    });
     if (options.profile) {
       try {
         await transport.rpc("session.set_profile", { name: options.profile }, fresh);

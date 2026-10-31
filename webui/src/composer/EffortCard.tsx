@@ -62,7 +62,8 @@ const TIER_LABEL: Record<ReasoningTier, string> = {
 export const EffortCard: Component<{
   open: boolean;
   onToggle: () => void;
-  onOpenNativePicker?: () => void;
+  effort?: () => string | null;
+  onEffort?: (effort: ReasoningTier) => Promise<void> | void;
 }> = (props) => {
   const [pickingModel, setPickingModel] = createSignal(false);
   const [customModel, setCustomModel] = createSignal("");
@@ -87,16 +88,19 @@ export const EffortCard: Component<{
   onCleanup(() => setDragging(false));
 
   const tiers = (): readonly ReasoningTier[] => availableTiers();
+  const effectiveEffort = (): string => props.effort?.() ?? currentEffort();
+  const writeEffort = async (tier: ReasoningTier): Promise<void> => {
+    if (props.onEffort) {
+      await props.onEffort(tier);
+    } else {
+      await setEffort(tier);
+    }
+  };
 
   /**
    * 后端真值的三态判定（`effortDisplayOf`）。
-   *
-   * 关键在**没读到时不许报档名**：以前这里写的是
-   * `allowed.find((t) => t === currentEffort()) ?? allowed[0]`，配置还没 load 回来的
-   * 首帧就把 `low`（"轻度"）画成事实——而 `impl Default for Config` 的
-   * `reasoning_effort` 是 `high`。
    */
-  const display = (): EffortDisplay => effortDisplayOf(currentEffort(), tiers(), configLoaded());
+  const display = (): EffortDisplay => effortDisplayOf(effectiveEffort(), tiers(), configLoaded());
 
   /** chip 上的字：预览值 > 后端真值 > 三态里那句老实话（不认识的值原样显示，不冒充第一档）。 */
   const chipLabel = (): string => {
@@ -145,11 +149,11 @@ export const EffortCard: Component<{
     if (next != null) setPending(next);
   };
 
-  /** 松手落盘。写成功（`setEffort` 内含重新读配置）之后再清预览，避免闪回旧值。 */
+  /** 松手落盘。写成功之后再清预览，避免闪回旧值。 */
   const commitPending = async (): Promise<void> => {
     const next = pending();
     if (next == null) return;
-    await setEffort(next);
+    await writeEffort(next);
     setPending(null);
   };
 
@@ -190,7 +194,7 @@ export const EffortCard: Component<{
               class="icon-btn effort-card__reset"
               title="重置为该模型的默认档"
               disabled={configBusy()}
-              onClick={() => void setEffort(defaultTier())}
+              onClick={() => void writeEffort(defaultTier())}
             >
               <IconRotateCcw />
             </button>
@@ -267,20 +271,6 @@ export const EffortCard: Component<{
             </div>
           </Show>
 
-          <Show when={props.onOpenNativePicker != null}>
-            <button
-              type="button"
-              class="ghost-mini effort-card__native-picker"
-              title="在 Electron 原生窗口中选择 Provider / 模型 / 推理强度"
-              onClick={() => {
-                props.onOpenNativePicker?.();
-                setPickingModel(false);
-              }}
-            >
-              在原生窗口中选择模型…
-            </button>
-          </Show>
-
           <div
             ref={(node) => {
               track = node;
@@ -315,7 +305,7 @@ export const EffortCard: Component<{
               if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
               event.preventDefault();
               const delta = event.key === "ArrowRight" ? 1 : -1;
-              void setEffort(stepTier(tiers(), trackTier(), delta));
+              void writeEffort(stepTier(tiers(), trackTier(), delta));
             }}
           >
             <span class="effort-track__fill" style={{ width: `${fill()}%` }} />

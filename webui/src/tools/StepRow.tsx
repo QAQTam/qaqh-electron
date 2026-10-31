@@ -19,7 +19,7 @@ import { now } from "../lib/time";
 import { DiffList } from "../diff/DiffView";
 import type { ToolStep, Turn } from "../session/types";
 import { primaryArg, toolLabel } from "./registry";
-import { isSkillStep, semanticLabel, shellContent, toolPaths, toolPresentation } from "./presentation";
+import { isSkillStep, semanticLabel, shellContent, toolPaths, toolPresentation, toolPhaseLabel } from "./presentation";
 import { toolCommandIcon } from "./command-icons";
 
 const CopyButton: Component<{ text: () => string }> = (props) => {
@@ -170,7 +170,10 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
       </span>
       <Show when={stats()}><span class={{ "tool-diffstat": true, "is-estimate": stats()!.estimating }}><b class="diff-stat-add">+{stats()!.add}</b><b class="diff-stat-del">−{stats()!.del}</b><Show when={stats()!.estimating}><span class="diff-stat-flag">估算</span></Show></span></Show>
       <Switch>
-        <Match when={step().status === "running"}><LiveElapsed startedAt={step().startedAt} /></Match>
+        <Match when={step().status === "pending" || step().status === "running"}>
+          <span class="tool-state">{toolPhaseLabel(step())}</span>
+          <LiveElapsed startedAt={step().startedAt} />
+        </Match>
         <Match when={step().status === "error"}><span class="tool-state err">{STR.failed}</span></Match>
         <Match when={step().status === "denied"}><span class="tool-state err">已拒绝</span></Match>
         <Match when={step().status === "aborted"}><span class="tool-state">{STR.aborted}</span></Match>

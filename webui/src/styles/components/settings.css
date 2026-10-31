@@ -159,6 +159,84 @@
   .profile-create .field-input { flex: 1; min-width: 0; max-width: 280px; }
   .profile-create .ghost-mini { flex: none; height: 34px; padding-inline: 14px; }
 
+  /* 小白友好模型档案编辑器 */
+  .profile-wizard-card {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 12px;
+    max-width: 600px;
+    padding: 16px;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+    margin-top: 10px;
+  }
+  .provider-template-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .provider-template-chip {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--fs-xs);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .provider-template-chip:hover {
+    border-color: var(--accent);
+  }
+  .provider-template-chip.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .model-preset-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .model-preset-pill {
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px dashed var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .model-preset-pill:hover, .model-preset-pill.active {
+    border-style: solid;
+    border-color: var(--accent);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  .wizard-advanced-toggle {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: var(--fs-xs);
+    cursor: pointer;
+    text-align: left;
+    padding: 0;
+    margin-top: 4px;
+  }
+  .wizard-advanced-toggle:hover {
+    color: var(--text);
+  }
+  .wizard-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+  }
+
   /* 密钥输入 + 显隐切换 */
   .secret-input { position: relative; display: flex; }
   .secret-input .field-input { flex: 1; min-width: 0; padding-right: 34px; }

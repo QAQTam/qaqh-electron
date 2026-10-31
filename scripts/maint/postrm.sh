@@ -1,24 +1,16 @@
 #!/usr/bin/env bash
-# deb afterRemove —— 升级与卸载都会走到这里(fpm 未暴露 before-remove 钩子;
-# Linux 上替换运行中的二进制无风险,daemon 停止时机略晚于文件替换是可接受的)。
-# 职责:带超时停 daemon → 清系统 seed。恒返零。
-#
-# 用户域 overlay(~/.local/share/QAQ-Harness)包含用户数据,**有意保留**——
-# root 不该遍历家目录删东西;需要彻底清理时由用户自跑 `qaqh-maint cleanup`。
+# deb afterRemove: dpkg owns the system files. User components and daemon
+# processes are deliberately outside this hook; users manage them in-session.
 set -u
 
-stop_daemon() {
-  pkill -x qaqh-daemon >/dev/null 2>&1 || return 0
-  for _ in $(seq 1 40); do
-    pgrep -x qaqh-daemon >/dev/null 2>&1 || return 0
-    sleep 0.25
-  done
-  pkill -9 -x qaqh-daemon >/dev/null 2>&1 || true
-  return 0
-}
-stop_daemon
-
-SEED_DIR="${QAQH_SEED_DIR:-/var/lib/qaqh-harness}"
-rm -rf "$SEED_DIR" 2>/dev/null || true
-echo "postrm: daemon stopped; seed $SEED_DIR removed (user overlay preserved)"
+case "${1:-}" in
+  remove|purge)
+    # The old shared seed is no longer authoritative and may contain files not
+    # owned by dpkg. Never recursively remove it from a root lifecycle hook.
+    echo "postrm: $1 complete; user components and data were left untouched"
+    ;;
+  upgrade|failed-upgrade|abort-install|abort-upgrade|disappear|*)
+    echo "postrm: ${1:-unknown} complete; no user processes or home directories touched"
+    ;;
+esac
 exit 0

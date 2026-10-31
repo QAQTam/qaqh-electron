@@ -1,8 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 const events = new Set([
-  "timeline://entry", "timeline://status", "timeline://snapshot",
-  "projection://event", "projection://reset", "conn://incompatible",
+  "projection://status", "projection://event", "projection://reset", "conn://incompatible",
   "conn://error", "conn://liveness", "conn://reconnect",
   "model-picker:changed", "app://window-state", "app://quit-requested",
 ]);
@@ -27,11 +26,6 @@ contextBridge.exposeInMainWorld("qaqhHost", {
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
     ipcRenderer.on(`qaqh:event:${eventName}`, listener);
     return () => ipcRenderer.removeListener(`qaqh:event:${eventName}`, listener);
-  },
-  modelPicker: {
-    load: (args: { sessionId?: string | null } = {}) => ipcRenderer.invoke("model-picker:load", args),
-    save: (args: { sessionId?: string | null; selection: unknown; alsoDefault?: boolean }) => ipcRenderer.invoke("model-picker:save", args),
-    open: (args: { sessionId?: string | null } = {}) => ipcRenderer.invoke("model-picker:open", args),
   },
   windowControls: {
     state: () => ipcRenderer.invoke("qaqh:window-state"),

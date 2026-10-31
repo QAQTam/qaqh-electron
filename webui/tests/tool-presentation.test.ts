@@ -1,5 +1,13 @@
 import { expect, test } from "vitest";
-import { absoluteToolPath, isSkillStep, semanticLabel, shellContent, toolPaths } from "../src/tools/presentation";
+import { absoluteToolPath, isSkillStep, semanticLabel, shellContent, toolPaths, toolPhaseLabel } from "../src/tools/presentation";
+
+test("tool generation, permission wait and execution have distinct labels", () => {
+  expect(toolPhaseLabel({ status: "pending", streamEstimate: { add: 1, del: 0 } })).toBe("正在生成修改内容");
+  expect(toolPhaseLabel({ status: "pending" })).toBe("准备工具调用");
+  expect(toolPhaseLabel({ status: "pending", permission: {} as any })).toBe("等待授权");
+  expect(toolPhaseLabel({ status: "running" })).toBe("执行中");
+  expect(toolPhaseLabel({ status: "success" })).toBeUndefined();
+});
 
 test("绝对路径仅使用明确 cwd；支持 Windows/UNC/Unix/父路径与多文件 diff", () => {
   expect(absoluteToolPath("src/../config.rs", "E:\\repo")).toBe("E:/repo/config.rs");

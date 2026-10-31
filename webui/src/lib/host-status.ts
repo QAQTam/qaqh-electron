@@ -26,8 +26,6 @@ export const [lastLivenessAt, setLastLivenessAt] = createSignal<number | null>(n
 export const [lastReconnect, setLastReconnect] = createSignal<ReconnectStatusWire | null>(null);
 /** Electron 窗口/托盘状态。 */
 export const [hostWindowState, setHostWindowState] = createSignal<WindowState | null>(null);
-/** 原生模型选择器保存后递增,App 用它刷新配置与会话 profile。 */
-export const [modelPickerRevision, setModelPickerRevision] = createSignal(0);
 
 export async function initHostStatus(): Promise<() => void> {
   const unlisteners: Array<() => void> = [];
@@ -47,11 +45,6 @@ export async function initHostStatus(): Promise<() => void> {
         setHostError(null);
       },
       onReconnect: (info) => setLastReconnect(info),
-    }),
-  );
-  unlisteners.push(
-    await listen<ModelPickerChange>("model-picker:changed", () => {
-      setModelPickerRevision((value) => value + 1);
     }),
   );
   unlisteners.push(

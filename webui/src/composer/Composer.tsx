@@ -71,6 +71,9 @@ export const Composer: Component<{
    */
   profileView?: () => SessionProfileView;
   onProfile?: (name: string | null) => void;
+  onManageProfiles?: () => void;
+  effortView?: () => string | null;
+  onEffort?: (effort: import("../models/specs").ReasoningTier) => void;
   /** Live session usage HUD; omitted from the empty-session composer. */
   metrics?: () => ComposerMetrics;
   /** 身份行:当前会话的工作区名;null = 目录项还没到,隐藏该项。 */
@@ -94,8 +97,6 @@ export const Composer: Component<{
    * 非 mac 平台都拿不到系统截图,摆出来只会变成一个坏控件。
    */
   onScreenshot?: () => void;
-  /** 原生模型选择器(Electron 独立窗口);不传则不渲染入口。 */
-  onOpenModelPicker?: () => void;
 }> = (props) => {
   let textarea: HTMLTextAreaElement | undefined;
   let root: HTMLDivElement | undefined;
@@ -141,10 +142,10 @@ export const Composer: Component<{
   };
 
   const profile = (): SessionProfileView | null => props.profileView?.() ?? null;
-  /** `ConfigDto` 只下发**活跃** profile 的 model,名录里其他项拿不到,就标未公开。 */
+  /** 优先从 profilesDetail 取真实 model，再退回活跃项 model。 */
   const profileModel = (name: string): string | null => {
     const view = profile();
-    return view != null && name === view.activeProfile ? view.model : null;
+    return view?.details?.[name]?.model ?? (view != null && name === view.activeProfile ? view.model : null);
   };
 
   const currentWorkspace = (): string | null => props.sessionWorkspace?.() ?? null;
@@ -295,6 +296,35 @@ export const Composer: Component<{
                           <small>{profileModel(name) ?? STR.profileModelHidden}</small>
                         </button>
                       )}</For>
+                      <Show when={props.onManageProfiles != null}>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          style={{
+                            "font-size": "var(--fs-xs)",
+                            opacity: "0.85",
+                            "text-align": "left",
+                            padding: "6px 10px",
+                            display: "flex",
+                            "align-items": "center",
+                            gap: "6px",
+                            "border-top": "1px solid var(--border)",
+                            "margin-top": "4px",
+                            color: "var(--accent)",
+                            cursor: "pointer",
+                            background: "transparent",
+                            border: "none",
+                            width: "100%",
+                          }}
+                          onClick={() => {
+                            setOpenMenu(null);
+                            props.onManageProfiles?.();
+                          }}
+                        >
+                          <span style={{ "font-weight": "bold" }}>+</span>
+                          <span>管理 / 添加更多模型档案…</span>
+                        </button>
+                      </Show>
                       <small class="composer-menu-note">{STR.profileTakesEffectHint}</small>
                     </div>
                   </Show>
@@ -305,7 +335,8 @@ export const Composer: Component<{
             <EffortCard
               open={openMenu() === "effort"}
               onToggle={() => setOpenMenu(openMenu() === "effort" ? null : "effort")}
-              onOpenNativePicker={props.onOpenModelPicker}
+              effort={props.effortView}
+              onEffort={props.onEffort}
             />
             <Show when={props.onWorkspace != null}>
               <div class="composer-control-wrap">
@@ -393,21 +424,25 @@ export const Composer: Component<{
                   <span
                     class={{
                       "composer-identity-item": true,
-                      "is-live": metrics().isStreaming === true,
-                      "is-idle": metrics().tokensPerSecond == null && !metrics().isStreaming,
+                      "is-live": metrics().isStreaming === true || metrics().isGeneratingToolInput === true,
+                      "is-idle": metrics().tokensPerSecond == null && !metrics().isStreaming && !metrics().isGeneratingToolInput,
                     }}
                     title={
-                      metrics().isStreaming
+                      metrics().isGeneratingToolInput
+                        ? "模型正在生成工具参数；行数估算显示在工具卡片，当前不推算 tok/s"
+                        : metrics().isStreaming
                         ? "实时吐字速率：基于流式增量滑动窗口实时测算"
                         : metrics().tokensPerSecond != null
                           ? "最近一轮完成速率：completion tokens ÷ 首末输出间隔"
                           : "吐字速率：模型生成时将实时显示 (tok/s)"
                     }
                   >
-                    <Show when={metrics().isStreaming}>
+                    <Show when={metrics().isStreaming || metrics().isGeneratingToolInput}>
                       <span class="composer-live-dot" aria-hidden="true" />
                     </Show>
-                    <strong>{metrics().tokensPerSecond != null ? metrics().tokensPerSecond!.toFixed(1) : "--"}</strong> tok/s
+                    <Show when={metrics().isGeneratingToolInput} fallback={<><strong>{metrics().tokensPerSecond != null ? metrics().tokensPerSecond!.toFixed(1) : "--"}</strong> tok/s</>}>
+                      正在生成工具参数
+                    </Show>
                   </span>
                   <span class="composer-context-wrap">
                     <button

@@ -80,12 +80,10 @@ import {
   hostError,
   hostIncompatible,
   initHostStatus,
-  modelPickerRevision,
   setHostActionNote,
   setHostError,
   setHostIncompatible,
 } from "../lib/host-status";
-import { nativeModelPickerAvailable, openNativeModelPicker } from "../lib/model-picker";
 import { applyTheme, storedTheme } from "../lib/theme";
 import { applyGpuPerfHint } from "../lib/visual";
 import { notifyConfigChanged } from "../lib/config-events";
@@ -357,7 +355,7 @@ const App: Component = () => {
       const accel = event.ctrlKey || event.metaKey;
       if (accel && event.shiftKey && (event.key === "M" || event.key === "m")) {
         event.preventDefault();
-        openNativePicker(null);
+        openProfilesSettings();
         return;
       }
       if (accel && !event.shiftKey && (event.key === "q" || event.key === "Q")) {
@@ -540,11 +538,10 @@ const App: Component = () => {
     });
   };
 
-  const openNativePicker = (sessionId: string | null): void => {
-    void openNativeModelPicker(sessionId).then((opened) => {
-      if (!opened) toast("当前壳未提供原生模型选择器", "err");
-    }).catch((error: unknown) => {
-      toast(`打开模型选择器失败：${String(error instanceof Error ? error.message : error)}`, "err");
+  const openProfilesSettings = (): void => {
+    if (!settingsOpen()) toggleSettings();
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.settings-nav-item[data-section-id="section-profiles"]')?.click();
     });
   };
 
@@ -572,21 +569,8 @@ const App: Component = () => {
    */
   const openShellMenu = (anchor: HTMLElement): void => {
     const rect = anchor.getBoundingClientRect();
-    const sessionSeed = activeTab()?.seed ?? null;
     const items: ContextMenuItem[] = [
-      { kind: "action", label: "选择新会话默认模型…", hint: "Ctrl+Shift+M", onSelect: () => openNativePicker(null) },
-      {
-        kind: "action",
-        label: "更改当前会话模型…",
-        hint: sessionSeed == null ? "无活动会话" : undefined,
-        onSelect: () => {
-          if (sessionSeed == null) {
-            toast("当前没有活动会话，请先新建或选择一个会话", "err");
-            return;
-          }
-          openNativePicker(sessionSeed);
-        },
-      },
+      { kind: "action", label: "管理模型档案预设…", hint: "Ctrl+Shift+M", onSelect: () => openProfilesSettings() },
       { kind: "separator" },
       {
         kind: "action",
@@ -636,19 +620,6 @@ const App: Component = () => {
     toggleSidebar();
   };
 
-  // Native picker writes through the main process and broadcasts this event
-  // when it closes. Refresh global config and the active session's profile.
-  let seenPickerRevision = 0;
-  createEffect(() => modelPickerRevision(), (revision) => {
-    if (revision === seenPickerRevision) return;
-    seenPickerRevision = revision;
-    void refreshConfig();
-    notifyConfigChanged();
-    void pollSessions();
-    const tab = activeTab();
-    if (tab != null) void tab.store.refreshProfile();
-  });
-
   // Keep the tray tooltip in sync with the active tab's connection / retry
   // state. This is intentionally best-effort; a missing tray is not an error.
   createEffect(
@@ -693,6 +664,14 @@ const App: Component = () => {
       await tab.store.setSessionProfile(name);
     } catch (error) {
       toast(`${STR.profileSwitchFailed}：${String(error instanceof Error ? error.message : error)}`, "err");
+    }
+  };
+
+  const switchEffort = async (tab: Tab, effort: string | null): Promise<void> => {
+    try {
+      await tab.store.setSessionEffort(effort);
+    } catch (error) {
+      toast(`切换思考强度失败：${String(error instanceof Error ? error.message : error)}`, "err");
     }
   };
 
@@ -838,7 +817,7 @@ const App: Component = () => {
                 <div class="session-column">
                   <StartupView
                     onScreenshot={shotSupported ? () => void screenshot() : undefined}
-                    onOpenModelPicker={nativeModelPickerAvailable() ? () => openNativePicker(null) : undefined}
+                    onManageProfiles={openProfilesSettings}
                   />
                 </div>
               }
@@ -878,11 +857,13 @@ const App: Component = () => {
                           toast(`${STR.attachmentFailed}：${String(error instanceof Error ? error.message : error)}`, "err");
                         })}
                         onScreenshot={shotSupported ? () => void screenshot() : undefined}
-                        onOpenModelPicker={nativeModelPickerAvailable() ? () => openNativePicker(tab.seed) : undefined}
                         attachments={() => tab.store.pendingAttachments[0]()}
                         onRemoveAttachment={(id) => tab.store.removeAttachment(id)}
                         profileView={() => tab.store.composerProfile[0]()}
                         onProfile={(name) => void switchProfile(tab, name)}
+                        onManageProfiles={openProfilesSettings}
+                        effortView={() => tab.store.composerEffort[0]()}
+                        onEffort={(effort) => void switchEffort(tab, effort)}
                         /* 新建会话的目标工作区(§1.5):只改「下一条会话落在哪」,
                            当前会话的 cwd 钉在 SessionMeta 上,不在这里动——
                            身份行(下面那行只读文字)说的才是本会话的工作区。 */

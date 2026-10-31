@@ -1,7 +1,7 @@
 // Ringing v2 transport adapter over @qaqh/sdk.
 //
-// Owns the legacy EventSender contract consumed by the renderer
-// (timeline://*, projection://*, conn://liveness); all HTTP/SSE/lease
+// Owns the EventSender contract consumed by the renderer
+// (projection://*, conn://liveness); all HTTP/SSE/lease
 // mechanics — cursor resumption, backoff reconnects, lease renewal with
 // credential refresh, multipart content upload — live in the SDK.
 import {
@@ -12,7 +12,6 @@ import {
   type ClientState,
   type RingingClient as SdkRingingClient,
   type SessionWatch,
-  type TimelineWatch,
   type WatchStatus,
 } from "@qaqh/sdk";
 import { readDiscovery } from "./daemon.js";
@@ -20,9 +19,9 @@ import { requireAccepted, requireId } from "./approvals.js";
 import type { ControlCommand, ConversationCommand, RingingChannel, RingingCommand, ToolCommand } from "@qaqh/sdk/protocol";
 import type {
   DaemonDiscovery,
+  ProjectionStatusWire,
   ReconnectStatusWire,
   RingingCommandAck,
-  TimelineStatusWire,
 } from "./types.js";
 
 export type EventSender = (eventName: string, payload: any) => void;
@@ -40,10 +39,8 @@ export class RingingClient {
   private readonly eventSender: EventSender;
   private activeSeed: string | null = null;
   private sessionWatch: SessionWatch | null = null;
-  private timelineWatch: TimelineWatch | null = null;
   private streamGeneration = 0;
   private projectionStatus: WatchStatus = "closed";
-  private timelineStatus: WatchStatus = "closed";
   private resyncTimer: ReturnType<typeof setTimeout> | null = null;
   private resyncAttempts = 0;
 
@@ -73,14 +70,14 @@ export class RingingClient {
     return this.activeSeed;
   }
 
-  async attach(seed: string, limit: number | null = null): Promise<void> {
+  async attach(seed: string, _limit: number | null = null): Promise<void> {
     requireId(seed, "session_id");
     this.detachActive();
     this.activeSeed = seed;
     const generation = this.streamGeneration;
     const isCurrent = () => this.activeSeed === seed && this.streamGeneration === generation;
-    this.projectionStatus = this.timelineStatus = "connecting";
-    this.sendCombinedStatus(seed);
+    this.projectionStatus = "connecting";
+    this.sendProjectionStatus("connecting", seed);
 
     // 1. session_resume 绑定该 seed 的展示通道（拒绝不影响只读 attach）
     await this.command("control", { type: "session_resume", session_id: seed }, seed)
@@ -89,17 +86,7 @@ export class RingingClient {
       });
     if (!isCurrent()) return;
 
-    // 2. 首页 timeline 快照立刻推给渲染层
-    try {
-      const page = await this.timelinePage(seed, limit ?? 30, null);
-      if (!isCurrent()) return;
-      this.eventSender("timeline://snapshot", page);
-    } catch (err) {
-      if (isCurrent()) this.reportError(`Initial timeline snapshot failed for ${seed}`, err);
-    }
-    if (!isCurrent()) return;
-
-    // 3. 双路流：投影单流（bootstrap + since_cursor 无缝续传）+ timeline 流（Last-Event-ID 续传）
+    // 2. 投影单流（bootstrap + since_cursor 无缝续传）
     this.sessionWatch = this.sdk.watchSession(
       seed,
       {
@@ -124,7 +111,7 @@ export class RingingClient {
         onStatus: (status) => {
           if (!isCurrent()) return;
           this.projectionStatus = status;
-          this.sendCombinedStatus(seed);
+          this.sendProjectionStatus(status, seed);
         },
         onReconnectScheduled: ({ attempt, delayMs }) => {
           if (isCurrent()) this.sendReconnectScheduled(seed, attempt, delayMs);
@@ -136,36 +123,6 @@ export class RingingClient {
       },
       { skipBootstrap: false }
     );
-
-    this.timelineWatch = this.sdk.watchTimeline(seed, {
-      onEntry: (frame) => {
-        if (!isCurrent()) return;
-        this.eventSender("conn://liveness", {});
-        this.eventSender("timeline://entry", { session_id: frame.session_id, entry: frame.entry });
-      },
-      onStatus: (status) => {
-        if (!isCurrent()) return;
-        this.timelineStatus = status;
-        this.sendCombinedStatus(seed);
-      },
-      onReconnectScheduled: ({ attempt, delayMs }) => {
-        if (isCurrent()) this.sendReconnectScheduled(seed, attempt, delayMs);
-      },
-      onTerminated: (info) => {
-        if (!isCurrent()) return;
-        // journal_gap 是 daemon 的快照重基线信号（daemon 重启后旧 epoch
-        // cursor 不再被 journal 覆盖时必发，设计内恢复路径；SDK 会丢弃
-        // cursor 重连续传）。内容无损，不升格为用户可见错误——否则渲染层
-        // 会把它当故障横幅展示，且 timeline 流状态回不到 open，输入区
-        // 被 blockedReason 判成 offline 永久禁发。
-        if (info.code === "journal_gap") {
-          console.warn(`[ringing] Timeline re-baselining after journal_gap for ${seed}: ${info.message}`);
-          return;
-        }
-        this.reportError(`Timeline stream terminated (${info.code}) for ${seed}: ${info.message}`);
-      },
-      onError: (error) => { if (isCurrent()) this.reportError(`Timeline watch error for ${seed}`, error); },
-    });
   }
 
   detachActive(): void {
@@ -175,11 +132,9 @@ export class RingingClient {
     this.resyncAttempts = 0;
     this.sessionWatch?.close();
     this.sessionWatch = null;
-    this.timelineWatch?.close();
-    this.timelineWatch = null;
-    this.projectionStatus = this.timelineStatus = "closed";
+    this.projectionStatus = "closed";
     if (this.activeSeed) {
-      this.sendTimelineStatus("closed", this.activeSeed);
+      this.sendProjectionStatus("closed", this.activeSeed);
       this.activeSeed = null;
     }
   }
@@ -248,16 +203,14 @@ export class RingingClient {
     return this.sdk.adminRequest<T>(credential, path, init);
   }
 
-  async timelinePage(seed: string, limit?: number | null, beforeIndex?: number | null): Promise<any> {
-    return this.sdk.timelinePage(seed, {
-      limit: limit ?? undefined,
-      beforeIndex: beforeIndex ?? undefined,
-    });
-  }
-
-  /** Canonical bootstrap 快照（渲染层读取 control.state.activity）。 */
+  /** Canonical bootstrap 快照（渲染层读取 control.state.activity 与 conversation）。 */
   bootstrap(seed: string): Promise<ClientV2Bootstrap> {
     return this.sdk.bootstrap(seed);
+  }
+
+  async readContentText(contentRef: string): Promise<string> {
+    const content = await this.sdk.downloadContent(contentRef);
+    return new TextDecoder("utf-8", { fatal: true }).decode(content.bytes);
   }
 
   /** approvals.admin capability；渲染层拿到的仍是 ChallengeManager 发出的 challenge 视图。 */
@@ -296,8 +249,15 @@ export class RingingClient {
     void this.sdk.disconnect();
   }
 
-  private sendTimelineStatus(status: TimelineStatusWire["status"], seed: string): void {
-    this.eventSender("timeline://status", { status, session_id: seed } as TimelineStatusWire);
+  getProjectionStatus(seed: string): WatchStatus {
+    return this.activeSeed === seed ? this.projectionStatus : "closed";
+  }
+
+  private sendProjectionStatus(status: WatchStatus, seed: string): void {
+    this.eventSender("projection://status", {
+      status,
+      session_id: seed,
+    } satisfies ProjectionStatusWire);
   }
 
   private sendReconnectScheduled(seed: string, attempt: number, delayMs: number): void {
@@ -307,22 +267,6 @@ export class RingingClient {
       delay_ms: delayMs,
       at: Date.now(),
     } satisfies ReconnectStatusWire);
-  }
-
-  getTimelineStatus(seed: string): TimelineStatusWire {
-    return { status: this.activeSeed === seed ? this.combinedStatus() : "closed", session_id: seed };
-  }
-
-  private combinedStatus(): TimelineStatusWire["status"] {
-    const statuses = [this.projectionStatus, this.timelineStatus];
-    if (statuses.includes("closed") || statuses.includes("paused")) return "closed";
-    if (statuses.includes("reconnecting")) return "reconnecting";
-    if (statuses.every(status => status === "live")) return "open";
-    return "connecting";
-  }
-
-  private sendCombinedStatus(seed: string): void {
-    this.sendTimelineStatus(this.combinedStatus(), seed);
   }
 
   private reportError(message: string, error?: unknown): void {
@@ -346,11 +290,11 @@ export class RingingClient {
       const watch = this.sessionWatch;
       if (!watch) return;
       this.projectionStatus = "reconnecting";
-      this.sendCombinedStatus(seed);
+      this.sendProjectionStatus("reconnecting", seed);
       void watch.resync().catch(error => {
         if (this.activeSeed !== seed || this.streamGeneration !== generation) return;
         this.projectionStatus = "paused";
-        this.sendCombinedStatus(seed);
+        this.sendProjectionStatus("paused", seed);
         this.reportError(`Session resync failed for ${seed}`, error);
         this.scheduleProjectionResync(seed, generation);
       });

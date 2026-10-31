@@ -1,7 +1,7 @@
 /** 分页前插滚动补偿与窗口淘汰(spec §1.3 允许的纯逻辑单测)。 */
 import { describe, expect, test } from "vitest";
 import { anchorScrollTop, clampPlaceholderHeight, evictForWindow, fillGapHeights, shouldLoadOlder } from "../src/session/pagination";
-import { applySnapshot, emptySession, recomputeDerived } from "../src/session/reducer";
+import { applyConversationSnapshot, emptySession, recomputeDerived } from "../src/session/reducer";
 import { gapHeight, type SessionState } from "../src/session/types";
 
 const spansOf = (state: SessionState): string[] => {
@@ -13,14 +13,34 @@ const gapCount = (state: SessionState): number => state.slots.filter((slot) => s
 
 function stateWith(count: number, runningLast = false) {
   const state = emptySession();
-  const turns = Array.from({ length: count }, (_, index) => ({
-    turn_id: `t${index}`,
-    turn_index: index,
-    user_text: `u${index}`,
-    state: runningLast && index === count - 1 ? "running" : "completed",
-    rounds: [],
-  }));
-  applySnapshot(state, { snapshot: { watermark: count, turns } });
+  applyConversationSnapshot(state, {
+    session_id: "test",
+    revision: count,
+    last_fact_seq: count,
+    compaction: null,
+    current_turn_id: null,
+    turns: Array.from({ length: count }, (_, index) => ({
+      turn_id: `t${index}`,
+      input_id: `in${index}`,
+      mode: "normal",
+      recovery_ref: null,
+      outcome: runningLast && index === count - 1 ? null : { kind: "finished", data: { terminal: "completed", usage: null, error: null } },
+    })),
+    context: Array.from({ length: count }, (_, index) => ({
+      source_fact_seq: index + 1,
+      kind: {
+        kind: "input",
+        data: {
+          input_id: `in${index}`,
+          input_kind: "user_text",
+          input_purpose: "trigger_turn",
+          content: { kind: "inline", data: { text: `u${index}` } },
+          attachments: [],
+          actor: { kind: "user", id: `u${index}`, display_name: null },
+        },
+      },
+    })),
+  });
   return state;
 }
 

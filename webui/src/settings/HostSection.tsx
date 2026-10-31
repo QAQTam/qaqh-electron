@@ -22,7 +22,6 @@ import {
   setHostWindowState,
 } from "../lib/host-status";
 import { loadHostMemory, loadProcessGroup, type ProcessGroup } from "../lib/hostmem";
-import { nativeModelPickerAvailable, openNativeModelPicker } from "../lib/model-picker";
 import { daemonLanStatus, type DaemonLanStatus } from "../lib/pairing";
 import { desktopHostSurface, transport } from "../lib/transport";
 import { loadBuildInfo, type BuildInfo } from "../lib/version";
@@ -163,14 +162,6 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
     }
   };
 
-  const pickModel = (): Promise<void> =>
-    runAction("model", async () => {
-      if (!(await openNativeModelPicker(activeTab()?.seed ?? null))) {
-        throw new Error("当前壳没有原生模型选择器");
-      }
-      setNote("已在独立窗口打开模型选择器；保存后会自动刷新。");
-    });
-
   /** 休眠限制双开关 → 主进程 powerSaveBlocker;返回态为准(localStorage 只存偏好)。 */
   const setPowerToggles = async (keepAwake: boolean, keepBright: boolean): Promise<void> => {
     const bridge = desktopHost()?.powerBlocker;
@@ -235,8 +226,6 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
         <b>{formatBytes(memory()?.resident_bytes ?? null)}</b>
         <span>界面进程组</span>
         <b>{group() == null ? "未提供" : `${group()!.members.length} 个 · ${group()!.source}`}</b>
-        <span>原生模型选择器</span>
-        <b>{nativeModelPickerAvailable() ? "可用" : "不可用"}</b>
         <span>应用内截图</span>
         <b>未实现：使用系统截图后「添加附件」</b>
         <span>原生窗口材质</span>
@@ -277,9 +266,6 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
         </button>
         <button type="button" class="ghost-mini is-danger" disabled={busy() != null} onClick={() => void stopStale()}>
           停止旧 daemon 并重连
-        </button>
-        <button type="button" class="ghost-mini" disabled={busy() != null || !nativeModelPickerAvailable()} onClick={() => void pickModel()}>
-          选择模型…
         </button>
         <button type="button" class="ghost-mini" disabled={busy() != null || !trayReady()} onClick={() => void hideToTray()}>
           隐藏到托盘

@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { isAlive, resolveCredentials, DiscoveryError } from "@qaqh/sdk/node";
 import { RINGING_V2_VERSION } from "@qaqh/sdk/protocol";
 import type { DaemonDiscovery } from "./types.js";
+import { userComponentRoot } from "./component-paths.js";
 
 export function getDataDir(): string {
   if (process.env.QAQH_DATA_DIR && process.env.QAQH_DATA_DIR.trim() !== "") {
@@ -111,10 +112,14 @@ export function resolveDaemonExecutable(): string | null {
 
   const binName = process.platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
 
-  // 用户组件根(updater 热通道):overlay 的 daemon 比 baseline 新,优先于包内。
-  // 仅打包形态生效,dev 时不让本机残留的 overlay 干扰开发。
-  if ((process as any).resourcesPath) {
-    const overlayPath = join(homedir(), ".local", "share", "QAQ-Harness", "backend", binName);
+  // Bootstrap authorizes the reconciled user backend. Presence alone is not
+  // enough: on reconciliation failure use the matching packaged fallback.
+  if (process.env.QAQH_USE_USER_BACKEND === "1") {
+    const activeGeneration = process.env.QAQH_ACTIVE_GENERATION?.trim();
+    const componentRoot = activeGeneration
+      ? join(activeGeneration, "backend")
+      : join(userComponentRoot(), "backend");
+    const overlayPath = join(componentRoot, binName);
     if (existsSync(overlayPath)) return overlayPath;
   }
 

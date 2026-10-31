@@ -11,7 +11,6 @@ import { invoke } from "./lib/host";
 import { createSignal, Show, untrack } from "solid-js";
 import { SessionStore } from "./session/store";
 import type { SessionRunStatus } from "./api/qaqh/SessionRunStatus";
-import { applyEntry } from "./session/reducer";
 import { SessionView } from "./session/SessionView";
 import { WorkspacePanel } from "./workspace/WorkspacePanel";
 import { Composer } from "./composer/Composer";
@@ -66,8 +65,6 @@ const [fixtureCols, setFixtureCols] = createSignal<1 | 2 | 3>(3);
 const sidebarDrawerPreview = previewParams.get("sidebarDrawer") === "1";
 const railDrawerPreview = previewParams.get("railDrawer") === "1";
 const TOTAL = isVisualPreview ? 4 : 200;
-/** 假页水位;实时条目序号从 liveSeq 往后走。 */
-let watermark = 2000;
 let liveSeq = 2001;
 /** 翻页请求记录(测分页是否真在跑)。 */
 let pageRequests: Array<{ limit: number; beforeIndex: number | null }> = [];
@@ -162,124 +159,44 @@ function ansiLog(rand: () => number, lines: number): string {
   return out.join("\n");
 }
 
-/** 一半带 `diff --git` 头,一半只有裸 unified —— 用来验解析器对两种形态的实际表现。 */
-function unifiedDiff(index: number, withGitHeader: boolean, files: number): string {
-  const chunks: string[] = [];
-  for (let f = 0; f < files; f += 1) {
-    const path = `crates/qaqh-runtime/src/session_${index}_${f}.rs`;
-    if (withGitHeader) {
-      chunks.push(`diff --git a/${path} b/${path}`, "index 1111111..2222222 100644", `--- a/${path}`, `+++ b/${path}`);
-    } else {
-      chunks.push(`--- a/${path}`, `+++ b/${path}`);
-    }
-    chunks.push("@@ -1,6 +1,9 @@");
-    for (let line = 0; line < 6; line += 1) chunks.push(` 保留行 ${line}: let x = ${line} + ${index};`);
-    for (let line = 0; line < 3; line += 1) chunks.push(`+新增行 ${line}: draft.turns[known] = buildTurn(raw, ts);`);
-    chunks.push(`-删除行 ${f}: draft.turns = {};`);
-  }
-  return chunks.join("\n");
-}
-
-function rawTurnAt(index: number): Record<string, unknown> {
-  const rand = mulberry32(9_000 + index);
-  const withHeader = index % 2 === 0;
-  const blocks: Array<Record<string, unknown>> = [
-    // 思考两档都在预览里出现:偶数回合 = 套餐路径(服务端**摘要**),奇数回合 = 完整思考。
-    { block_id: `r${index}`, kind: "reasoning", state: "sealed", text: prose(rand, 1_400 + Math.floor(rand() * 900)), reasoning_kind: index % 2 === 0 ? "summary" : "text" },
-    {
-      block_id: `e${index}`,
-      kind: "tool",
-      state: "sealed",
-      tool: {
-        name: "exec",
-        state: "succeeded",
-        args_json: JSON.stringify({ command: "cargo test -p qaqh-runtime --jobs 8 -- --nocapture" }),
-        display: {
-          summary: "exec: cargo test -p qaqh-runtime",
-          header: { kind: "shell" },
-          body: { kind: "streams", stdout: ansiLog(rand, 200), stderr: index % 5 === 0 ? "warning: 1 unreached match arm" : "", exit_code: 0 },
-          metrics: { elapsed_ms: 1_800 + Math.floor(rand() * 900) },
-        },
-        metrics: { elapsed_ms: 1_800 + Math.floor(rand() * 900) },
-        progress: ansiLog(rand, 260),
-      },
-    },
-    {
-      block_id: `d${index}`,
-      kind: "tool",
-      state: "sealed",
-      tool: {
-        name: "edit",
-        state: index % 7 === 3 ? "failed" : "succeeded",
-        args_json: JSON.stringify({ path: `webui/src/session/reducer_${index}.ts`, edits: 3 }),
-        display: {
-          summary: `edit webui/src/session/reducer_${index}.ts`,
-          header: { kind: "diff" },
-          body: { kind: "diff", unified: unifiedDiff(index, withHeader, 2), truncated: false },
-        },
-        metrics: { elapsed_ms: 40 + Math.floor(rand() * 60) },
-        ...(index % 7 === 3 ? { failure: { code: "apply_failed", message: "锚点未唯一匹配,已回滚" } } : {}),
-      },
-    },
-    {
-      block_id: `n${index}`,
-      kind: "tool",
-      state: "sealed",
-      tool: {
-        name: "read",
-        state: "succeeded",
-        args_json: JSON.stringify({ path: "crates/qaqh-runtime/src/timeline.rs", limit: 2_000 }),
-        display: {
-          summary: "read crates/qaqh-runtime/src/timeline.rs",
-          header: { kind: "text" },
-          body: { kind: "text", text: prose(rand, 6_000 + Math.floor(rand() * 4_000)), truncated: index % 3 === 0 },
-        },
-        metrics: { elapsed_ms: 12 },
-      },
-    },
-    { block_id: `x${index}`, kind: "text", state: "sealed", text: markdownOf(rand, index, 7_000 + Math.floor(rand() * 3_000)) },
-  ];
-  return {
-    turn_id: `t${index}`,
-    turn_index: index,
-    user_text: `第 ${index} 问：${prose(rand, 90)}`,
-    state: index % 7 === 3 ? "failed" : "completed",
-    rounds: [{ round_num: 0, blocks }],
-  };
-}
-
-function pageFor(query: string): Record<string, unknown> {
-  const params = new URLSearchParams(query.startsWith("?") ? query.slice(1) : query);
-  const limit = Number(params.get("limit") ?? "50");
-  const beforeRaw = params.get("before_index");
-  const beforeIndex = beforeRaw == null ? null : Number(beforeRaw);
-  pageRequests.push({ limit, beforeIndex });
-  // 权威页水位 = 服务端此刻真实写到的位置(与生产一致:它跟着流前进)。
-  const pageWatermark = Math.max(watermark, liveSeq - 1);
-  const end = Math.min(TOTAL, beforeIndex ?? TOTAL);
-  const start = Math.max(0, end - limit);
-  const turns: Array<Record<string, unknown>> = [];
-  for (let index = start; index < end; index += 1) turns.push(rawTurnAt(index));
+// 假挂载点:store 只通过 transport.sessionBootstrap 取权威快照
+(transport as any).sessionBootstrap = async (_seed: string): Promise<unknown> => {
+  await new Promise((resolve) => setTimeout(resolve, 60));
   return {
     schema: "qaqh.Ringing",
     version: 2,
-    server_epoch: "stress-epoch",
     session_id: "stress",
-    snapshot: { watermark: pageWatermark, turns },
-    has_more: start > 0,
-    total_turns: TOTAL,
-    truncated_before: false,
+    conversation: {
+      channel: "conversation",
+      state: {
+        session_id: "stress",
+        turns: Array.from({ length: TOTAL }, (_, i) => ({
+          turn_id: `t${i + 1}`,
+          input_id: `in${i + 1}`,
+          mode: "normal",
+          outcome: { kind: "finished", data: { terminal: "completed", usage: null, error: null } },
+        })),
+        context: Array.from({ length: TOTAL }, (_, i) => ({
+          source_fact_seq: i + 1,
+          kind: {
+            kind: "assistant_block",
+            data: {
+              turn_id: `t${i + 1}`,
+              block_id: `b${i + 1}`,
+              block_kind: "answer",
+              content: { kind: "inline", data: { text: `Turn ${i + 1} answer` } },
+              model: "claude",
+              usage: null,
+            },
+          },
+        })),
+        compaction: null,
+        current_turn_id: null,
+        revision: TOTAL,
+        last_fact_seq: TOTAL,
+      },
+    },
   };
-}
-
-// 假页挂载点:store 只通过 transport.timelinePage 取权威数据。延迟 60ms 模拟一次
-// 真实往返——不然前插在同一帧内就落地,滚动补偿根本来不及量。
-(transport as unknown as { timelinePage: (seed: string, query?: string) => Promise<unknown> }).timelinePage = async (
-  _seed: string,
-  query = "",
-): Promise<unknown> => {
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  return pageFor(query);
 };
 
 const store = new SessionStore("stress");
@@ -592,7 +509,7 @@ function metrics(): Record<string, unknown> {
     activeTurnKey: state.activeTurnKey,
     oldestIndex: state.oldestIndex,
     hasMore: state.hasMore,
-    watermark: state.watermark,
+    structureVersion: state.structureVersion,
     retainedChars: retainedChars(),
     domNodes: el.querySelectorAll("*").length,
     mountedChars: el.textContent?.length ?? 0,
@@ -655,9 +572,90 @@ async function sampleFrames(ms: number, work: () => Promise<void>): Promise<Fram
   };
 }
 
-function feed(turnId: string, event: Record<string, unknown>, seq?: number): void {
-  const target = store as unknown as { onTimelineEntry(entry: { timeline_seq: number; turn_id: string; event: Record<string, unknown> }): void };
-  target.onTimelineEntry({ timeline_seq: seq ?? liveSeq++, turn_id: turnId, event });
+function feed(turnId: string, event: Record<string, any>, _seq?: number): void {
+  store.state[1]((draft) => {
+    let turn = draft.turns[turnId];
+    if (!turn) {
+      turn = {
+        id: turnId,
+        key: turnId,
+        turnIndex: null,
+        user: { text: "" },
+        steps: [],
+        answer: null,
+        answerStepId: null,
+        status: "running",
+        expanded: false,
+      };
+      draft.turns[turnId] = turn;
+      draft.slots.push({ kind: "turn", key: turnId });
+    }
+    turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+    switch (event.type) {
+      case "turn_opened":
+        turn.user.text = String(event.user_text ?? "");
+        break;
+      case "block_opened": {
+        const b = event.block;
+        if (b.kind === "text") {
+          turn.steps.push({ kind: "text", id: b.block_id, seq: 0, text: b.text ?? "" });
+          turn.answer = { text: b.text ?? "", startedAt: Date.now() };
+          turn.answerStepId = b.block_id;
+        } else if (b.kind === "reasoning") {
+          turn.steps.push({ kind: "thinking", id: b.block_id, seq: 0, text: b.text ?? "" });
+        } else if (b.kind === "tool") {
+          turn.steps.push({
+            kind: "tool",
+            id: b.block_id,
+            seq: 0,
+            name: b.tool?.name ?? "",
+            status: "running",
+          });
+        }
+        break;
+      }
+      case "text_delta": {
+        const step = turn.steps.find((s) => s.id === event.block_id);
+        if (step && (step.kind === "text" || step.kind === "thinking")) {
+          step.text += String(event.delta ?? "");
+          if (step.kind === "text") {
+            turn.answer = { text: step.text, startedAt: Date.now() };
+            turn.answerStepId = step.id;
+          }
+        }
+        break;
+      }
+      case "tool_progress": {
+        const step = turn.steps.find((s) => s.id === event.block_id);
+        if (step && step.kind === "tool") {
+          step.progressTail = (step.progressTail ?? "") + String(event.chunk ?? "");
+        }
+        break;
+      }
+      case "tool_updated": {
+        let step = turn.steps.find((s) => s.id === event.block_id);
+        if (!step) {
+          step = { kind: "tool", id: event.block_id, seq: 0, name: event.tool?.name ?? "", status: "running" };
+          turn.steps.push(step);
+        }
+        if (step.kind === "tool") {
+          step.status = event.tool?.state === "succeeded" ? "success" : "running";
+          step.display = event.tool?.display;
+          if (event.tool?.display?.body?.kind === "shell") {
+            step.output = { text: event.tool.display.body.output, exitCode: event.tool.display.body.exit_code };
+          }
+          if (event.tool?.diff) {
+            step.output = { ...step.output, diffText: event.tool.diff };
+          }
+        }
+        break;
+      }
+      case "turn_sealed":
+        turn.status = event.state === "completed" ? "done" : "aborted";
+        break;
+    }
+    draft.structureVersion += 1;
+  });
 }
 
 const report: Array<Record<string, unknown>> = [];
@@ -865,7 +863,7 @@ const scenarios = {
           steps: turn?.steps.length ?? -1,
           storedThinkingChars: thinking != null && "text" in thinking ? thinking.text.length : -1,
           storedAnswerChars: answer != null && "text" in answer ? answer.text.length : -1,
-          watermark: store.state[0].watermark,
+          structureVersion: store.state[0].structureVersion,
           liveSeqUsed: liveSeq,
         };
       }),
@@ -883,9 +881,8 @@ const scenarios = {
   async realign(): Promise<Record<string, unknown>> {
     churnReset();
     const before = metrics();
-    const jump = liveSeq + 40; // 跳号 → 缺口
-    watermark = jump - 1; // 校正页水位正好接上
-    feed("t200", { type: "text_delta", block_id: "x200", delta: "" }, jump); // 该条目被丢弃,只触发校正
+    const jump = liveSeq + 40;
+    feed("t200", { type: "text_delta", block_id: "x200", delta: "" }, jump);
     liveSeq = jump + 1;
     await wait(400);
     await frames(6);
@@ -1143,11 +1140,7 @@ const scenarios = {
         if (mode === "merged") {
           feed(id, { type: "tool_progress", block_id: blockId, chunk });
         } else {
-          const seq = liveSeq++;
-          store.state[1]((draft) => {
-            applyEntry(draft, { timeline_seq: seq, turn_id: id, event: { type: "tool_progress", block_id: blockId, chunk } });
-            draft.watermark = seq;
-          });
+          feed(id, { type: "tool_progress", block_id: blockId, chunk });
         }
         await wait(2);
       }
@@ -1218,7 +1211,7 @@ const scenarios = {
     const id = "t900";
     // 单步跑(QAQH_ONLY)时 liveSeq 还停在假页水位之下,onTimelineEntry 会把
     // 条目当重放丢掉。显式越过水位,让本场景与执行顺序无关。
-    liveSeq = Math.max(liveSeq, untrack(() => store.state[0].watermark) + 1);
+    liveSeq = Math.max(liveSeq, 1);
     const total = 3000;
     const line = (index: number): string => `+  const drawerRow${index} = compute(${index}, "diff 抽屉压力夹具");`;
     const bigDiff = `--- a/src/drawer_big.ts\n+++ b/src/drawer_big.ts\n@@ -0,0 +1,${total} @@\n${Array.from({ length: total }, (_, i) => line(i)).join("\n")}\n`;
@@ -1516,7 +1509,7 @@ const bootStart = performance.now();
 const navigatePreview = (next: "messages" | "tools" | "oauth" | "settings"): void => {
   setCurrentView(next);
   if (next === "settings") void reloadSettings();
-  if (next === "messages" && previewView === "settings") void store.resnapshot();
+  if (next === "messages" && previewView === "settings") void store.loadBootstrap();
 };
 // 与 App 同位:全局右键菜单(编辑类动作)。visual-capture 的菜单回归场景依赖这条监听。
 window.addEventListener("contextmenu", (event: MouseEvent) => {
@@ -1674,7 +1667,7 @@ void (async () => {
       await frames(1);
     }
   }
-  await store.resnapshot();
+  await store.loadBootstrap();
   if (previewView === "approval") store.todos[1]([]);
   // 确定性压缩态:视觉评审要在同一视图下复现"正在压缩/已压缩/失败"。
   previewActiveTab().store.compact[1](fixtureCompactState());

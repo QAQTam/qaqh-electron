@@ -1,10 +1,12 @@
 # Electron is the canonical desktop host and the only supported packaging entry point.
-# `just` resolves build identity once (local pack date + git commit) and exports it
+# `just` resolves build identity once (manifest version/date + git commit) and exports it
 # to Node, Cargo and electron-builder. Do not add packaging entry points to package.json.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-build_date := env_var_or_default("QAQH_BUILD_DATE", datetime("%Y%m%d"))
-build_version := env_var_or_default("QAQH_BUILD_VERSION", "2.0." + build_date)
+release_version := `node -p "require('./package.json').version"`
+release_date := `node -p "require('./package.json').version.split('.')[2].split('-')[0]"`
+build_date := env_var_or_default("QAQH_BUILD_DATE", release_date)
+build_version := env_var_or_default("QAQH_BUILD_VERSION", release_version)
 build_commit := `git rev-parse HEAD`
 build_short := `git rev-parse --short=8 HEAD`
 build_dirty := `if [ -n "$(git status --porcelain)" ]; then printf '1'; else printf '0'; fi`

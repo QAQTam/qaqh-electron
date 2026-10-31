@@ -18,9 +18,9 @@ use std::time::{Duration, Instant};
 use sha2::{Digest, Sha256};
 
 use crate::{
+    DirectoryUpdateSource, Result, StagedArtifact, StagedOperation, UpdateError, UpdateSource,
     apply_bundle_zip, installation_id_for_path, load_installed_state, plan_update,
-    rollback_bundle_zip, sha256_reader, write_installed_state, DirectoryUpdateSource, Result,
-    StagedArtifact, StagedOperation, UpdateError, UpdateSource,
+    rollback_bundle_zip, sha256_reader, write_installed_state,
 };
 
 pub const STAGED_OPERATION_FILE: &str = "staged-operation.json";
@@ -64,15 +64,37 @@ pub fn stage_update(
     };
     if operation.plan.artifacts.is_empty() {
         // 已最新：不留 staging 痕迹，顺手清掉旧暂存，防止日后误 apply 陈旧操作。
-        let _ = fs::remove_dir_all(staging_root);
+        match fs::symlink_metadata(staging_root) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(UpdateError(
+                    "staging root must not be a symbolic link".into(),
+                ));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(UpdateError("staging root must be a directory".into()));
+            }
+            Ok(_) => fs::remove_dir_all(staging_root)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         return Ok(StageOutcome {
             operation,
             up_to_date: true,
         });
     }
 
-    if staging_root.exists() {
-        fs::remove_dir_all(staging_root)?;
+    match fs::symlink_metadata(staging_root) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(UpdateError(
+                "staging root must not be a symbolic link".into(),
+            ));
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(UpdateError("staging root must be a directory".into()));
+        }
+        Ok(_) => fs::remove_dir_all(staging_root)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     fs::create_dir_all(staging_root.join(STAGED_BUNDLES_DIR))?;
     for id in &operation.plan.artifacts {
@@ -117,7 +139,7 @@ pub fn stage_update(
 }
 
 pub fn read_staged_operation(staging_root: &Path) -> Result<StagedOperation> {
-    let path = staging_root.join(STAGED_OPERATION_FILE);
+    let path = crate::safe_join_under_root(staging_root, STAGED_OPERATION_FILE)?;
     let bytes = fs::read(&path).map_err(|error| {
         UpdateError(format!(
             "read staged operation '{}': {error}",
@@ -148,7 +170,11 @@ pub fn apply_staged(options: ApplyStagedOptions) -> Result<StagedOperation> {
         relaunch_detached(options.relaunch)?;
     }
     // 应用成功后清暂存（尽力而为；失败不影响已生效的更新）。
-    let _ = fs::remove_dir_all(options.staging_root);
+    if fs::symlink_metadata(options.staging_root)
+        .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+    {
+        let _ = fs::remove_dir_all(options.staging_root);
+    }
     Ok(operation)
 }
 
@@ -161,17 +187,20 @@ pub fn rollback_staged(staging_root: &Path, install_root: &Path) -> Result<Stage
     if let Some(previous) = &operation.previous_state {
         write_installed_state(&install_root.join("install-state.json"), previous)?;
     }
-    let _ = fs::remove_dir_all(staging_root);
+    if fs::symlink_metadata(staging_root)
+        .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+    {
+        let _ = fs::remove_dir_all(staging_root);
+    }
     Ok(operation)
 }
 
 fn staged_artifact_path(staging_root: &Path, relative: &str) -> Result<PathBuf> {
-    crate::validate_relative_path(relative)?;
-    Ok(staging_root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR)))
+    crate::safe_join_under_root(staging_root, relative)
 }
 
 fn write_staged_operation(staging_root: &Path, operation: &StagedOperation) -> Result<()> {
-    let path = staging_root.join(STAGED_OPERATION_FILE);
+    let path = crate::safe_join_under_root(staging_root, STAGED_OPERATION_FILE)?;
     let temporary = staging_root.join(format!(".{STAGED_OPERATION_FILE}.qaqh-new"));
     fs::write(&temporary, serde_json::to_vec_pretty(operation)?)?;
     fs::rename(&temporary, &path)?;
@@ -191,7 +220,12 @@ fn copy_verified(
     let file_name = destination
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| UpdateError(format!("invalid staging file name: {}", destination.display())))?;
+        .ok_or_else(|| {
+            UpdateError(format!(
+                "invalid staging file name: {}",
+                destination.display()
+            ))
+        })?;
     let temporary = destination.with_file_name(format!(".{file_name}.qaqh-new"));
     if temporary.exists() {
         fs::remove_file(&temporary)?;
@@ -365,7 +399,11 @@ mod tests {
                 }
             ]
         });
-        fs::write(source.join("catalog.json"), serde_json::to_vec_pretty(&catalog).unwrap()).unwrap();
+        fs::write(
+            source.join("catalog.json"),
+            serde_json::to_vec_pretty(&catalog).unwrap(),
+        )
+        .unwrap();
     }
 
     fn write_component_bundle(
@@ -484,8 +522,9 @@ mod tests {
         assert!(!staging.exists());
 
         // state 推进到 -new
-        let state =
-            load_installed_state(&install.join("install-state.json"), "ignored").unwrap().unwrap();
+        let state = load_installed_state(&install.join("install-state.json"), "ignored")
+            .unwrap()
+            .unwrap();
         assert_eq!(state.components["frontend"].current, "frontend-new");
         assert_eq!(state.components["backend"].current, "backend-new");
 
@@ -512,8 +551,9 @@ mod tests {
         fs::write(install.join("app/app.js"), b"old-app").unwrap();
         // 只有 frontend 变化：backend 状态已是 backend-new? 不——write_old_state 都是 old，
         // catalog 两个都会变。为聚焦回滚，先把 backend 状态推进到 -new（模拟之前已更新）。
-        let state =
-            load_installed_state(&install.join("install-state.json"), "ignored").unwrap().unwrap();
+        let state = load_installed_state(&install.join("install-state.json"), "ignored")
+            .unwrap()
+            .unwrap();
         let mut advanced = state.clone();
         advanced.components.get_mut("backend").unwrap().current = "backend-new".into();
         write_installed_state(&install.join("install-state.json"), &advanced).unwrap();
@@ -522,7 +562,11 @@ mod tests {
         // 再走 rollback_staged 验证文件与状态双复原。
         stage_update(&source, &install, &staging).unwrap();
         let staged = read_staged_operation(&staging).unwrap();
-        assert_eq!(staged.plan.artifacts, ["frontend"], "backend 已是目标版本,只该规划 frontend");
+        assert_eq!(
+            staged.plan.artifacts,
+            ["frontend"],
+            "backend 已是目标版本,只该规划 frontend"
+        );
         let zip = staging.join("bundles/frontend-new.zip");
         crate::apply_bundle_zip(&zip, &install, "op-manual").unwrap();
         assert_eq!(fs::read(install.join("app/app.js")).unwrap(), b"new-app");
@@ -530,8 +574,9 @@ mod tests {
         rollback_staged(&staging, &install).unwrap();
         assert_eq!(fs::read(install.join("app/app.js")).unwrap(), b"old-app");
         assert!(!install.join("app/app.js.previous").exists());
-        let state =
-            load_installed_state(&install.join("install-state.json"), "ignored").unwrap().unwrap();
+        let state = load_installed_state(&install.join("install-state.json"), "ignored")
+            .unwrap()
+            .unwrap();
         assert_eq!(state.components["frontend"].current, "frontend-old");
         fs::remove_dir_all(root).unwrap();
     }
@@ -549,7 +594,10 @@ mod tests {
         fs::write(source.join("bundles/frontend-new.zip"), b"tampered").unwrap();
         let error = stage_update(&source, &install, &staging).unwrap_err();
         assert!(error.to_string().contains("verification failed"), "{error}");
-        assert!(!staging.join(STAGED_OPERATION_FILE).exists(), "坏包不得写入暂存");
+        assert!(
+            !staging.join(STAGED_OPERATION_FILE).exists(),
+            "坏包不得写入暂存"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -617,7 +665,11 @@ mod tests {
             install_root: &install,
             wait_pid: None,
             wait_timeout: Duration::from_secs(1),
-            relaunch: &["sh".into(), "-c".into(), format!("echo ok > {}", probe.display())],
+            relaunch: &[
+                "sh".into(),
+                "-c".into(),
+                format!("echo ok > {}", probe.display()),
+            ],
         })
         .unwrap();
         // 子进程是异步的，轮询等探针文件出现。

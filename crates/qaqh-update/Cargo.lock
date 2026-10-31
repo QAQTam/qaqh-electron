@@ -378,6 +378,7 @@ name = "qaqh-update"
 version = "1.0.0"
 dependencies = [
  "hex",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
