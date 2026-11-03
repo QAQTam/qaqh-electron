@@ -70,10 +70,9 @@ export function approvalCommand(
   switch (approval.kind) {
     case "tool_permission":
       if (!["approve", "reject", "trust"].includes(decision)) throw new Error("invalid_decision");
-      // 权限应答是 ToolCommand（tool 频道），ask/plan 才是 control 频道。
-      return { channel: "tool", type: "tool_permission_respond", tool_call_id: id, approved: decision !== "reject", trust_folder: decision === "trust" };
+      return { type: "tool.permission.respond", tool_call_id: id, approved: decision !== "reject", trust_folder: decision === "trust" };
     case "ask": {
-      if (decision === "dismiss") return { channel: "control", type: "interaction_ask_dismiss", interaction_id: id };
+      if (decision === "dismiss") return { type: "interaction.ask.dismiss", interaction_id: id };
       if (decision !== "submit") throw new Error("invalid_decision");
       if (!Array.isArray(body.answers) || body.answers.length === 0) throw new Error("invalid_answers");
       const seen = new Set<string>();
@@ -85,13 +84,13 @@ export function approvalCommand(
         seen.add(questionId);
         answers.push({ question_id: questionId, answer: answer.answer });
       }
-      return { channel: "control", type: "interaction_ask_respond", interaction_id: id, answers };
+      return { type: "interaction.ask.respond", interaction_id: id, answers };
     }
     case "plan":
       if (decision !== "approve" && decision !== "reject") throw new Error("invalid_decision");
       if (body.message != null && typeof body.message !== "string") throw new Error("invalid_plan_message");
       return {
-        channel: "control", type: "plan_review_respond", interaction_id: id,
+        type: "plan.review.respond", interaction_id: id,
         approved: decision === "approve",
         message: typeof body.message === "string" ? body.message : null,
         autonomous: false,

@@ -1,7 +1,6 @@
 import { dialog, shell, BrowserWindow } from "electron";
 import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
-import { createHash } from "node:crypto";
 import type { RingingClient } from "./ringing-client.js";
 import type { AttachmentUploadWire, ScreenshotWire } from "./types.js";
 
@@ -49,18 +48,16 @@ export async function uploadAttachment(
   const name = basename(filePath);
   const buffer = readFileSync(filePath);
 
-  const sha256 = createHash("sha256").update(buffer).digest("hex");
   const mediaType = guessMediaType(name);
 
-  const res = await client.uploadContent(seed, name, buffer, mediaType);
+  const { response, contentRef } = await client.uploadContent(seed, name, buffer, mediaType);
 
   return {
-    content_id: res.content_id || sha256,
-    sha256: res.sha256 || sha256,
-    media_type: res.media_type || mediaType,
+    content_ref: contentRef,
+    media_type: response.media_type,
     name,
     size: st.size,
-    truncated: Boolean(res.truncated),
+    truncated: response.truncated,
   };
 }
 

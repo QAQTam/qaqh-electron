@@ -67,12 +67,12 @@ test("preload exposes a narrow Electron host bridge, not the legacy Tauri or gen
   assert.match(preload, /Unsupported QAQH event/);
 });
 
-test("Electron host exposes the unified command bridge and rejects non-renderer senders", () => {
+test("Electron host exposes the typed command bridge and rejects non-renderer senders", () => {
   const handlers = readFileSync(fileURLToPath(new URL("../src/main/ipc-handlers.ts", import.meta.url)), "utf8");
   assert.match(handlers, /case "command"/);
-  assert.match(handlers, /client\.command\(command as UnifiedCommand/);
+  assert.match(handlers, /client\.command\(normalizeRendererCommand\(args\.command\), readCommandTarget\(args\.target\), readPreconditions\(args\.preconditions\)\)/);
   assert.match(handlers, /event\.senderFrame !== event\.sender\.mainFrame/);
-  assert.doesNotMatch(handlers, /SERVICE_METHODS|service_rpc/);
+  assert.doesNotMatch(handlers, /service_rpc/);
   assert.doesNotMatch(handlers, /tauri:invoke|tauri:event/);
 });
 

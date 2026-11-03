@@ -6,11 +6,11 @@ import { loadHost } from "./test-host.mjs";
 const scenarios = [
   { kind: "ask", decision: "submit", payload: { answers: [{ question_id: "q1", answer: "yes" }] }, type: "interaction.ask.respond", answers: { q1: "yes" } },
   { kind: "ask", decision: "dismiss", type: "interaction.ask.dismiss" },
-  { kind: "tool_permission", decision: "approve", type: "interaction.permission.respond", approved: true, trust_folder: false },
-  { kind: "tool_permission", decision: "reject", type: "interaction.permission.respond", approved: false, trust_folder: false },
-  { kind: "tool_permission", decision: "trust", type: "interaction.permission.respond", approved: true, trust_folder: true },
-  { kind: "plan", decision: "approve", payload: { message: "approved" }, type: "interaction.plan.respond", approved: true, feedback: "approved" },
-  { kind: "plan", decision: "reject", payload: { message: "revise" }, type: "interaction.plan.respond", approved: false, feedback: "revise" },
+  { kind: "tool_permission", decision: "approve", type: "tool.permission.respond", approved: true, trust_folder: false },
+  { kind: "tool_permission", decision: "reject", type: "tool.permission.respond", approved: false, trust_folder: false },
+  { kind: "tool_permission", decision: "trust", type: "tool.permission.respond", approved: true, trust_folder: true },
+  { kind: "plan", decision: "approve", payload: { message: "approved" }, type: "plan.review.respond", approved: true, message: "approved" },
+  { kind: "plan", decision: "reject", payload: { message: "revise" }, type: "plan.review.respond", approved: false, message: "revise" },
 ];
 
 for (const scenario of scenarios) {
@@ -29,11 +29,11 @@ for (const scenario of scenarios) {
         requests.push({ path, body, headers: new Headers(init.headers), method: init.method });
         let response;
         if (path === "/ringing/v2/clients/open") {
-          response = { schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease-test", server_epoch: "epoch-test", renew_interval_ms: 3600_000 };
+          response = { schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease-test", server_epoch: "epoch-test", renew_interval_ms: 3600_000, capabilities: { single_stream: true }, command_contract_revision: "ringing-commands-6" };
         } else if (path === "/ringing/v2/sessions/session-A/approvals") {
           response = pending;
         } else if (path === "/ringing/v2/sessions/session-A/bootstrap") {
-          response = { schema: "qaqh.Ringing", version: 2, session_id: "session-A", server_epoch: "epoch-test", snapshot_cursor: "cursor-1", control: { state: { revision: 1, interactions: [] } } };
+          response = { schema: "qaqh.Ringing", version: 2, session_id: "session-A", server_epoch: "epoch-test", state: { session_id: "session-A", seq: 1, activity: "idle", current_turn_id: null, turns: [], timeline: [], tools: [], interactions: [{ interaction_id: canonicalId === "call-canonical" ? "permission-interaction" : canonicalId, call_id: canonicalId === "call-canonical" ? canonicalId : null, kind: scenario.kind === "tool_permission" ? "permission" : scenario.kind, request: "", resolution: null }], subagents: [] } };
         } else if (path === "/ringing/v2/commands") {
           response = { status: "accepted", command_id: body.command_id, result: null };
         } else throw new Error(`Unexpected request: ${path}`);
@@ -55,6 +55,7 @@ for (const scenario of scenarios) {
     assert.equal(request.headers.get("X-QAQH-Client-Session-Id"), "lease-test");
     assert.equal(envelope.schema, "qaqh.Ringing");
     assert.equal(envelope.version, 2);
+    assert.equal(envelope.contract_revision, "ringing-commands-6");
     assert.deepEqual(envelope.target, { kind: "session", session_id: "session-A" });
     assert.equal(envelope.command.type, scenario.type);
     if (scenario.kind === "tool_permission") {
@@ -65,13 +66,14 @@ for (const scenario of scenarios) {
       assert.equal(envelope.command.interaction_id, canonicalId);
       if (scenario.kind === "plan") {
         assert.equal(envelope.command.approved, scenario.approved);
-        assert.equal(envelope.command.feedback, scenario.feedback);
-      } else if (scenario.decision === "submit") assert.deepEqual(envelope.command.answers, scenario.answers);
+        assert.equal(envelope.command.message, scenario.message);
+        assert.equal(envelope.command.autonomous, false);
+      } else if (scenario.decision === "submit") assert.deepEqual(envelope.command.answers, [{ question_id: "q1", answer: "yes" }]);
     }
   });
 }
 
-test("real SDK reset pauses, then host resync re-bootstraps and resumes projection delivery", async t => {
+test("real SDK reset re-bootstraps and resumes projection delivery", async t => {
   const { FakeTimers } = await import("./test-host.mjs");
   const timers = new FakeTimers();
   let bootstraps = 0, streams = 0;
@@ -83,17 +85,17 @@ test("real SDK reset pauses, then host resync re-bootstraps and resumes projecti
     reconnect: { initialMs: 1, maxMs: 1 },
     fetch: async (url, init) => {
       const path = new URL(url).pathname;
-      if (path.endsWith("/clients/open")) return json({ schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease", server_epoch: "epoch", renew_interval_ms: 3600_000 });
+      if (path.endsWith("/clients/open")) return json({ schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease", server_epoch: "epoch", renew_interval_ms: 3600_000, capabilities: { single_stream: true }, command_contract_revision: "ringing-commands-6" });
       if (path.endsWith("/commands")) return json({ status: "accepted", command_id: JSON.parse(init.body).command_id, result: null });
       if (path.endsWith("/bootstrap")) {
         bootstraps++;
-        return json({ schema: "qaqh.Ringing", version: 2, session_id: "session-A", server_epoch: "epoch", snapshot_cursor: `cursor-${bootstraps}` });
+        return json({ schema: "qaqh.Ringing", version: 2, session_id: "session-A", server_epoch: "epoch", state: { session_id: "session-A", seq: bootstraps, activity: "idle", current_turn_id: null, turns: [], timeline: [], tools: [], interactions: [], subagents: [] } });
       }
       if (path.endsWith("/events")) {
         streams++;
-        if (streams === 1) return sse('event: ringing.reset_required\ndata: {"session_id":"session-A","reason":"cursor_expired"}\n\n');
-        assert.equal(new URL(url).searchParams.get("since_cursor"), "cursor-2");
-    return sse('event: ringing.event\ndata: {"schema":"qaqh.Ringing","version":2,"session_id":"session-A","server_epoch":"epoch","cursor":"cursor-3","payload":{}}\n\n');
+        if (streams === 1) return sse('event: ringing.resync_required\ndata: {"session_id":"session-A","reason":"cursor_gap"}\n\n');
+        assert.equal(new URL(url).searchParams.get("since_cursor"), "epoch:2");
+        return sse('id: epoch:3\nevent: ringing.event\ndata: {"seq":3,"type":"activity_changed","activity":"idle","current_turn_id":null}\n\n');
       }
       throw new Error(`Unexpected request: ${path}`);
     },
@@ -103,13 +105,12 @@ test("real SDK reset pauses, then host resync re-bootstraps and resumes projecti
   const client = new host.RingingClient({}, (name, payload) => events.push({ name, payload }));
   t.after(() => client.destroy());
   const until = async predicate => {
-    for (let i = 0; i < 300; i++) { if (predicate()) return; await Promise.resolve(); }
-    assert.fail("stream condition was not reached");
+    for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
+    assert.fail(`stream condition was not reached (${JSON.stringify({ bootstraps, streams, events })})`);
   };
   await client.attach("session-A");
   // SDK owns its native recovery timer (the host's fake timer adapter must not
   // create a competing recovery schedule).
-  await new Promise(resolve => setTimeout(resolve, 400));
   await until(() => events.some(e => e.name === "projection://event"));
   assert.equal(bootstraps, 2);
   assert.ok(streams >= 2);

@@ -10,7 +10,7 @@ import {
   SdkError,
   sessionTarget,
   type ApprovalsView,
-  type ClientV2Bootstrap,
+  type SessionBootstrap,
   type ClientState,
   type RingingClient as SdkRingingClient,
   type SessionWatch,
@@ -18,9 +18,11 @@ import {
 } from "@qaqh/sdk";
 import { readDiscovery } from "./daemon.js";
 import { requireAccepted, requireId } from "./approvals.js";
-import type { RingingCommand, UnifiedCommand, UnifiedTarget } from "@qaqh/sdk/protocol";
+import type { CommandPrecondition, CommandTarget, RingingCommand } from "@qaqh/sdk/protocol";
 import type {
   DaemonDiscovery,
+  MainServiceMap,
+  MainServiceMethod,
   ProjectionStatusWire,
   ReconnectStatusWire,
   RingingCommandAck,
@@ -33,7 +35,6 @@ export class RingingClient {
   private readonly eventSender: EventSender;
   private activeSeed: string | null = null;
   private sessionWatch: SessionWatch | null = null;
-  private pendingBootstrapReset: { seed: string; generation: number } | null = null;
   private streamGeneration = 0;
   private projectionStatus: WatchStatus = "closed";
   private attachRequest = 0;
@@ -74,10 +75,10 @@ export class RingingClient {
     this.projectionStatus = "connecting";
     this.sendProjectionStatus("connecting", seed);
 
-    // 1. session.resume（control 频道 SessionResume）绑定该 seed 的展示通道（拒绝不影响只读 attach）
-    await this.submitChannel({ channel: "control", type: "session_resume", session_id: seed }, seed)
+    // Bind the selected session through the canonical command endpoint before watching it.
+    await this.command({ type: "session.resume" }, sessionTarget(seed))
       .then(requireAccepted).catch((err) => {
-        if (isCurrent()) this.reportError(`session_resume failed for ${seed}`, err);
+        if (isCurrent()) this.reportError(`session.resume failed for ${seed}`, err);
       });
     if (!isCurrent() || request !== this.attachRequest) return;
 
@@ -88,21 +89,17 @@ export class RingingClient {
         onBootstrap: (bootstrap) => {
           if (!isCurrent()) return;
           this.eventSender("projection://bootstrap", { session_id: seed, bootstrap });
-          if (this.pendingBootstrapReset?.seed === seed && this.pendingBootstrapReset.generation === generation) {
-            this.eventSender("projection://reset", { session_id: seed, reason: "bootstrap" });
-            this.pendingBootstrapReset = null;
-          }
           this.eventSender("conn://liveness", {});
         },
-        onEvent: (envelope) => {
+        onEvent: (event) => {
           if (!isCurrent()) return;
           this.eventSender("conn://liveness", {});
-          this.eventSender("projection://event", envelope);
+          this.eventSender("projection://event", { session_id: seed, event });
         },
-        onReset: (reset) => {
+        onResyncRequired: (reset) => {
           if (!isCurrent()) return;
-          console.warn(`[ringing] Reset required (${reset.reason}) for ${seed}`);
-          if (!RECOVERABLE_RESETS.has(reset.reason)) this.reportError(`Session stream paused for ${seed}: ${reset.reason}`);
+          console.warn(`[ringing] Resync required (${reset.reason}) for ${seed}`);
+          this.eventSender("projection://reset", { session_id: seed, reason: reset.reason });
         },
         onStatus: (status) => {
           if (!isCurrent()) return;
@@ -128,7 +125,6 @@ export class RingingClient {
   detachActive(): void {
     this.attachRequest++;
     this.streamGeneration += 1;
-    this.pendingBootstrapReset = null;
     this.sessionWatch?.close();
     this.sessionWatch = null;
     this.projectionStatus = "closed";
@@ -138,21 +134,25 @@ export class RingingClient {
     }
   }
 
-  /** 统一目录命令（§8.1 信封，POST /ringing/v2/commands）。 */
-  async command(command: UnifiedCommand, target: UnifiedTarget = globalTarget()): Promise<RingingCommandAck> {
+  /** Submit one typed command through the single Ringing v2 command endpoint. */
+  async command(
+    command: RingingCommand,
+    target: CommandTarget = globalTarget(),
+    preconditions: CommandPrecondition[] = [],
+  ): Promise<RingingCommandAck> {
     if (target.kind === "session") requireId(target.session_id, "session_id");
-    return this.normalizeAck(this.sdk.submit(target, command).then(({ ack }) => ack));
+    return this.normalizeAck(this.sdk.submit(target, command, { preconditions }).then(({ ack }) => ack));
   }
 
-  /** 频道命令（POST /ringing/v2/commands/{channel}；channel 由命令自带 tag 推导）。 */
-  async submitChannel(command: RingingCommand, sessionId: string): Promise<RingingCommandAck> {
-    requireId(sessionId, "session_id");
-    return this.normalizeAck(this.sdk.submitChannel(command.channel, command, sessionId));
-  }
-
-  /** service 查询/配置面（POST /ringing/v2/service/{method}）。 */
-  async serviceCall<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    return this.sdk.serviceCall<T>(method, params);
+  /** Typed service query/read boundary. The caller must include session_id in params when required. */
+  async serviceCall<K extends MainServiceMethod>(
+    method: K,
+    params: MainServiceMap[K]["params"],
+  ): Promise<MainServiceMap[K]["result"]> {
+    return this.sdk.serviceCall(
+      method as never,
+      params as never,
+    ) as Promise<MainServiceMap[K]["result"]>;
   }
 
   private async normalizeAck(submit: Promise<RingingCommandAck>): Promise<RingingCommandAck> {
@@ -161,29 +161,11 @@ export class RingingClient {
     } catch (err) {
       // 维持旧契约：daemon 明确拒绝时返回 rejected ack 而不是抛错；其余错误上抛。
       if (err instanceof SdkError && err.kind === "command_rejected") {
+        if (err.ack != null) return err.ack;
         return { status: "rejected", command_id: err.commandId!, code: err.code, message: err.message };
       }
-      // 提交超时 = 结果未知：命令可能已被 daemon 接受。按 command_id 轮询
-      // commandStatus 闭环，而不是把未知结果当失败抛给渲染层。
-      if (err instanceof SdkError && err.kind === "outcome_unknown" && err.commandId) {
-        const resolved = await this.sdk.resolveOutcome(err, { timeoutMs: 10_000 }).catch(() => null);
-        if (resolved) {
-          if (resolved.state === "succeeded") {
-            return { status: "accepted", command_id: resolved.command_id };
-          }
-          if (resolved.state === "rejected") {
-            return {
-              status: "rejected",
-              command_id: resolved.command_id,
-              code: resolved.error_code ?? undefined,
-              message: "command rejected (resolved via commandStatus)",
-            };
-          }
-          if (resolved.state === "failed") {
-            return { status: "rejected", command_id: resolved.command_id, code: resolved.error_code ?? undefined, message: "command execution failed (resolved via commandStatus)" };
-          }
-        }
-      }
+      // Keep outcome_unknown (and its original command id) explicit. Receipts
+      // do not carry the synchronous result needed by query-style commands.
       throw err;
     }
   }
@@ -197,8 +179,8 @@ export class RingingClient {
     return this.sdk.adminRequest<T>(credential, path, init);
   }
 
-  /** Canonical bootstrap 快照（渲染层读取 control.state.activity 与 conversation）。 */
-  bootstrap(seed: string): Promise<ClientV2Bootstrap> {
+  /** Canonical flattened session state. */
+  bootstrap(seed: string): Promise<SessionBootstrap> {
     return this.sdk.bootstrap(seed);
   }
 
@@ -212,11 +194,11 @@ export class RingingClient {
     return this.sdk.approvals(seed);
   }
 
-  approvalsSnapshot(seed: string): Promise<ClientV2Bootstrap> {
+  approvalsSnapshot(seed: string): Promise<SessionBootstrap> {
     return this.sdk.bootstrap(seed);
   }
 
-  async uploadContent(seed: string, _filename: string, buffer: Uint8Array, mediaType: string): Promise<any> {
+  async uploadContent(seed: string, _filename: string, buffer: Uint8Array, mediaType: string) {
     return this.sdk.uploadContent(seed, { bytes: buffer, mediaType });
   }
 
@@ -253,7 +235,6 @@ export class RingingClient {
 
   async retryActive(seed: string): Promise<void> {
     if (this.activeSeed === seed && this.sessionWatch) {
-      this.pendingBootstrapReset = { seed, generation: this.streamGeneration };
       await this.sessionWatch.resync();
       return;
     }
@@ -283,9 +264,3 @@ export class RingingClient {
   }
 
 }
-
-const RECOVERABLE_RESETS = new Set([
-  "cursor_expired", "log_id_mismatch", "unknown_fact", "replay_overflow", "epoch_mismatch",
-  "snapshot_missing", "snapshot_expired", "snapshot_hash_mismatch",
-  "per_connection_overflow", "progress_buffer_overflow", "actor_mailbox_overflow",
-]);

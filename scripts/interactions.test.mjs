@@ -17,12 +17,12 @@ async function ipcFixture(pending = ask()) {
   const queries = [];
   const client = {
     approvals: async () => { if (view instanceof Error) throw view; return view; },
-    approvalsSnapshot: async () => ({ control: { state: { revision: 1, interactions: [
-      ...(view?.pending?.pending_permission ? [{ kind: "permission", call_id: view.pending.pending_permission.tool_call_id, interaction_id: "permission-interaction", resolution: null, expired_reason: null }] : []),
-      ...(view?.pending?.pending_interaction ? [{ kind: view.pending.pending_interaction.kind === "plan" ? "plan_review" : view.pending.pending_interaction.kind, interaction_id: view.pending.pending_interaction.id, resolution: null, expired_reason: null }] : []),
-    ] } } }),
+    approvalsSnapshot: async () => ({ state: { session_id: "session-A", seq: 1, activity: "idle", current_turn_id: null, turns: [], timeline: [], tools: [], subagents: [], interactions: [
+      ...(view?.pending?.pending_permission ? [{ kind: "permission", call_id: view.pending.pending_permission.tool_call_id, interaction_id: "permission-interaction", resolution: null }] : []),
+      ...(view?.pending?.pending_interaction ? [{ kind: view.pending.pending_interaction.kind, interaction_id: view.pending.pending_interaction.id, resolution: null }] : []),
+    ] } }),
     command: async (...args) => { calls.push(args); return ack; },
-    query: async (...args) => { queries.push(args); return queryResult; },
+    serviceCall: async (...args) => { queries.push(args); return queryResult; },
     getActiveSeed: () => "active-B",
     getProjectionStatus: seed => "closed",
   };
@@ -37,13 +37,13 @@ async function ipcFixture(pending = ask()) {
 }
 
 for (const [kind, pending, decision, payload, expected] of [
-  ["ask", ask, "submit", { answers: [{ question_id: "q1", answer: "yes", ignored: true }], interaction_id: "forged" }, { type: "interaction.ask.respond", interaction_id: "interaction-ask", answers: { q1: "yes" } }],
+  ["ask", ask, "submit", { answers: [{ question_id: "q1", answer: "yes", ignored: true }], interaction_id: "forged" }, { type: "interaction.ask.respond", interaction_id: "interaction-ask", answers: [{ question_id: "q1", answer: "yes" }] }],
   ["ask", ask, "dismiss", {}, { type: "interaction.ask.dismiss", interaction_id: "interaction-ask" }],
-  ["tool_permission", permission, "approve", {}, { type: "interaction.permission.respond", tool_call_id: "tool-call", approved: true, trust_folder: false }],
-  ["tool_permission", permission, "reject", {}, { type: "interaction.permission.respond", tool_call_id: "tool-call", approved: false, trust_folder: false }],
-  ["tool_permission", permission, "trust", { tool_call_id: "forged" }, { type: "interaction.permission.respond", tool_call_id: "tool-call", approved: true, trust_folder: true }],
-  ["plan", plan, "approve", { message: "ok", ignored: true }, { type: "interaction.plan.respond", interaction_id: "interaction-plan", approved: true, feedback: "ok" }],
-  ["plan", plan, "reject", { message: null }, { type: "interaction.plan.respond", interaction_id: "interaction-plan", approved: false, feedback: null }],
+  ["tool_permission", permission, "approve", {}, { type: "tool.permission.respond", tool_call_id: "tool-call", approved: true, trust_folder: false }],
+  ["tool_permission", permission, "reject", {}, { type: "tool.permission.respond", tool_call_id: "tool-call", approved: false, trust_folder: false }],
+  ["tool_permission", permission, "trust", { tool_call_id: "forged" }, { type: "tool.permission.respond", tool_call_id: "tool-call", approved: true, trust_folder: true }],
+  ["plan", plan, "approve", { message: "ok", ignored: true }, { type: "plan.review.respond", interaction_id: "interaction-plan", approved: true, message: "ok", autonomous: false }],
+  ["plan", plan, "reject", { message: null }, { type: "plan.review.respond", interaction_id: "interaction-plan", approved: false, message: null, autonomous: false }],
 ]) {
   test(`IPC maps ${kind}/${decision} to the canonical command on the explicit session`, async () => {
     const host = await ipcFixture(pending());
@@ -116,6 +116,7 @@ test("approval read errors notify the host diagnostics channel and bootstrap fai
   const host = await loadHost({ windows: [window] });
   const client = {
     approvals: async () => { throw new Error("lease expired"); },
+    approvalsSnapshot: async () => { throw new Error("bootstrap unavailable"); },
     bootstrap: async () => { throw new Error("bootstrap unavailable"); },
   };
   host.registerIpcHandlers(client, {}, new host.ChallengeManager());
@@ -166,25 +167,54 @@ test("decision vocabularies do not cross kinds and renderer fields cannot overri
   }
   assert.deepEqual(approvalCommand({ kind: "tool_permission", internalId: "canonical" }, "reject", {
     tool_call_id: "forged", approved: true, trust_folder: true,
-  }), { type: "interaction.permission.respond", tool_call_id: "canonical", approved: false, trust_folder: false });
+  }), { type: "tool.permission.respond", tool_call_id: "canonical", approved: false, trust_folder: false });
 });
 
 test("generic commands preserve an explicit session target", async () => {
   const host = await ipcFixture();
   const target = { kind: "session", session_id: "session-A" };
-  await host.invoke("command", { command: { type: "conversation.cancel", turn_id: "turn-A" }, target });
-  await host.invoke("command", { command: { type: "conversation.compact" }, target });
+  await host.invoke("command", { command: { type: "session.resume" }, target });
   assert.deepEqual(host.calls, [
-    [{ type: "conversation.cancel", turn_id: "turn-A" }, target],
-    [{ type: "conversation.compact" }, target],
+    [{ type: "session.resume" }, target, []],
   ]);
+});
+
+test("renderer send_message cannot provide trusted runtime identity fields", async () => {
+  const host = await ipcFixture();
+  const reference = `sha256:${"a".repeat(64)}`;
+  const target = { kind: "session", session_id: "session-A" };
+  await host.invoke("command", {
+    command: {
+      type: "conversation.send_message",
+      text: "hello",
+      input_purpose: "trigger_turn",
+      attachments: [reference],
+      message_id: "renderer-message",
+      as_system: true,
+      inter_agent: { sender: "forged" },
+      subagent_terminal: { terminal: "forged" },
+    },
+    target,
+  });
+  assert.deepEqual(host.calls, [[{
+    type: "conversation.send_message",
+    text: "hello",
+    input_purpose: "trigger_turn",
+    attachments: [reference],
+    message_id: "renderer-message",
+    as_system: false,
+  }, target, []]]);
+  await assert.rejects(host.invoke("command", {
+    command: { type: "conversation.send_message", text: "bad", input_purpose: "trigger_turn", attachments: ["/tmp/local-file"] },
+    target,
+  }), /invalid_attachment_ref/);
 });
 
 test("session list forwards authoritative working and canceled states after cancel", async () => {
   const host = await ipcFixture();
   let status = "working";
   host.setQueryResult([{ session_id: "session-A", status }]);
-  await host.invoke("command", { command: { type: "conversation.cancel", turn_id: "turn-A" }, target: { kind: "session", session_id: "session-A" } });
+  await host.invoke("command", { command: { type: "conversation.cancel" }, target: { kind: "session", session_id: "session-A" } });
   let [entry] = await host.invoke("session_list");
   assert.equal(entry.status, "working");
   assert.equal(entry.busy, true);
@@ -193,7 +223,7 @@ test("session list forwards authoritative working and canceled states after canc
   [entry] = await host.invoke("session_list");
   assert.equal(entry.status, "canceled");
   assert.equal(entry.busy, false);
-  assert.deepEqual(host.queries, [[{ type: "session.list" }], [{ type: "session.list" }]]);
+  assert.deepEqual(host.queries, [["session.list", {}], ["session.list", {}]]);
 });
 
 test("reconnect restores the previously saved session after reconnect clears it", async () => {
@@ -216,7 +246,7 @@ test("IPC resolves a client lazily and retries after connection failure", async 
   host.registerIpcHandlers(async () => {
     attempts++;
     if (attempts === 1) throw new Error("daemon unavailable");
-    return { query: async () => [] };
+    return { serviceCall: async () => [] };
   }, {}, new host.ChallengeManager());
   await assert.rejects(host.invoke("session_list"), /daemon unavailable/);
   assert.deepEqual(await host.invoke("session_list"), []);
@@ -300,9 +330,10 @@ test("SDK bootstrap refreshes pending interactions without a host recovery timer
   await f.client.attach("session-A");
   const watch = f.sessionWatches[0];
   assert.equal(f.client.getProjectionStatus("session-A"), "live");
-  watch.handlers.onReset({ reason: "cursor_expired", session_id: "session-A" });
+  watch.handlers.onResyncRequired({ reason: "cursor_expired", session_id: "session-A" });
   assert.equal(watch.resyncs, 0, "host does not start a second recovery timer");
   assert.equal(f.timers.jobs.size, 0);
+  assert.ok(f.events.some(e => e.name === "projection://reset" && e.payload.reason === "cursor_expired"));
 });
 
 test("scheduled SSE reconnects are forwarded with attempt and delay", async t => {
@@ -322,11 +353,11 @@ test("SDK owns repeated reset recovery; unrecoverable reset/termination stay pau
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-A");
   const watch = f.sessionWatches[0];
-  watch.handlers.onReset({ reason: "replay_overflow", session_id: "session-A" });
+  watch.handlers.onResyncRequired({ reason: "replay_overflow", session_id: "session-A" });
   assert.equal(watch.resyncs, 0);
   assert.equal(f.timers.jobs.size, 0);
   watch.handlers.onEvent({ session_id: "session-A" });
-  watch.handlers.onReset({ reason: "upgrade_required", session_id: "session-A" });
+  watch.handlers.onResyncRequired({ reason: "upgrade_required", session_id: "session-A" });
   watch.handlers.onStatus("paused");
   assert.equal(f.timers.jobs.size, 0);
   assert.equal(f.client.getProjectionStatus("session-A"), "paused");
@@ -334,19 +365,18 @@ test("SDK owns repeated reset recovery; unrecoverable reset/termination stay pau
   assert.equal(f.timers.jobs.size, 0);
 });
 
-test("failed resync is reported by the SDK and detaching prevents stale callbacks", async t => {
+test("explicit resync errors propagate and detaching prevents stale callbacks", async t => {
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-A");
   const watch = f.sessionWatches[0];
   watch.resync = async () => { throw new Error("bootstrap failed"); };
-  watch.handlers.onReset({ reason: "epoch_mismatch", session_id: "session-A" });
-  await Promise.resolve();
+  await assert.rejects(f.client.retryActive("session-A"), /bootstrap failed/);
   assert.equal(f.timers.jobs.size, 0);
   await f.client.attach("session-B");
   assert.equal(f.timers.jobs.size, 0);
   const count = f.events.length;
   watch.handlers.onEvent({ session_id: "session-A" });
-  watch.handlers.onReset({ reason: "cursor_expired", session_id: "session-A" });
+  watch.handlers.onResyncRequired({ reason: "cursor_expired", session_id: "session-A" });
   assert.equal(f.events.length, count);
 });
 
@@ -358,18 +388,14 @@ test("overlapping attaches replace the current watch cleanly", async t => {
   assert.equal(f.client.getActiveSeed(), "session-B");
 });
 
-test("command submits a unified target and exposes failed timeout outcomes", async t => {
+test("typed commands preserve targets and unknown outcomes", async t => {
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-B");
   const target = { kind: "session", session_id: "session-A" };
-  await f.client.command({ type: "interaction.permission.respond", tool_call_id: "tool-A", approved: true, trust_folder: false }, target);
-  assert.deepEqual(f.submissions.at(-1), [target, { type: "interaction.permission.respond", tool_call_id: "tool-A", approved: true, trust_folder: false }]);
-  await f.client.command({ type: "session.list" });
-  assert.deepEqual(f.submissions.at(-1), [{ kind: "global" }, { type: "session.list" }]);
+  await f.client.command({ type: "tool.permission.respond", tool_call_id: "tool-A", approved: true, trust_folder: false }, target);
+  assert.deepEqual(f.submissions.at(-1), [target, { type: "tool.permission.respond", tool_call_id: "tool-A", approved: true, trust_folder: false }, { preconditions: [] }]);
+  await f.client.command({ type: "config.save", patch: {} });
+  assert.deepEqual(f.submissions.at(-1), [{ kind: "global" }, { type: "config.save", patch: {} }, { preconditions: [] }]);
   f.sdk.submit = async () => { throw new SdkError("outcome_unknown", "timeout", undefined, undefined, "command-unknown"); };
-  f.sdk.resolveOutcome = async () => ({ state: "failed", command_id: "command-unknown", error_code: "invalid_answer" });
-  const ack = await f.client.command({ type: "interaction.ask.dismiss", interaction_id: "ask-A" }, target);
-  assert.equal(ack.status, "rejected"); assert.equal(ack.code, "invalid_answer");
-  f.sdk.resolveOutcome = async () => { throw new Error("still unknown"); };
   await assert.rejects(f.client.command({ type: "interaction.ask.dismiss", interaction_id: "ask-A" }, target), e => e.kind === "outcome_unknown" && e.commandId === "command-unknown");
 });

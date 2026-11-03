@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, mkdirSync, cpSync, chmodSync, rmSync, renameSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, cpSync, chmodSync, rmSync, renameSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -35,6 +35,36 @@ function syncDir(source, destination) {
   cpSync(source, destination, { recursive: true });
 }
 
+function assertGeneratedMirror(source, destination) {
+  const names = (path) => readdirSync(path, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+    .map((entry) => entry.name)
+    .sort();
+  const expected = names(source);
+  const actual = names(destination);
+  if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+    throw new Error(`Generated protocol file list drift: ${source} != ${destination}`);
+  }
+  for (const name of expected) {
+    if (!readFileSync(join(source, name)).equals(readFileSync(join(destination, name)))) {
+      throw new Error(`Generated protocol file drift: ${name}`);
+    }
+  }
+}
+
+function checkBackendContract() {
+  const revision = run("git", ["rev-parse", "HEAD"], backend, true).trim();
+  const dirty = run("git", ["status", "--porcelain"], backend, true).trim() !== "";
+  const env = {
+    ...process.env,
+    QAQH_SOURCE_REVISION: dirty ? "development" : revision,
+    QAQH_SOURCE_DIRTY: dirty ? "1" : "0",
+  };
+  const args = ["run", "--locked", "-p", "qaqh-contract-export", "--", "check", "--against", join(sdk, "src/protocol/generated")];
+  if (!dirty) args.push("--release");
+  run("cargo", args, backend, false, env);
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
@@ -62,9 +92,11 @@ async function main() {
     if (!existsSync(file)) throw new Error(`Required sibling repository/lockfile missing: ${file}`);
   }
   run("pnpm", ["--version"]);
-  if (!options.skipBackend) run("cargo", ["--version"]);
+  run("cargo", ["--version"]);
 
   console.log("\n[1/5] SDK and dependency preparation");
+  checkBackendContract();
+  assertGeneratedMirror(join(sdk, "src/protocol/generated/types/qaqh"), join(frontend, "src/api/qaqh"));
   if (!options.skipInstall) install(sdk);
   run("pnpm", ["run", "build"], sdk);
   if (!existsSync(join(sdk, "dist/core/index.js"))) throw new Error("qaqh-sdk build did not produce dist/core/index.js");

@@ -181,16 +181,37 @@ export class DaemonManager {
     delete env.QAQH_SERVER_TOKEN;
     const child = spawn(exe, ["run"], {
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
       env,
+    });
+
+    const startup = { exit: null as string | null, failure: null as Error | null, stderr: "" };
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      startup.stderr = (startup.stderr + chunk).slice(-16_384);
+    });
+    child.once("error", (error) => { startup.failure = error; });
+    child.once("exit", (code, signal) => {
+      startup.exit = `code=${String(code)}, signal=${String(signal)}`;
     });
 
     child.unref();
     this.spawnedPid = child.pid ?? null;
 
+    const diagnostic = (): string => {
+      const tail = startup.stderr.trim().split(/\r?\n/).slice(-12).join("\n").slice(-4_000);
+      return tail === "" ? "" : `\n${tail}`;
+    };
+
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 150));
+      if (startup.failure) {
+        throw new Error(`Failed to start qaqh-daemon: ${startup.failure.message}${diagnostic()}`, { cause: startup.failure });
+      }
+      if (startup.exit != null) {
+        throw new Error(`qaqh-daemon exited before publishing discovery (${startup.exit}).${diagnostic()}`);
+      }
       const disc = await readDiscovery();
       if (disc && isAlive(disc.pid) && (await isEndpointReachable(disc))) {
         console.log(`[daemon] Daemon ready at ${disc.endpoint} (pid: ${disc.pid})`);
@@ -198,7 +219,7 @@ export class DaemonManager {
       }
     }
 
-    throw new Error(`Timed out waiting for daemon to publish discovery after ${timeoutMs}ms`);
+    throw new Error(`Timed out waiting for daemon to publish discovery after ${timeoutMs}ms.${diagnostic()}`);
   }
 
   getSpawnedPid(): number | null {

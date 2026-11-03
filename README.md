@@ -112,6 +112,14 @@ writes, not stale-overlay detection. A second instance does not rewrite running
 application files. Existing detached daemons are not forcibly terminated by this
 migration; use the application's controlled daemon restart when needed.
 
+## Backend v3 data compatibility
+
+The backend v3 daemon uses session SQLite schema 5. It rejects older SQLite
+schemas with `SchemaTooOld` and does not import the legacy JSONL session log or
+`workspaces.json` data. Electron does not delete or rewrite those files. This
+release does not provide an automatic data migration; preserve the existing
+files if startup reports a schema error.
+
 ## Runtime behavior
 
 - Closing the window hides it to the tray on Linux/Windows; macOS keeps normal application-window behavior. Tray/menu exit opens the renderer's quit-confirmation flow.

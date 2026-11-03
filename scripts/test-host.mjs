@@ -70,7 +70,7 @@ export function mockSdk() {
     onStateChange: () => () => {}, connect: async () => {}, disconnect: async () => {},
     submit: async (...args) => { submissions.push(args); return { ack: { status: "accepted", command_id: "command-test" } }; },
     watchSession: (seed, handlers) => {
-      const watch = { seed, handlers, closed: false, resyncs: 0, close() { this.closed = true; handlers.onStatus?.("closed"); }, async resync() { this.resyncs++; handlers.onBootstrap?.({ session_id: seed }); handlers.onStatus?.("live"); } };
+    const watch = { seed, handlers, closed: false, resyncs: 0, close() { this.closed = true; handlers.onStatus?.("closed"); }, async resync() { this.resyncs++; handlers.onBootstrap?.({ session_id: seed }); handlers.onStatus?.("live"); } };
       sessionWatches.push(watch);
       handlers.onStatus?.("live");
       return watch;

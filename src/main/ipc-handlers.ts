@@ -2,9 +2,10 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { readDiscovery, DaemonManager } from "./daemon.js";
-import { globalTarget } from "@qaqh/sdk";
+import { globalTarget, sessionTarget } from "@qaqh/sdk";
 import { isAlive } from "@qaqh/sdk/node";
-import type { RingingCommand, UnifiedCommand, UnifiedTarget } from "@qaqh/sdk/protocol";
+import { serviceMetadata } from "@qaqh/sdk/protocol";
+import type { CommandPrecondition, CommandTarget, ConversationSendMessage, RingingCommand } from "@qaqh/sdk/protocol";
 import { isIP } from "node:net";
 import { spawn } from "node:child_process";
 import { resolveDaemonExecutable } from "./daemon.js";
@@ -18,38 +19,106 @@ import {
   openExternalUrl,
   uploadAttachment,
 } from "./native-dialogs.js";
-import { scanUserSkills } from "./skills-scanner.js";
 import { processGroup } from "./process-metrics.js";
 import { readGpuStatus } from "./gpu-info.js";
 import {
   applyForDaemon, checkForUpdates, spawnApplyOnQuit, stageUpdate, stagedStatus,
 } from "./updater.js";
+import type { ApprovalView, MainServiceMap, MainServiceMethod } from "./types.js";
 
 const DEFAULT_LAN_PORT = 64413;
 const RESTART_TIMEOUT_MS = 20_000;
 const restartLock = { held: false };
 
-/** 统一目录操作（§8.1）走统一信封；其余 command IPC 一律转 service 面。 */
-const UNIFIED_COMMAND_TYPES = new Set([
-  "session.create",
-  "session.settings.patch",
-  "provider.list",
-  "provider.upsert",
-  "provider.delete",
-  "provider.model.upsert",
-  "provider.model.delete",
-  "provider.models.discover",
-  "model.selection.set_default",
+const RINGING_COMMAND_TYPES: ReadonlySet<RingingCommand["type"]> = new Set([
+  "session.create", "session.settings.patch", "session.resume", "session.attach", "session.close",
+  "session.rename", "session.archive", "session.unarchive", "session.delete", "session.shutdown",
+  "agent.reload_config", "conversation.send_message", "conversation.cancel", "interaction.ask.respond",
+  "interaction.ask.dismiss", "driver.claim", "driver.release", "plan.review.respond", "tool.permission.respond",
+  "provider.list", "provider.upsert", "provider.delete", "provider.model.upsert", "provider.model.delete",
+  "model.selection.set_default", "config.save", "config.set_permission_level", "profile.create",
+  "profile.set_default", "profile.apply", "profile.save_current", "profile.delete", "workspace.set",
+  "workspace.create", "workspace.rename", "workspace.delete", "workspace.move_session", "workspace.detach",
+  "subagent.spawn", "todo.set", "todo.cancel", "plan.action", "diagnostics.memory.start", "diagnostics.memory.stop",
 ]);
 
-/** webui 旧名 → conversation 频道 wire 名（ConversationCommand snake_case）。 */
-const CONVERSATION_WIRE_TYPES: Record<string, string> = {
-  "conversation.send": "conversation_send_message",
-  "conversation.cancel": "conversation_cancel",
-  "conversation.compact": "conversation_compact",
-};
+const EXTRA_SERVICE_METHODS = new Set<MainServiceMethod>([
+  "config.load", "profile.list", "skills.list_tools", "todo.status", "todo.list", "plan.read",
+  "diagnostics.memory.snapshot",
+]);
+const SESSION_SERVICE_METHODS = new Set<MainServiceMethod>([
+  "session.meta", "session.get_activity", "workspace.get", "todo.status", "todo.list", "plan.read",
+]);
 const approvedAttachmentPaths = new Set<string>();
 const contentReadControllers = new Map<string, AbortController>();
+
+function isServiceMethod(method: string): method is MainServiceMethod {
+  return method in serviceMetadata || EXTRA_SERVICE_METHODS.has(method as MainServiceMethod);
+}
+
+function isRingingCommand(value: unknown): value is RingingCommand {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && typeof (value as { type?: unknown }).type === "string"
+    && RINGING_COMMAND_TYPES.has((value as { type: RingingCommand["type"] }).type);
+}
+
+/** Rebuild renderer messages with trusted-only identity fields fixed by the host. */
+function normalizeRendererCommand(command: RingingCommand): RingingCommand {
+  if (command.type !== "conversation.send_message") return command;
+  const input = command as RingingCommand & Record<string, unknown>;
+  if (typeof input.text !== "string") throw new Error("invalid_conversation_message");
+  const purposes = new Set(["trigger_turn", "queue_only", "steer", "interject"]);
+  if (typeof input.input_purpose !== "string" || !purposes.has(input.input_purpose)) {
+    throw new Error("invalid_input_purpose");
+  }
+  const attachments = input.attachments;
+  if (attachments != null && (!Array.isArray(attachments)
+    || attachments.some((ref) => typeof ref !== "string" || !/^sha256:[0-9a-f]{64}$/i.test(ref)))) {
+    throw new Error("invalid_attachment_ref");
+  }
+  const images = input.images;
+  if (images != null && (!Array.isArray(images) || images.some((image) => image == null || typeof image !== "object"
+    || typeof (image as Record<string, unknown>).mime_type !== "string"
+    || typeof (image as Record<string, unknown>).data !== "string"))) {
+    throw new Error("invalid_image_block");
+  }
+  const safeMessage: ConversationSendMessage = {
+    text: input.text,
+    input_purpose: input.input_purpose as ConversationSendMessage["input_purpose"],
+    as_system: false,
+    ...(attachments == null ? {} : { attachments: attachments as string[] }),
+    ...(typeof input.message_id === "string" ? { message_id: input.message_id } : {}),
+    ...(images == null ? {} : { images: images as ConversationSendMessage["images"] }),
+  };
+  return { type: "conversation.send_message", ...safeMessage };
+}
+
+function readCommandTarget(value: unknown): CommandTarget {
+  if (value == null) return globalTarget();
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_command_target");
+  const target = value as Record<string, unknown>;
+  if (target.kind === "global") return { kind: "global" };
+  if (target.kind === "session") return { kind: "session", session_id: requireId(target.session_id, "session_id") };
+  if (target.kind === "workspace") return { kind: "workspace", workspace_id: requireId(target.workspace_id, "workspace_id") };
+  if (target.kind === "exec_session") return { kind: "exec_session", id: requireId(target.id, "exec_session_id") };
+  throw new Error("invalid_command_target");
+}
+
+function readPreconditions(value: unknown): CommandPrecondition[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error("invalid_command_preconditions");
+  const seen = new Set<string>();
+  return value.map((entry) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) throw new Error("invalid_command_precondition");
+    const precondition = entry as Record<string, unknown>;
+    if (precondition.kind !== "settings_revision" && precondition.kind !== "config_revision") throw new Error("invalid_command_precondition");
+    if (!Number.isSafeInteger(precondition.revision) || Number(precondition.revision) < 0 || seen.has(String(precondition.kind))) {
+      throw new Error("invalid_command_precondition");
+    }
+    seen.add(String(precondition.kind));
+    return { kind: precondition.kind, revision: Number(precondition.revision) } as CommandPrecondition;
+  });
+}
 
 export function registerQuitIpcHandler(getClient: () => RingingClient | null): void {
   ipcMain.handle("qaqh:request-quit", async (event, args: { stopDaemon?: boolean; stopActiveWork?: boolean } = {}) => {
@@ -196,31 +265,20 @@ async function handleCommand(
 ): Promise<any> {
   switch (cmd) {
     case "session_list": {
-      const raw = await client.serviceCall<any[]>("session.list");
-      const list = Array.isArray(raw) ? raw : [];
-      return list.map((entry: any) => {
-        const meta = entry.meta || {};
-        const sessionId = entry.session_id || meta.session_id || "";
-        const title = entry.title !== undefined ? entry.title : (meta.title !== undefined ? meta.title : null);
-        const cwd = entry.cwd !== undefined ? entry.cwd : (meta.cwd !== undefined ? meta.cwd : null);
-        const updatedAt = entry.updated_at || meta.updated_at || Date.now();
-        const turnCount = entry.turn_count || meta.turn_count || 0;
-        const status = entry.status || "idle";
-        const archived = Boolean(entry.archived !== undefined ? entry.archived : meta.archived);
-        const workspaceId = entry.workspace_id !== undefined ? entry.workspace_id : (meta.workspace_id || null);
-        const toolMode = entry.tool_mode !== undefined ? entry.tool_mode : (meta.tool_mode || null);
-
+      const list = await client.serviceCall("session.list", {});
+      return list.map((entry) => {
+        const status = entry.status;
         return {
-          session_id: sessionId,
-          title,
-          cwd,
-          updated_at: updatedAt,
-          turn_count: turnCount,
+          session_id: entry.session_id,
+          title: entry.title ?? null,
+          cwd: entry.cwd ?? null,
+          updated_at: entry.updated_at,
+          turn_count: entry.turn_count,
           status,
           busy: sessionIsBusy(status),
-          archived,
-          workspace_id: workspaceId,
-          tool_mode: toolMode,
+          archived: entry.archived,
+          workspace_id: entry.workspace_id,
+          tool_mode: entry.tool_mode ?? null,
         };
       });
     }
@@ -238,38 +296,34 @@ async function handleCommand(
         const view = await client.approvals(seed);
         if (view.kind !== "admin") throw new Error("Electron host requires admin approvals, not device challenges");
         const bootstrap = await client.approvalsSnapshot(seed);
-        const controlState = (bootstrap as any)?.control?.state;
-        const controlRevision = Number(controlState?.revision);
+        const state = bootstrap.state;
         const pending = flattenAdminApprovals(view.pending);
-        const pendingInteractions = Array.isArray(controlState?.interactions) ? controlState.interactions : [];
-        const activeInteractions = pendingInteractions.filter((item: any) => item?.resolution == null && item?.expired_reason == null);
-        for (const approval of pending) {
-          if (approval.kind !== "tool_permission") continue;
-          const interaction = activeInteractions.find((item: any) => item?.kind === "permission" && item?.call_id === approval.internalId);
-          if (typeof interaction?.interaction_id === "string") approval.snapshotId = interaction.interaction_id;
-        }
+        const activeInteractions = state.interactions.filter((item) => item.resolution == null);
+        const kindFor = (kind: ApprovalView["kind"]) => kind === "tool_permission" ? "permission" : kind;
         const matchesSnapshot = pending.length === activeInteractions.length && pending.every((approval) => {
-          const kind = approval.kind === "tool_permission" ? "permission" : approval.kind === "plan" ? "plan_review" : "ask";
-          return activeInteractions.some((item: any) => item?.kind === kind
-            && item.interaction_id === approval.snapshotId);
+          const interaction = activeInteractions.find((item) => item.kind === kindFor(approval.kind)
+            && (approval.kind === "tool_permission" ? item.call_id === approval.internalId : item.interaction_id === approval.internalId));
+          if (!interaction) return false;
+          approval.snapshotId = interaction.interaction_id;
+          return true;
         });
         const views = challenges.issueViews(seed, pending);
-        if (!matchesSnapshot || !Number.isFinite(controlRevision)) {
+        if (!matchesSnapshot) {
           for (const approval of views) challenges.markChallengeUnverified(seed, approval.challenge_id);
         }
         return views.map((approval, index) => {
           const source = pending[index];
-          const matches = source != null && pendingInteractions.some((item: any) => item?.resolution == null && item?.expired_reason == null
-            && item?.kind === (source.kind === "tool_permission" ? "permission" : source.kind === "plan" ? "plan_review" : "ask")
-            && item?.interaction_id === source.snapshotId);
-          if (matches && matchesSnapshot && Number.isFinite(controlRevision)) {
+          const matches = source != null && activeInteractions.some((item) => item.kind === kindFor(source.kind)
+            && item.interaction_id === source.snapshotId
+            && (source.kind !== "tool_permission" || item.call_id === source.internalId));
+          if (matches && matchesSnapshot) {
             challenges.confirmChallenge(seed, approval.challenge_id);
             approval.verified = true;
           } else {
             challenges.markChallengeUnverified(seed, approval.challenge_id);
             approval.verified = false;
           }
-          return { ...approval, verified: matches && matchesSnapshot && Number.isFinite(controlRevision) };
+          return { ...approval, verified: matches && matchesSnapshot };
         });
       } catch (error) {
         console.warn(`[approvals] Failed to read pending interactions for ${seed}:`, error);
@@ -314,7 +368,7 @@ async function handleCommand(
 
       const command = approvalCommand(stored, decision, payload);
       try {
-        requireAccepted(await client.submitChannel(command, stored.sessionId));
+        requireAccepted(await client.command(command, sessionTarget(stored.sessionId)));
       } catch (error) {
         const commandId = error != null && typeof error === "object" && "commandId" in error
           ? String((error as { commandId?: unknown }).commandId ?? "") : "";
@@ -342,37 +396,17 @@ async function handleCommand(
     }
 
     case "command": {
-      const command = args.command;
-      if (command == null || typeof command !== "object" || Array.isArray(command)
-        || typeof (command as { type?: unknown }).type !== "string") {
-        throw new Error("invalid_command");
-      }
-      const { type, ...params } = command as { type: string } & Record<string, unknown>;
-      if (UNIFIED_COMMAND_TYPES.has(type)) {
-        return client.command(command as UnifiedCommand, (args.target ?? globalTarget()) as UnifiedTarget);
-      }
-      // 会话输入命令走 conversation 频道（必须携带 session target）。
-      const conversationType = CONVERSATION_WIRE_TYPES[type];
-      if (conversationType) {
-        const target = (args.target ?? globalTarget()) as UnifiedTarget;
-        if (target.kind !== "session") throw new Error("session_target_required");
-        return client.submitChannel({ channel: "conversation", type: conversationType, ...params } as RingingCommand, target.session_id);
-      }
-      // 旧 set_group 语义 = workspace 归属：显式 workspace_id → move，null → detach。
-      if (type === "session.set_group") {
-        const target = (args.target ?? globalTarget()) as UnifiedTarget;
-        const sessionId = target.kind === "session" ? target.session_id : String(params.session_id ?? "");
-        if (!sessionId) throw new Error("session_target_required");
-        const workspaceId = params.workspace_id;
-        if (workspaceId == null || workspaceId === "") {
-          return client.serviceCall("workspace.detach", { session_id: sessionId });
-        }
-        return client.serviceCall("workspace.move_session", { session_id: sessionId, workspace_id: workspaceId });
-      }
-      // 其余都是 service 查询/配置面方法（config.load、workspace.*、siwc.*…）：
-      // 回包包成 accepted ack 形状，渲染层 query() 继续从 result 取值。
-      const result = await client.serviceCall(type, params);
-      return { status: "accepted" as const, result };
+      if (!isRingingCommand(args.command)) throw new Error("invalid_command");
+      return client.command(normalizeRendererCommand(args.command), readCommandTarget(args.target), readPreconditions(args.preconditions));
+    }
+
+    case "service_query": {
+      const method = typeof args.method === "string" ? args.method : "";
+      if (!isServiceMethod(method)) throw new Error("unsupported_service_method");
+      const params = args.params ?? {};
+      if (params === null || typeof params !== "object" || Array.isArray(params)) throw new Error("invalid_service_params");
+      if (SESSION_SERVICE_METHODS.has(method)) requireId((params as Record<string, unknown>).session_id, "session_id");
+      return client.serviceCall(method, params as MainServiceMap[MainServiceMethod]["params"]);
     }
 
     case "exit_app": {
@@ -531,9 +565,6 @@ async function handleCommand(
       return restartDaemon(client, daemonMgr, { args: ["run"], wantLan: false, force: args.force === true });
     }
 
-    case "skills_user_scan": {
-      return scanUserSkills();
-    }
 
     case "session_bootstrap": {
       const seed = requireId(args.seed, "session_id");
