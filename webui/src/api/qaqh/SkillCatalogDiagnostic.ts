@@ -3,7 +3,7 @@
 /**
  * 发现期诊断（目录不可读、SKILL.md 非法等）。
  */
-export type SkillCatalogDiagnostic = {
+export type SkillCatalogDiagnostic = { 
 /**
  * `warning` | `error`
  */

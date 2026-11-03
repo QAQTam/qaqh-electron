@@ -12,15 +12,15 @@ import type { SubagentPatch } from "./SubagentPatch";
  * 特例语义冻结：`apiKey`/`subagentApiKey` 沿用既有守卫——`"****"` 或空串 =
  * 保持现值（显式删除须专用接口）；其余字符串字段 Some(空串) = 显式置空。
  */
-export type ConfigPatch = {
+export type ConfigPatch = { 
 /**
  * 主密钥：仅用户显式输入新值时 Some；掩码 `"****"`/空串 = 保持现值。
  */
-apiKey: string | null, model: string | null, baseUrl: string | null,
+apiKey: string | null, model: string | null, baseUrl: string | null, 
 /**
  * 协议拼写只允许 [`canonical_wire`] 的四个规范名，旧别名一律拒绝。
  */
-wire: string | null,
+wire: string | null, 
 /**
  * 凭据来源：`api_key` | `chatgpt_plan` | `deepseek_account`。缺失 = 不动（K3）。
  * 从其他凭据切换到 DeepSeek 账号时，若省略 wire 且当前为 chat，默认改为
@@ -28,11 +28,11 @@ wire: string | null,
  * 值域在 [`ConfigPatch::validate`] 收口；这里刻意**不**给「未知值退化成
  * api_key」的兜底——静默改变额度来源比报错难查得多。
  */
-credential: string | null, maxTokens: number | null, contextLength: number | null, reasoningEffort: string | null,
+credential: string | null, maxTokens: number | null, contextLength: number | null, reasoningEffort: string | null, 
 /**
  * 值域 `[0,1]`；`0` = 关闭自动压缩。
  */
-autoCompactThreshold: number | null, complianceEnabled: boolean | null,
+autoCompactThreshold: number | null, complianceEnabled: boolean | null, 
 /**
  * 权限档位（1=read-only，2=workspace-write，
  * 3=skip-permissions：显式危险 bypass，普通工具全部自动放行；
@@ -42,15 +42,15 @@ autoCompactThreshold: number | null, complianceEnabled: boolean | null,
  * `config.save` 的裸 `permissionLevel` 载荷漏进配置。现在并入 patch 并在
  * [`Self::validate`] 中做值域校验（非法即拒绝，1..=4 之外不落盘）。
  */
-permissionLevel: number | null, tokenizerPath: string | null,
+permissionLevel: number | null, tokenizerPath: string | null, 
 /**
  * exec 工具默认 shell。空串 / "auto" = 平台自动探测。
  */
-exec: ExecPatch | null,
+exec: ExecPatch | null, 
 /**
  * 沙箱执行配置。
  */
-sandbox: SandboxPatch | null,
+sandbox: SandboxPatch | null, 
 /**
  * 空闲会话卸载阈值（秒）；0 = 禁用。
  */

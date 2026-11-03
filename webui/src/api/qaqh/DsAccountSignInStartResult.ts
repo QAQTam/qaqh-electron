@@ -3,19 +3,19 @@
 /**
  * Browser authorization handoff.
  */
-export type DsAccountSignInStartResult = {
+export type DsAccountSignInStartResult = { 
 /**
  * Attempt ID.
  */
-attemptId: string,
+attemptId: string, 
 /**
  * URL opened by the host, not the daemon.
  */
-authorizeUrl: string,
+authorizeUrl: string, 
 /**
  * Actual bound callback URI.
  */
-redirectUri: string,
+redirectUri: string, 
 /**
  * Lifetime in seconds.
  */

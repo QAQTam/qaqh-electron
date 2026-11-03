@@ -3,31 +3,31 @@
 /**
  * Account projection; neither plaintext nor encrypted credentials are present.
  */
-export type DsAccountPublicAccount = {
+export type DsAccountPublicAccount = { 
 /**
  * Stable user ID.
  */
-user_id: string,
+user_id: string, 
 /**
  * Display name.
  */
-label: string,
+label: string, 
 /**
  * Login provider, or null.
  */
-provider: string | null,
+provider: string | null, 
 /**
  * Settlement currency, or null.
  */
-currency: string | null,
+currency: string | null, 
 /**
  * Bound inference origin.
  */
-inference_origin: string,
+inference_origin: string, 
 /**
  * Persistence timestamp.
  */
-saved_at_ms: number,
+saved_at_ms: number, 
 /**
  * Credential presence, not the credential itself.
  */

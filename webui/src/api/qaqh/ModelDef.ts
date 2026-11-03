@@ -5,15 +5,15 @@ import type { ModelDefaults } from "./ModelDefaults";
 /**
  * 模型能力与元数据定义
  */
-export type ModelDef = { enabled: boolean,
+export type ModelDef = { enabled: boolean, 
 /**
  * 界面友好展示名（如 "DeepSeek R1 (深度推理)"）
  */
-display_name: string | null,
+display_name: string | null, 
 /**
  * 上下文窗口大小（Token 数），默认 128,000
  */
-context_window: number,
+context_window: number, 
 /**
  * 单次回合最大输出 Token 上限，默认 8,192
  */

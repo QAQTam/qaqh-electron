@@ -5,7 +5,7 @@ import type { JsonValue } from "../serde_json/JsonValue";
  * One upstream model entry. Only provider-defined metadata is dynamic; the
  * response remains an array of identified models, not an arbitrary JSON value.
  */
-export type DsAccountModel = {
+export type DsAccountModel = { 
 /**
  * Stable model identifier.
  */

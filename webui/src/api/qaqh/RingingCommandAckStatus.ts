@@ -2,6 +2,6 @@
 
 /**
  * 命令确认：accepted 仅代表校验通过并进入正确 actor/worker，
- * 业务完成必须通过 `causation_id = command_id` 的可靠事件返回。
+ * 业务完成 is reported on the session event stream with the command causation id.
  */
 export type RingingCommandAckStatus = "accepted" | "rejected";

@@ -10,20 +10,20 @@ import type { RingingV2ExistingResult } from "./RingingV2ExistingResult";
  * still inside the idempotency TTL — that is, when the caller re-submitted a
  * `command_id` it may have lost the ACK for.
  */
-export type RingingV2CommandAck = { command_id: string, status: RingingCommandAckStatus, code?: string | null, message?: string | null, retry_after_ms?: number | null,
+export type RingingV2CommandAck = { command_id: string, status: RingingCommandAckStatus, code?: string | null, message?: string | null, retry_after_ms?: number | null, 
 /**
  * Already-recorded outcome this submission collided with.
  */
-existing?: RingingV2ExistingResult | null,
+existing?: RingingV2ExistingResult | null, 
 /**
  * Completed synchronous outcome (统一命令面的 completed 结果；通道命令
  * 不携带)。JSON 形态由各操作的 result DTO 决定。
  */
-result?: JsonValue | null,
+result?: JsonValue | null, 
 /**
  * Operation name (for completed status)。
  */
-operation?: string | null,
+operation?: string | null, 
 /**
  * 操作后观察到的资源 revision（配置/设置类操作回带，供客户端对账）。
  */

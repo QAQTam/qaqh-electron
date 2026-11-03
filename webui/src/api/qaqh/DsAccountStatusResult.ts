@@ -6,35 +6,35 @@ import type { DsAccountStatusFlow } from "./DsAccountStatusFlow";
 /**
  * Aggregate account status.
  */
-export type DsAccountStatusResult = {
+export type DsAccountStatusResult = { 
 /**
  * Whether a persisted account exists.
  */
-signedIn: boolean,
+signedIn: boolean, 
 /**
  * Public account, or null.
  */
-account: DsAccountPublicAccount | null,
+account: DsAccountPublicAccount | null, 
 /**
  * Storage failure, or null.
  */
-storageError: string | null,
+storageError: string | null, 
 /**
  * Bound inference origin.
  */
-inferenceOrigin: string,
+inferenceOrigin: string, 
 /**
  * Usage management URL.
  */
-usageUrl: string,
+usageUrl: string, 
 /**
  * Top-up URL.
  */
-topUpUrl: string,
+topUpUrl: string, 
 /**
  * Current attempt.
  */
-flow: DsAccountStatusFlow,
+flow: DsAccountStatusFlow, 
 /**
  * Last revocation.
  */

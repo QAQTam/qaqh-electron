@@ -2,6 +2,6 @@
 
 /**
  * `workspace.list` 无参数；params 恒为 `{}`。结果条目为
- * `qaqh_session::WorkspaceEntry`（meta + `missing_dir`）。
+ * `qaqh_ringing_contract::WorkspaceEntry`（meta + `missing_dir`）。
  */
 export type WorkspaceListParams = Record<symbol, never>;

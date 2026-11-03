@@ -5,19 +5,19 @@ import type { DsAccountWallet } from "./DsAccountWallet";
 /**
  * Recharge and bonus wallets remain separate.
  */
-export type DsAccountBalanceResult = {
+export type DsAccountBalanceResult = { 
 /**
  * Recharge wallets.
  */
-recharge: Array<DsAccountWallet>,
+recharge: Array<DsAccountWallet>, 
 /**
  * Bonus wallets.
  */
-bonus: Array<DsAccountWallet>,
+bonus: Array<DsAccountWallet>, 
 /**
  * Total expenditure.
  */
-totalCost: Array<DsAccountTotalCost>,
+totalCost: Array<DsAccountTotalCost>, 
 /**
  * Whether any wallet has usable funds.
  */

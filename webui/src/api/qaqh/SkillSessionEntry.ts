@@ -4,19 +4,19 @@ import type { SkillSessionEntryState } from "./SkillSessionEntryState";
 /**
  * Runtime tracking for one skill in a session.
  */
-export type SkillSessionEntry = {
+export type SkillSessionEntry = { 
 /**
  * Skill name matching SKILL.md metadata.
  */
-name: string,
+name: string, 
 /**
  * Monotonic counter for determining activation order across sessions.
  */
-activation_order: number,
+activation_order: number, 
 /**
  * Path or identifier of the skill source directory (project/user scope).
  */
-source: string,
+source: string, 
 /**
  * Current activation state.
  */

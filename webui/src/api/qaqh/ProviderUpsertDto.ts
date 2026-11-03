@@ -4,4 +4,4 @@ import type { EndpointCompat } from "./EndpointCompat";
 import type { SecretWrite } from "./SecretWrite";
 import type { Wire } from "./Wire";
 
-export type ProviderUpsertDto = { name: string, base_url: string, wire: Wire, credential: CredentialSource, headers: { [key in string]: string }, compat: EndpointCompat | null, expected_revision: number, api_key: SecretWrite, };
+export type ProviderUpsertDto = { name: string, base_url: string, wire: Wire, credential: CredentialSource, headers: { [key in string]: string }, compat: EndpointCompat | null, api_key: SecretWrite, };

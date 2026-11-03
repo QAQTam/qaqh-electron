@@ -3,4 +3,7 @@ import type { SessionId } from "./SessionId";
 import type { TeamAgentSnapshot } from "./TeamAgentSnapshot";
 import type { TeamInboxSummary } from "./TeamInboxSummary";
 
+/**
+ * 团队 roster 与 inbox 快照。
+ */
 export type TeamSnapshot = { root_session_id: SessionId | null, agents: Array<TeamAgentSnapshot>, unread_messages: Array<TeamInboxSummary>, revision: number, last_fact_seq: number, };

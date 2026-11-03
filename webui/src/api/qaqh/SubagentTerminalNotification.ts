@@ -2,6 +2,6 @@
 import type { SubagentTerminalKind } from "./SubagentTerminalKind";
 
 /**
- * Structured terminal notification carried with a subagent result injection.
+ * 随子代理结果注入携带的结构化终态通知。
  */
 export type SubagentTerminalNotification = { child_session_id: string, parent_call_id: string, terminal: SubagentTerminalKind, };

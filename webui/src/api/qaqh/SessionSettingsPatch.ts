@@ -3,4 +3,4 @@ import type { ModelSelection } from "./ModelSelection";
 import type { SettingValue } from "./SettingValue";
 import type { ToolsSettingPatch } from "./ToolsSettingPatch";
 
-export type SessionSettingsPatch = { model_selection?: SettingValue<ModelSelection> | null, mode?: string | null, tools?: ToolsSettingPatch | null, };
+export type SessionSettingsPatch = { model_selection?: SettingValue<ModelSelection> | null, profile?: string | null, effort?: string | null, mode?: string | null, tools?: ToolsSettingPatch | null, };

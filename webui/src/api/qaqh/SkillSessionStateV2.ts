@@ -7,20 +7,20 @@ import type { SkillSessionEntry } from "./SkillSessionEntry";
  * Version 2 adds `context_epoch` and `operation_revision` for tracking
  * skill activation/deactivation across context compaction cycles.
  */
-export type SkillSessionStateV2 = {
+export type SkillSessionStateV2 = { 
 /**
  * Schema version (always 2).
  */
-version: number,
+version: number, 
 /**
  * Epoch counter incremented on context compaction. Used to detect
  * whether stale skill contexts need refresh.
  */
-context_epoch: number,
+context_epoch: number, 
 /**
  * Monotonic revision counter for operation ordering across restarts.
  */
-operation_revision: number,
+operation_revision: number, 
 /**
  * Active skill entries in activation order.
  */

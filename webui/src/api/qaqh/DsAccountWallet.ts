@@ -3,15 +3,15 @@
 /**
  * A wallet in the service response (amounts are unchanged strings).
  */
-export type DsAccountWallet = {
+export type DsAccountWallet = { 
 /**
  * Currency code.
  */
-currency: string,
+currency: string, 
 /**
  * Balance as returned by the provider.
  */
-balance: string,
+balance: string, 
 /**
  * Token estimation, or null.
  */

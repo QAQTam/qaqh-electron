@@ -7,7 +7,7 @@ import type { RingingV2DeviceApprovalKind } from "./RingingV2DeviceApprovalKind"
  * **不透明**的一次性 token（canonical id 不出 daemon），`details` 是有界
  * 展示白名单。与 admin 面的 [`RingingV2PendingApprovals`] 刻意不同形。
  */
-export type RingingV2DeviceChallenge = { challenge_id: string, kind: RingingV2DeviceApprovalKind,
+export type RingingV2DeviceChallenge = { challenge_id: string, kind: RingingV2DeviceApprovalKind, 
 /**
  * challenge 剩余有效期（秒）；过期后应答会被拒，须重新拉取 pending。
  */

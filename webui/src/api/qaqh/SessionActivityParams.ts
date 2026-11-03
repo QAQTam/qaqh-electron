@@ -2,6 +2,6 @@
 
 /**
  * `session.activity` 无参数；params 恒为 `{}`。结果条目是
- * `qaqh_domain::SessionActivity`（daemon `/activity` 观测端点同款形状）。
+ * `qaqh_ringing_contract::SessionActivity`（daemon `/activity` 观测端点同款形状）。
  */
 export type SessionActivityParams = Record<symbol, never>;

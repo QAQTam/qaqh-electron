@@ -10,11 +10,11 @@ import type { SubagentDto } from "./SubagentDto";
  * 读模型：daemon `config.load` 的完整投影。所有消费者（设置页/Info 面板/
  * TUI/web）从这里取值；不做向前兼容——缺字段即解析失败（见 crate 级兼容策略）。
  */
-export type ConfigDto = { model: string,
+export type ConfigDto = { model: string, 
 /**
  * BYOK 的 endpoint：scheme + host + 可选前缀（不含 wire 自身路径）。
  */
-baseUrl: string,
+baseUrl: string, 
 /**
  * 该 endpoint 说的 wire，**规范拼写**：`chat` | `responses` | `messages` | `gemini`
  * （= `qaqh_types::Wire::as_str()`，也是写侧 [`canonical_wire`] 的返回值）。
@@ -22,7 +22,7 @@ baseUrl: string,
  * 读侧回规范名、写侧只收旧名，于是每个客户端都得自带一层拼写桥。
  * 现在读写只收规范名，旧名仅由显式迁移入口处理。
  */
-wire: string,
+wire: string, 
 /**
  * 该 endpoint 的**凭据来源**：`api_key`（BYOK，缺省）| `chatgpt_plan`（本机
  * ChatGPT 套餐额度）| `deepseek_account`（本机 DeepSeek 账号余额）。
@@ -30,62 +30,62 @@ wire: string,
  * 「静默用了别的额度」。`chatgpt_plan` 只与 `responses` wire + 官方 base_url
  * 配套；请求期的权威判定在 `qaqh-runtime` 的 `provider_for`。
  */
-credential: string, maxTokens: number,
+credential: string, maxTokens: number, 
 /**
  * 端点声明的上下文窗口——本地压缩的唯一分母（软阈值与硬 pre-flight 同源）。
  */
-contextLength: number, reasoningEffort: string, autoCompactThreshold: number, permissionLevel: number,
+contextLength: number, reasoningEffort: string, autoCompactThreshold: number, permissionLevel: number, 
 /**
  * 密钥永不出 daemon：空串 = 未配置、`"****"` = 已配置（掩码）。
  */
-apiKey: string, lang: string | null, fontFamily: string,
+apiKey: string, lang: string | null, fontFamily: string, 
 /**
  * None/空 = 跟随系统。
  */
-theme: string | null,
+theme: string | null, 
 /**
  * 语义缺省（开）由**产出侧**决定：`qaqh-config/src/dto.rs::to_dto` 里
  * `unwrap_or(true)`。读侧不再兜底——见 `dto_rejects_a_partial_payload`。
  */
-notificationsEnabled: boolean, activeProfile: string,
+notificationsEnabled: boolean, activeProfile: string, 
 /**
  * profile 名列表（管理 UI 用；不含敏感字段）。
  */
-profiles: Array<string>,
+profiles: Array<string>, 
 /**
  * profile 详细元数据（管理与切换 UI 用；不含敏感密钥）。
  */
-profilesDetail: { [key in string]: ProfileSummaryDto }, complianceEnabled: boolean, subagent: SubagentDto,
+profilesDetail: { [key in string]: ProfileSummaryDto }, complianceEnabled: boolean, subagent: SubagentDto, 
 /**
  * MCP 客户端配置（Phase 1 只读；写模型随 workspace 隔离权限重构另立）。
  */
-mcp: McpDto,
+mcp: McpDto, 
 /**
  * LSP 客户端配置（M1 只读；写模型另立）。
  */
-lsp: LspDto,
+lsp: LspDto, 
 /**
  * Path to a HuggingFace tokenizer.json。
  * 空 = 启发式估算兜底（agent 状态层的 `<heuristic>`）；变更需**重启 daemon**
  * （tokenizer 是 qaqh-types 的进程级 `OnceLock`，仅在 load 时初始化一次）。
  */
-tokenizerPath: string | null,
+tokenizerPath: string | null, 
 /**
  * exec 工具默认执行配置（热字段；`exec.default_shell` 被 exec 真正消费）。
  */
-exec: ExecDto,
+exec: ExecDto, 
 /**
  * 沙箱执行配置（读模型）。
  */
-sandbox: SandboxDto,
+sandbox: SandboxDto, 
 /**
  * 空闲会话 worker 自动卸载阈值（秒）。0 = 禁用（缺省）；由 daemon 周期任务读取。
  */
-sessionIdleUnloadSecs: number,
+sessionIdleUnloadSecs: number, 
 /**
  * Global ceiling on model-visible and executable tools.
  */
-toolAllowlistEnabled: boolean,
+toolAllowlistEnabled: boolean, 
 /**
  * Exact registered names; when enabled, an empty list disables all tools.
  */

@@ -3,11 +3,11 @@
 /**
  * `skills.catalog` 的单个技能条目。
  */
-export type SkillCatalogEntry = { name: string, description: string,
+export type SkillCatalogEntry = { name: string, description: string, 
 /**
  * `project` | `user`
  */
-scope: string,
+scope: string, 
 /**
  * `project` | `user` | `bundled`
  */

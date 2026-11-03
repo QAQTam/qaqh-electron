@@ -16,32 +16,36 @@ import type { UsageInfo } from "./UsageInfo";
  * **加法式**：`session.list` 回包仍是同一个 JSON 对象（[`SessionMeta`] 的键经
  * `flatten` 平铺，外加 `status` / `workspace_id`），wire 未变。
  */
-export type SessionListEntry = {
+export type SessionListEntry = { 
 /**
  * 统一运行状态（[`SessionRunStatus`]）——daemon 投影/registry 的**实时**
  * 查询结果，不落盘，故不属于 [`SessionMeta`]。取代旧 `running: bool`
  * （worker 进程存在性语义已于 2026-10-06 废除）。
  */
-status: SessionRunStatus,
+status: SessionRunStatus, 
 /**
  * 所属 workspace id；`null` = 未分组。
  * 只有 `session.list` 带此键，`session.meta`（单条）不带。
  */
-workspace_id: string | null, session_id: string, created_at: number, updated_at: number, model: string, effort?: string | null,
+workspace_id: string | null, session_id: string, created_at: number, updated_at: number, model: string, effort?: string | null, 
 /**
  * 会话选定的 BYOK profile（`config.toml` 的 `[profiles.<name>]`）。
  * `None`/空 = 跟随全局 `active_profile`。它决定本会话的
  * endpoint/model/wire，以及（若该 profile 自带密钥）用哪把 key。
  */
-profile?: string | null, model_selection?: ModelSelection | null, requested_model_selection?: ModelSelection | null,
+profile?: string | null, model_selection?: ModelSelection | null, requested_model_selection?: ModelSelection | null, 
 /**
  * Number of conversation turns (one user query + its assistant/tool chain).
  */
-turn_count: number,
+turn_count: number, 
+/**
+ * Monotonic revision for session settings writes.
+ */
+settings_revision: number, 
 /**
  * Number of earliest turns compacted (skipped in LLM context).
  */
-compact_skip: number,
+compact_skip: number, 
 /**
  * Highest archived `msg_id` covered by the latest compaction summary.
  *
@@ -51,32 +55,32 @@ compact_skip: number,
  * `msg_id > compact_covered_through_msg_id`. `None` means no compaction
  * marker has been applied.
  */
-compact_covered_through_msg_id?: number | null,
+compact_covered_through_msg_id?: number | null, 
 /**
  * Agent operating mode: 0=Code(默认), 1=Plan, 2=Code(旧编码兼容).
  * Persisted so PLAN/CODE mode survives agent restart within the same session.
  */
-mode: number,
+mode: number, 
 /**
  * 工具模式：standard | minimal | custom（PLAN-TOOL-MODES.md）。
  * 空串 = standard（旧 session 零迁移兼容）；custom 时 `custom_tools` 生效。
  */
-tool_mode?: string,
+tool_mode?: string, 
 /**
  * 创造模式的自定义工具白名单（仅 tool_mode == "custom" 时生效）。
  */
-custom_tools?: Array<string>,
+custom_tools?: Array<string>, 
 /**
  * 归档标记：标签 × 归档后置 true（会话停止、不出现在标签条，左侧
  * 列表归档组可见可恢复）。旧 meta.json 缺失该字段 = 未归档。
  */
-archived: boolean,
+archived: boolean, 
 /**
  * 临时会话标记（子代理）：`index=false` 写入时置 true。会话关闭时
  * 整个目录被删除（用完即走，磁盘零残留）；正规会话恒为 false。
  * 旧 meta.json 缺失该字段 = 非临时会话。
  */
-ephemeral: boolean, skills: SkillSessionStateV2,
+ephemeral: boolean, skills: SkillSessionStateV2, 
 /**
  * Frozen [Environment] annotation for the first user message (P0 cache
  * fix). Generated once on the FIRST build_context() and reused for the
@@ -87,28 +91,28 @@ ephemeral: boolean, skills: SkillSessionStateV2,
  * 旧 meta.json 缺失该字段 = None = 恢复后首次 build_context 重新生成
  * （即修复前的行为，零迁移兼容）。
  */
-frozen_annotation?: string | null,
+frozen_annotation?: string | null, 
 /**
  * Provider-confirmed usage accumulated across model requests in this session.
  *
  * The single aggregation point for usage: nothing else persists these numbers,
  * and every consumer derives from here instead of counting separately.
  */
-usage_totals: UsageInfo,
+usage_totals: UsageInfo, 
 /**
  * Number of model requests included in `usage_totals`.
  */
-usage_requests: number,
+usage_requests: number, 
 /**
  * Number of requests whose provider explicitly returned cache usage.
  */
-cache_reported_requests: number,
+cache_reported_requests: number, 
 /**
  * 会话标题（首个用户请求启动时开始生成并冻结；persisted）。
  * 先写首条用户消息的截断回退标题，再由并行的异步 LLM 总结覆盖；每次写入
  * 都经 v2 Meta SSE 即时通知前端。
  */
-title: string | null,
+title: string | null, 
 /**
  * 会话创建时的工作目录（canonical path，persisted）。Workspace 归属判定
  * 基础：新会话 cwd 位于某 workspace path 内自动 attach；旧 meta.json 缺省

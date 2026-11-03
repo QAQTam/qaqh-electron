@@ -3,15 +3,15 @@
 /**
  * Verification may clear invalid local credentials, hence this is a write call.
  */
-export type DsAccountVerifyResult = {
+export type DsAccountVerifyResult = { 
 /**
  * Whether the credential was accepted.
  */
-valid: boolean,
+valid: boolean, 
 /**
  * Failure reason, or null.
  */
-reason: string | null,
+reason: string | null, 
 /**
  * Whether invalid local credentials were actually cleared.
  */

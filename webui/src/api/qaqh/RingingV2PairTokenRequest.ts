@@ -3,7 +3,7 @@
 /**
  * `POST /ringing/v2/pairing/tokens` 请求（Admin）。
  */
-export type RingingV2PairTokenRequest = {
+export type RingingV2PairTokenRequest = { 
 /**
  * 桌面端决定的授予档位：`"view"` | `"interact"`。
  */

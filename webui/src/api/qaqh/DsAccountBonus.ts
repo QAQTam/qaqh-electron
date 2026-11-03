@@ -3,31 +3,31 @@
 /**
  * A not-yet-acknowledged bonus.
  */
-export type DsAccountBonus = {
+export type DsAccountBonus = { 
 /**
  * ID used for acknowledgement.
  */
-orderId: string,
+orderId: string, 
 /**
  * Campaign identifier.
  */
-campaign: string,
+campaign: string, 
 /**
  * Provider decimal string.
  */
-amount: string,
+amount: string, 
 /**
  * Currency code.
  */
-currency: string,
+currency: string, 
 /**
  * Grant time as supplied by the platform.
  */
-grantedAt: string,
+grantedAt: string, 
 /**
  * Expiry time as supplied by the platform.
  */
-expiresAt: string,
+expiresAt: string, 
 /**
  * Localized provider message.
  */

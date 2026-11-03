@@ -3,7 +3,7 @@
 /**
  * 沙箱执行配置（读模型）。
  */
-export type SandboxDto = {
+export type SandboxDto = { 
 /**
  * 沙箱是否启用（默认 true）。关闭后命令在无隔离环境下执行。
  */

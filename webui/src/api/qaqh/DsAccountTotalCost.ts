@@ -3,11 +3,11 @@
 /**
  * Cumulative expenditure in one currency.
  */
-export type DsAccountTotalCost = {
+export type DsAccountTotalCost = { 
 /**
  * Currency code.
  */
-currency: string,
+currency: string, 
 /**
  * Provider decimal string.
  */

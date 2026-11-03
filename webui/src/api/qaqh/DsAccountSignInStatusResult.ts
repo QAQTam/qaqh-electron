@@ -4,23 +4,23 @@ import type { DsAccountFlowState } from "./DsAccountFlowState";
 /**
  * Polling response: snake_case is intentional.
  */
-export type DsAccountSignInStatusResult = {
+export type DsAccountSignInStatusResult = { 
 /**
  * Attempt ID, or null before the first attempt.
  */
-attempt_id: string | null,
+attempt_id: string | null, 
 /**
  * Attempt state.
  */
-state: DsAccountFlowState,
+state: DsAccountFlowState, 
 /**
  * Browser URL, or null.
  */
-authorize_url: string | null,
+authorize_url: string | null, 
 /**
  * Expiry timestamp, zero in idle state.
  */
-expires_at_ms: number,
+expires_at_ms: number, 
 /**
  * Displayable failure, or null.
  */

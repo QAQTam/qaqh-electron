@@ -4,23 +4,23 @@ import type { DsAccountFlowState } from "./DsAccountFlowState";
 /**
  * Flow embedded in the aggregate status: camelCase is intentional.
  */
-export type DsAccountStatusFlow = {
+export type DsAccountStatusFlow = { 
 /**
  * Attempt ID, or null.
  */
-attemptId: string | null,
+attemptId: string | null, 
 /**
  * Attempt state.
  */
-state: DsAccountFlowState,
+state: DsAccountFlowState, 
 /**
  * Browser URL, or null.
  */
-authorizeUrl: string | null,
+authorizeUrl: string | null, 
 /**
  * Expiry timestamp.
  */
-expiresAtMs: number,
+expiresAtMs: number, 
 /**
  * Failure, or null.
  */

@@ -4,15 +4,15 @@ import type { DsAccountRevokeState } from "./DsAccountRevokeState";
 /**
  * Last remote revocation outcome.
  */
-export type DsAccountRevoke = {
+export type DsAccountRevoke = { 
 /**
  * Revocation state.
  */
-state: DsAccountRevokeState,
+state: DsAccountRevokeState, 
 /**
  * Requests issued so far.
  */
-attempts: number,
+attempts: number, 
 /**
  * Last failure, or null.
  */
