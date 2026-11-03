@@ -8,7 +8,6 @@
  */
 import type { ToolStep, Turn } from "../session/types";
 import { parseUnifiedDiff, type ParsedFile } from "./parse";
-import { toolPaths, toolPresentation } from "../tools/presentation";
 
 export type DeliverableFileStatus = "added" | "deleted" | "modified" | "renamed" | "unknown";
 
@@ -63,104 +62,62 @@ export function normalizeDisplayPath(path: string, cwd?: string | null): string 
 
 /**
  * 从单个回合中提取轻量交付物指纹。
- * 若本回合未发生任何成功的文件修改，返回 null（不渲染交付卡片）。
+ * 只有原始工具输出包含可解析的 unified diff 路径时才生成文件卡片。
+ * code_delta 的行数统计由工具行直接展示；没有路径时不猜测文件名或文件数。
  */
 export function extractTurnDeliverables(turn: Turn, cwd?: string | null): TurnDeliverables | null {
   const toolSteps = turn.steps.filter(
-    (s): s is ToolStep => s.kind === "tool" && s.status === "success"
+    (s): s is ToolStep => s.kind === "tool" && s.status === "finished"
   );
   if (toolSteps.length === 0) return null;
 
   const fileMap = new Map<string, DeliverableFileSummary>();
+  let totalAdditions = 0;
+  let totalDeletions = 0;
 
   for (const step of toolSteps) {
-    const kind = toolPresentation(step);
-    // 只关注文件修改类工具 (edit / write / patch / delete 等)
-    const isMutationOp =
-      kind === "edit" ||
-      ["edit", "edit_file", "write", "write_file", "apply_patch", "delete", "delete_file"].includes(
-        step.name
-      );
-
-    if (!isMutationOp && !step.output?.diffText) {
-      continue;
-    }
-
     const diffText = step.output?.diffText;
+    let parsedFiles: ParsedFile[] = [];
     if (diffText) {
-      let parsedFiles: ParsedFile[] = [];
       try {
         parsedFiles = parseUnifiedDiff(diffText);
       } catch {
         parsedFiles = [];
       }
-
-      if (parsedFiles.length > 0) {
-        for (const pf of parsedFiles) {
-          const normPath = normalizeDisplayPath(pf.path, cwd);
-          const existing = fileMap.get(normPath);
-          const { directory, filename } = splitPath(normPath);
-
-          if (existing) {
-            existing.additions += pf.stats.add;
-            existing.deletions += pf.stats.del;
-            if (pf.binary) existing.binary = true;
-            if (pf.status === "deleted") existing.status = "deleted";
-            else if (existing.status !== "added" && pf.status === "added") existing.status = "added";
-            if (!existing.stepIds.includes(step.id)) {
-              existing.stepIds.push(step.id);
-            }
-          } else {
-            fileMap.set(normPath, {
-              path: normPath,
-              filename,
-              directory,
-              status: pf.status,
-              additions: pf.stats.add,
-              deletions: pf.stats.del,
-              binary: pf.binary,
-              stepIds: [step.id],
-            });
-          }
-        }
-        continue;
-      }
     }
 
-    // 回退路径：有些写工具没有产生 diffText，但有 path 和变更统计
-    if (isMutationOp) {
-      const paths = toolPaths(step, cwd);
-      const targetPath = paths[0];
-      if (targetPath) {
-        const normPath = normalizeDisplayPath(targetPath, cwd);
-        const { directory, filename } = splitPath(normPath);
-        const add = step.display?.lines_added ?? (step.name.includes("delete") ? 0 : 1);
-        const del = step.display?.lines_removed ?? (step.name.includes("delete") ? 1 : 0);
-        const status: DeliverableFileStatus = step.name.includes("delete")
-          ? "deleted"
-          : step.name.includes("write")
-            ? "added"
-            : "modified";
+    // code_delta 是行数的权威口径；只有缺少结构化统计时才回退到原始 diff 的行数。
+    if (step.codeDelta != null) {
+      totalAdditions += step.codeDelta.lines_added;
+      totalDeletions += step.codeDelta.lines_removed;
+    } else {
+      totalAdditions += parsedFiles.reduce((sum, file) => sum + file.stats.add, 0);
+      totalDeletions += parsedFiles.reduce((sum, file) => sum + file.stats.del, 0);
+    }
 
-        const existing = fileMap.get(normPath);
-        if (existing) {
-          existing.additions += add;
-          existing.deletions += del;
-          if (!existing.stepIds.includes(step.id)) {
-            existing.stepIds.push(step.id);
-          }
-        } else {
-          fileMap.set(normPath, {
-            path: normPath,
-            filename,
-            directory,
-            status,
-            additions: add,
-            deletions: del,
-            binary: false,
-            stepIds: [step.id],
-          });
-        }
+    for (const pf of parsedFiles) {
+      const normPath = normalizeDisplayPath(pf.path, cwd);
+      const existing = fileMap.get(normPath);
+      const { directory, filename } = splitPath(normPath);
+
+      if (existing) {
+        existing.additions += pf.stats.add;
+        existing.deletions += pf.stats.del;
+        if (pf.binary) existing.binary = true;
+        if (pf.status === "deleted") existing.status = "deleted";
+        else if (existing.status !== "added" && pf.status === "added") existing.status = "added";
+        if (!existing.stepIds.includes(step.id)) existing.stepIds.push(step.id);
+      } else {
+        fileMap.set(normPath, {
+          path: normPath,
+          filename,
+          directory,
+          status: pf.status,
+          additions: pf.stats.add,
+          deletions: pf.stats.del,
+          binary: pf.binary,
+          stepIds: [step.id],
+        });
       }
     }
   }
@@ -168,12 +125,6 @@ export function extractTurnDeliverables(turn: Turn, cwd?: string | null): TurnDe
   if (fileMap.size === 0) return null;
 
   const files = Array.from(fileMap.values());
-  let totalAdditions = 0;
-  let totalDeletions = 0;
-  for (const f of files) {
-    totalAdditions += f.additions;
-    totalDeletions += f.deletions;
-  }
 
   return {
     turnId: turn.id,
@@ -194,7 +145,7 @@ export function getTurnFileDiff(turn: Turn, targetPath: string, cwd?: string | n
   const diffSnippets: string[] = [];
 
   for (const step of turn.steps) {
-    if (step.kind !== "tool" || step.status !== "success" || !step.output?.diffText) {
+    if (step.kind !== "tool" || step.status !== "finished" || !step.output?.diffText) {
       continue;
     }
     const diffText = step.output.diffText;

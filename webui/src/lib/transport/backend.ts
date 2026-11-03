@@ -6,22 +6,40 @@
  * store/组件只面向本接口;连接管理由宿主事件驱动(见 `StreamHandlers`)。
  */
 
-import type { RingingV2CommandAck } from "../../api/qaqh/RingingV2CommandAck";
-import type { ContentRef } from "../../api/qaqh/ContentRef";
-import type { UnifiedCommand } from "../../api/qaqh/UnifiedCommand";
-import type { UnifiedTarget } from "../../api/qaqh/UnifiedTarget";
+import type {
+  CommandPrecondition,
+  CommandTarget,
+  ConfigDto,
+  ConversationSendMessage,
+  RingingCommand,
+  RingingV2CommandAck,
+  ServiceMap as SdkServiceMap,
+  SessionBootstrap,
+  SessionEventFrame,
+} from "@qaqh/sdk/protocol";
 import { isDesktopRuntime } from "../desktop-host";
 
 export { isDesktopRuntime };
-export type { UnifiedCommand, UnifiedTarget };
+export type { CommandPrecondition, CommandTarget, RingingCommand };
 
-/**
- * 渲染层可发的 daemon 命令面：
- * - `UnifiedCommand`：统一目录操作（§8.1 信封，宿主走统一端点）；
- * - 宽形状 `{type, ...}`：service 查询/配置面方法与频道命令，
- *   由宿主按命令名路由（conversation.* → conversation 频道，其余 → service 面）。
- */
-export type DaemonCommand = UnifiedCommand | ({ type: string } & Record<string, unknown>);
+/** Renderer-facing command surface excludes fields reserved for trusted runtime calls. */
+export type RendererRingingCommand = Exclude<RingingCommand, { type: "conversation.send_message" }>
+  | ({ type: "conversation.send_message" } & Omit<ConversationSendMessage, "as_system" | "inter_agent" | "subagent_terminal">);
+
+/** Public service methods not yet present in the current generated ServiceMap. */
+export type ElectronServiceMap = SdkServiceMap & {
+  "config.load": { params: Record<never, never>; result: ConfigDto };
+  "profile.list": { params: Record<never, never>; result: unknown };
+  "skills.list_tools": { params: Record<never, never>; result: unknown };
+  "todo.status": { params: { session_id: string }; result: unknown };
+  "todo.list": { params: { session_id: string; [key: string]: unknown }; result: Record<string, unknown> };
+  "plan.read": { params: { session_id: string }; result: unknown };
+  "diagnostics.memory.snapshot": { params: { after_sequence?: number }; result: unknown };
+};
+
+export type ServiceMethod = keyof ElectronServiceMap;
+export type ServiceParams<K extends ServiceMethod> = ElectronServiceMap[K]["params"];
+export type ServiceResult<K extends ServiceMethod> = ElectronServiceMap[K]["result"];
 
 export const RINGING_SCHEMA = "qaqh.Ringing";
 /** Ringing v2 单一信封版本:历史 v1 兼容已拆除。 */
@@ -32,9 +50,9 @@ export const RINGING_VERSION = 2;
  */
 export type Ack = RingingV2CommandAck;
 
-export const globalTarget = (): UnifiedTarget => ({ kind: "global" });
-export const sessionTarget = (sessionId: string): UnifiedTarget => ({ kind: "session", session_id: sessionId });
-export const workspaceTarget = (workspaceId: string): UnifiedTarget => ({ kind: "workspace", workspace_id: workspaceId });
+export const globalTarget = (): CommandTarget => ({ kind: "global" });
+export const sessionTarget = (sessionId: string): CommandTarget => ({ kind: "session", session_id: sessionId });
+export const workspaceTarget = (workspaceId: string): CommandTarget => ({ kind: "workspace", workspace_id: workspaceId });
 
 export type ApprovalKind = "tool_permission" | "ask" | "plan";
 
@@ -77,7 +95,7 @@ export type TodoItemWire = {
  * 文件名/字节数由宿主在读盘时顺手带回(daemon 的 `POST /ringing/v2/content`
  * 只回 content_id/media_type/sha256/truncated,没有名字)。
  */
-export type AttachmentUploadWire = ContentRef & { name: string; size: number };
+export type AttachmentUploadWire = { content_ref: string; media_type: string; name: string; size: number; truncated: boolean };
 
 /**
  * `capture_screenshot` 的返回体(宿主侧的临时文件信息)。
@@ -99,8 +117,8 @@ export type ShotMode = "selection" | "fullscreen";
 /** 宿主事件的订阅面(事件 payload 与现行 SSE 帧同形)。 */
 export interface StreamHandlers {
   onProjectionStatus?(status: ProjectionStatusWire): void;
-  onProjectionBootstrap?(seed: string, bootstrap: Record<string, any>): void;
-  onProjectionEvent(seed: string, envelope: Record<string, any>): void;
+  onProjectionBootstrap?(seed: string, bootstrap: SessionBootstrap): void;
+  onProjectionEvent(seed: string, event: SessionEventFrame): void;
   onProjectionReset(seed: string, reset: Record<string, any>): void;
   onIncompatible(details: Record<string, any>): void;
   onHostError(message: string): void;
@@ -122,13 +140,13 @@ export interface TransportBackend {
   respondApproval(sessionId: string, challengeId: string, decision: string, payload?: Record<string, unknown>): Promise<null>;
 
   /** Submit one daemon command (catalog op / channel command / service call) and return its acknowledgement. */
-  command(command: DaemonCommand, target?: UnifiedTarget): Promise<Ack>;
+  command(command: RendererRingingCommand, target?: CommandTarget, preconditions?: CommandPrecondition[]): Promise<Ack>;
 
-  /** Submit a command whose result is the value itself (queries and synchronous writes). */
-  query<T = unknown>(command: DaemonCommand, target?: UnifiedTarget): Promise<T>;
+  /** Read a service method; required session identifiers belong in params. */
+  query<K extends ServiceMethod>(method: K, params?: ServiceParams<K>): Promise<ServiceResult<K>>;
 
   /** per-session bootstrap RPC(获取权威快照)。 */
-  sessionBootstrap(seed: string): Promise<unknown>;
+  sessionBootstrap(seed: string): Promise<SessionBootstrap>;
 
   /** 由宿主经 SDK 读取引用正文，认证信息留在主进程。 */
   readContentText(contentRef: string, signal?: AbortSignal): Promise<string>;
@@ -149,56 +167,17 @@ export interface TransportBackend {
 
   /**
    * 上传单个本地附件。字节读取与上传都在宿主侧完成(命令里不允许出现本地路径),
-   * 返回的引用直接进 `conversation.send` 的 `attachments`。
+   * 返回的引用直接进 `conversation.send_message` 的 `attachments`。
    */
   uploadAttachment(seed: string, path: string): Promise<AttachmentUploadWire>;
-
-  /**
-   * 用户级 skills 扫描结果(`~/.qaqh/skills`、`~/.agents/skills`)。
-   *
-   * 这两个根**不在** daemon `fs.*` 的 allowed_roots 里(数据根 + UI 注册工作区 +
-   * 会话 cwd,`qaqh-backend/crates/qaqh-runtime/src/service/fs_git.rs:28-51`),
-   * 渲染层读不到;daemon 自己的 catalog 又只经 Ringing 控制事件出去(投影里没有
-   * 对应 fact),所以由宿主按同一份规则读出来。
-   */
-  userSkills(): Promise<UserSkillsWire>;
 }
-
-/** 用户级发现根(展示用)。 */
-export type UserSkillRoot = {
-  /** 绝对路径。 */
-  path: string;
-  /** `~/.agents/skills` 形态的展示标签。 */
-  label: string;
-  /** 目录存在且可读。 */
-  exists: boolean;
-};
-
-/** 一条用户级 skill 的原始文件;frontmatter 由 `skills/parse.ts` 解析。 */
-export type UserSkillFile = {
-  /** 发现它的根(绝对路径)。 */
-  root: string;
-  /** `SKILL.md` 绝对路径。 */
-  path: string;
-  /** 正文(CRLF 已归一)。 */
-  content: string;
-  bytes: number;
-};
-
-export type UserSkillDiagnostic = { path: string; message: string };
-
-export type UserSkillsWire = {
-  roots: UserSkillRoot[];
-  skills: UserSkillFile[];
-  diagnostics: UserSkillDiagnostic[];
-};
 
 /** Electron 桌面壳专属面。 */
 export interface DesktopHostSurface {
   /** 订阅宿主转发事件;返回反订阅函数。 */
   subscribe(handlers: StreamHandlers): Promise<() => void>;
   /** per-session bootstrap RPC(刷新 activity)。 */
-  sessionBootstrap(seed: string): Promise<unknown>;
+  sessionBootstrap(seed: string): Promise<SessionBootstrap>;
   /** 宿主侧重连(用户点「重试」/窗口聚焦)。 */
   streamsRetry(seed?: string): Promise<void>;
   /** D1 不兼容路径:停止旧 daemon(不静默杀;Busy 时返回 "busy")。 */

@@ -1,31 +1,25 @@
 /**
  * 一个标签页 = 一个会话的客户端状态机 (SPEC-2026-10-29-PURGE)。
  *
- * 彻底肃清 Timeline，全面倒戈纯血 Ringing v2 单流：
- * - 快照来自 ClientV2Bootstrap.conversation.state
- * - 实时增量来自 single stream 的 ConversationDelta
+ * 当前会话事实直接来自 Ringing v3 bootstrap 与 flattened SessionEventFrame：
+ * - 全量装载由 applySessionBootstrap 负责
+ * - 实时增量由 applySessionEvent 负责
  * - 连接状态来自 projection://status
  */
 import { createSignal, createStore } from "solid-js";
 import { transport, desktopHostSurface, sessionTarget, type ApprovalView, type StreamHandlers, type ProjectionStatusWire, type TodoItemWire } from "../lib/transport";
 import { now } from "../lib/time";
 import { onConfigChanged } from "../lib/config-events";
-import { applyConversationDelta, applyConversationSnapshot, contentRefsInPayload, emptySession, forceSealTurn, pendingContentRefs, resolveContentRef } from "./reducer";
+import { applySessionBootstrap, applySessionEvent, contentRefsInPayload, emptySession, forceSealTurn, pendingContentRefs, resolveContentRef } from "./reducer";
 import { ContentLoader } from "./content-loader";
 import { evictForWindow, fillGapHeights } from "./pagination";
 import type { SessionState, Wait } from "./types";
-import { normalizeActivity, projectionActions, readProjection, type SessionActivity } from "./projection";
-import { compactedAnchor, reduceCompact, type CompactState } from "./compact";
-import type { ConfigDto } from "../api/qaqh/ConfigDto";
-import type { ContentRef } from "../api/qaqh/ContentRef";
-import type { UsageInfo } from "../api/qaqh/UsageInfo";
-import type { ConversationDelta } from "../api/qaqh/ConversationDelta";
-import type { ToolsSettingPatch } from "../api/qaqh/ToolsSettingPatch";
+import { normalizeActivity, type SessionActivity } from "./projection";
+import type { ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch } from "@qaqh/sdk/protocol";
 import type { ProfileSummaryDto } from "../api/qaqh/ProfileSummaryDto";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 
 function pendingContentRefsFromSnapshot(snapshot: unknown): Set<string> { return contentRefsInPayload(snapshot); }
-function contentRefsInDelta(delta: unknown): Set<string> { return contentRefsInPayload(delta); }
 
 export type ConnectionKind = "connected" | "reconnecting" | "offline";
 
@@ -46,13 +40,6 @@ export type ReconnectState = {
 };
 
 /**
- * 压缩的展示态机在 `./compact`(纯函数,带线上样本单测);这里只负责把它接到
- * 投影事件上。命令 ack 只做乐观 running,`compaction_applied` 事实与
- * `compact_finished` 事件都能独立收口——两种来源都能收敛。
- */
-export type { CompactState } from "./compact";
-
-/**
  * 待发附件。`id` 是宿主回传的绝对路径——只作本地键,**从不进任何命令**;
  * 发送时带出去的是上传换回来的 `reference`。
  */
@@ -62,7 +49,7 @@ export interface PendingAttachment {
   size: number;
   mediaType: string;
   state: "uploading" | "ready" | "failed";
-  reference: ContentRef | null;
+  reference: SessionContentRef | null;
   error: string | null;
 }
 
@@ -126,17 +113,8 @@ export interface SessionProfileView {
   details?: Record<string, ProfileSummaryDto>;
 }
 
-/** `session.meta` 条目(`SessionListEntry`,`meta` 字段在 wire 上是平铺的)。 */
-type SessionMetaWire = {
-  profile_id?: string | null;
-  model?: string | null;
-  model_override?: string | null;
-  max_tokens_override?: number | null;
-  context_length_override?: number | null;
-  effort?: string | null;
-  tool_mode?: string | null;
-  custom_tools?: string[] | null;
-};
+/** Flattened `session.meta` fields used by the composer settings view. */
+type SessionMetaWire = Pick<SessionListEntry, "profile" | "model_selection" | "effort" | "settings_revision" | "tool_mode" | "custom_tools" | "model">;
 
 /** 会话工具模式视图:composer 选择器的读面。`mode` 空串按 standard 语义归一。 */
 export interface SessionToolModeView {
@@ -171,22 +149,6 @@ function cacheHitPercent(usage: UsageInfo): number | null {
   return total > 0 ? (usage.prompt_cache_hit_tokens / total) * 100 : null;
 }
 
-/** 压缩终态卡(done/skipped)自动退场的延时;failed 不退,留待用户处理。 */
-const COMPACT_CARD_TTL_MS = 8_000;
-
-/**
- * 压缩命令**没送达**时的本地原因。
- *
- * 命令被 reject / IPC 抛错意味着 daemon 侧不会发 `CompactFinished`,线上 reason
- * 永远不会到;不在这里合成一句话,卡片就只剩「压缩失败」四个字,用户无从判断
- * 是"没连上"还是"压缩本身出错"。
- */
-function compactDeliveryFailure(error: unknown): string {
-  const detail = (error instanceof Error ? error.message : String(error ?? "")).trim();
-  return detail === ""
-    ? "压缩请求未能送达 daemon，请检查连接后重试。"
-    : `压缩请求未能送达 daemon（${detail}），请检查连接后重试。`;
-}
 /**
  * 取消看门狗:`conversation.cancel` 发出后,超过此时长仍未见 `turn_finished` /
  * `turn_interrupted`,就本地强制收口(BUG-2026-10-15:后端工具卡死时 turn 状态机
@@ -233,14 +195,6 @@ export class SessionStore {
   hasNewReply = createSignal(false);
   /** 乐观发送中状态：点击发送即刻置 true 消除时差空窗，首个事件到达或结束时置 false。 */
   isSending = createSignal(false);
-  /** 「此前已压缩」分隔锚点回合 key;null = 渲染在顶部。 */
-  compactedAfter = createSignal<string | null>(null);
-  /** 压缩进行态与流式摘要(见 `CompactState`);idle 时 HUD 只显示百分比。 */
-  compact = createSignal<CompactState>({ phase: "idle" });
-  /** 上一次 `compaction_applied` 的 checkpoint;同值重复投影不重锚分隔线。 */
-  private compactedCheckpoint: string | null = null;
-  /** 终态卡自动退场定时器;任何后续压缩状态都会先撤掉。 */
-  private compactTimer: number | null = null;
   /** 取消看门狗定时器;真实终态 delta / 新回合 / dispose 都会先撤掉。 */
   private cancelWatchdog: ReturnType<typeof setTimeout> | null = null;
   /** 宿主侧是否已为本 seed 尝试过建流。 */
@@ -299,10 +253,10 @@ export class SessionStore {
   private contextLength: number | null = null;
   /** `session.meta.profile_id`(会话级选择);null = 跟随全局默认 Profile。 */
   private metaProfile: string | null = null;
-  /** `session.meta.model_override`(会话级模型);null = 跟随 Profile。 */
+  private metaModelSelection: ModelSelection | null = null;
   private metaModel: string | null = null;
   private metaMaxTokens: number | null = null;
-  private metaContextLength: number | null = null;
+  private metaSettingsRevision: number | null = null;
   /** `session.meta.effort`(会话级选择);null = 跟随全局或 profile 默认。 */
   private metaEffort: string | null = null;
   /** `session.meta.tool_mode`;空串按 standard 归一(后端零迁移语义)。 */
@@ -407,11 +361,6 @@ export class SessionStore {
   private unloadForBackground(): void {
     this.releaseBuffers();
     this.clearCancelWatchdog();
-    if (this.compactTimer != null) clearTimeout(this.compactTimer);
-    this.compactTimer = null;
-    this.compact[1]({ phase: "idle" });
-    this.compactedCheckpoint = null;
-    this.compactedAfter[1](null);
     this.loadingOlder[1](false);
     this.waitFrom = null;
     this.activeTurnStartedAt = null;
@@ -510,15 +459,17 @@ export class SessionStore {
         if (seed !== this.seed || !this.active) return;
         this.installBootstrap(bootstrap);
       },
-      onProjectionEvent: (seed, envelope) => {
+      onProjectionEvent: (seed, event) => {
         if (seed !== this.seed || !this.active) return;
-        this.applyProjection(envelope.stream_key as Record<string, any> | undefined, envelope.payload as Record<string, any> | undefined);
+        this.applyProjection(event);
       },
       onProjectionReset: (seed) => {
         if (seed !== this.seed) return;
         this.approvalGeneration++;
         this.markApprovalsUnverified(false);
         this.providerRetry[1](null);
+        this.contentLoader.clear(false);
+        this.contentStatus[1]({});
         this.onSessionsChanged?.();
       },
       onIncompatible: () => {},
@@ -536,12 +487,12 @@ export class SessionStore {
     }
   }
 
-  /** 从 ClientV2Bootstrap 读取 authoritative conversation 快照。 */
+  /** Load the typed authoritative session bootstrap. */
   async loadBootstrap(): Promise<void> {
     if (this.disposed) return;
     const requestId = ++this.bootstrapRequestId;
     try {
-      const bootstrap = (await transport.sessionBootstrap(this.seed)) as any;
+      const bootstrap = await transport.sessionBootstrap(this.seed);
       if (this.disposed || requestId !== this.bootstrapRequestId) return;
       this.installBootstrap(bootstrap);
     } catch {
@@ -549,44 +500,38 @@ export class SessionStore {
     }
   }
 
-  private installBootstrap(bootstrap: any): void {
-    if (this.disposed || !this.active || !bootstrap?.conversation?.state) return;
-    const refs = pendingContentRefsFromSnapshot(bootstrap.conversation.state);
-    this.mutate((draft) => { applyConversationSnapshot(draft, bootstrap.conversation.state); });
+  private installBootstrap(bootstrap: SessionBootstrap): void {
+    if (this.disposed || !this.active || bootstrap.session_id !== this.seed || !bootstrap.state) return;
+    this.contentLoader.clear(false);
+    this.contentStatus[1]({});
+    const refs = pendingContentRefsFromSnapshot(bootstrap.state);
+    this.mutate((draft) => { applySessionBootstrap(draft, bootstrap); });
     this.contentLoader.retryFailed();
     this.hydrateContent(refs);
     this.loadError[1](false);
     this.hydrated[1](true);
-    if (bootstrap?.control?.state?.activity) this.activity[1](normalizeActivity(bootstrap.control.state.activity, "projection"));
+    const waiting = bootstrap.state.interactions.some((item) => item.resolution == null);
+    this.activity[1](waiting ? "waiting_user" : normalizeActivity(bootstrap.state.activity, "projection"));
+    if (typeof bootstrap.state.title === "string") this.applySessionMeta({ title: bootstrap.state.title });
   }
 
-  // ── 投影事件 (单流驱动) ─────────────────────────────────────────────────────
+  // ── Flattened SessionEventFrame reducer ────────────────────────────────────
 
-  private applyProjection(streamKey: unknown, payload: unknown): void {
-    const delta = readProjection(streamKey, payload);
-    if (delta.channel === "control" && ["interaction_requested", "interaction_resolved", "interaction_expired"].includes(delta.kind)) {
-      this.approvalGeneration++;
-      this.markApprovalsUnverified(true);
-      void this.refreshApprovals();
-    }
-    if (!delta.channel || !delta.kind) return;
-    if (delta.channel === "conversation") {
-      const outer = (payload != null && typeof payload === "object") ? (payload as Record<string, any>) : {};
-      const convDelta = (outer.data != null && typeof outer.data === "object") ? (outer.data as ConversationDelta) : null;
-      if (convDelta && typeof convDelta === "object" && convDelta.kind) {
-        const refs = contentRefsInDelta(convDelta);
-        this.mutate((draft) => {
-          applyConversationDelta(draft, convDelta);
-        });
-        // 流式帧不带正文引用，扫一遍待补载清单纯属浪费。
-        const streaming =
-          convDelta.kind === "assistant_block_progress" || convDelta.kind === "tool_input_progress";
-        if (!streaming) this.hydrateContent(refs);
+  private applyProjection(event: SessionEventFrame): void {
+    const refs = contentRefsInPayload(event);
+    this.mutate((draft) => {
+      applySessionEvent(draft, event);
+      draft.watermark = event.seq;
+    });
+    if (refs.size > 0) this.hydrateContent(refs);
+
+    switch (event.type) {
+      case "activity_changed": {
+        const waiting = this.stateGet.interactionIds.length > 0;
+        this.activity[1](waiting ? "waiting_user" : normalizeActivity(event.activity, "projection"));
+        break;
       }
-
-      if (delta.kind === "input_accepted") {
-        if (this.isSending[0]()) this.isSending[1](false);
-      } else if (delta.kind === "turn_started") {
+      case "turn_started":
         this.clearCancelWatchdog();
         this.isSending[1](false);
         this.activeTurnStartedAt = now();
@@ -595,64 +540,49 @@ export class SessionStore {
         this.activeOutputEndedAt = null;
         this.activeOutputActiveMs = 0;
         this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
-      } else if (delta.kind === "assistant_block_sealed" || delta.kind === "turn_finished" || delta.kind === "turn_interrupted") {
-        const usage = delta.body.usage as UsageInfo | null | undefined;
-        if (usage != null) this.updateComposerUsage(usage);
-        if (delta.kind === "turn_finished" || delta.kind === "turn_interrupted") {
-          this.clearCancelWatchdog();
-          this.isSending[1](false);
-          this.activeTurnStartedAt = null;
-          this.activeModelBlockIds.clear();
-          this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
-          void this.refreshConfigView();
-          void this.refreshProfile();
-        }
+        break;
+      case "turn_ended": {
+        if (event.outcome.kind === "finished" && event.outcome.data.usage) this.updateComposerUsage(event.outcome.data.usage);
+        this.clearCancelWatchdog();
+        this.isSending[1](false);
+        this.activeTurnStartedAt = null;
+        this.activeModelBlockIds.clear();
+        this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
+        void this.refreshConfigView();
+        void this.refreshProfile();
+        void this.refreshTodos();
+        void this.refreshApprovals();
+        this.onSessionsChanged?.();
+        break;
       }
-    }
-    for (const action of projectionActions(delta)) {
-      switch (action) {
-        case "activity":
-          // `state` 在内层 data 里(双层 tag/content),读错层就是静默无信号。
-          this.activity[1](normalizeActivity(delta.body.state, "projection"));
-          break;
-        case "approvals":
-          if (!(delta.channel === "control" && ["interaction_requested", "interaction_resolved", "interaction_expired"].includes(delta.kind))) {
-            void this.refreshApprovals();
-          }
-          break;
-        case "todos":
-          void this.refreshTodos();
-          break;
-        case "compacted": {
-          // 同一 checkpoint 的重复投影(重连重放 durable 事实)不重锚,否则
-          // 分隔线会跳到最新回合下方,压缩后发生的内容全被顶到线上方。
-          const checkpoint = typeof delta.body.checkpoint_id === "string" ? delta.body.checkpoint_id : null;
-          if (checkpoint != null && checkpoint === this.compactedCheckpoint) break;
-          this.compactedCheckpoint = checkpoint;
-          this.compactedAfter[1](compactedAnchor(this.stateGet.slots, this.stateGet.turns));
-          this.setCompact(reduceCompact(this.compact[0](), "compacted", delta.body, now()));
-          break;
-        }
-        case "compact_started":
-        case "compact_progress":
-        case "compact_finished": {
-          this.setCompact(reduceCompact(this.compact[0](), action, delta.body, now()));
-          break;
-        }
-        case "sessions":
-          if (delta.kind === "title_changed" && typeof delta.body.title === "string") {
-            // v2 Meta SSE carries the value, so update the active tab and sidebar
-            // immediately without waiting for the periodic session.list poll.
-            this.applySessionMeta({ title: delta.body.title });
-            this.onSessionTitleChanged?.(delta.body.title);
-          } else {
-            this.onSessionsChanged?.();
-          }
-          break;
-        case "session_deleted":
-          this.onSessionDeleted?.();
-          break;
-      }
+      case "timeline_appended":
+        if (event.entry.kind === "assistant_block" && event.entry.data.usage) this.updateComposerUsage(event.entry.data.usage);
+        if (event.entry.kind === "input" && this.isSending[0]()) this.isSending[1](false);
+        break;
+      case "tool_finished":
+        void this.refreshApprovals();
+        void this.refreshTodos();
+        this.onSessionsChanged?.();
+        break;
+      case "interaction_requested":
+      case "interaction_resolved":
+        this.approvalGeneration++;
+        this.markApprovalsUnverified(true);
+        void this.refreshApprovals();
+        void this.refreshActivity();
+        this.onSessionsChanged?.();
+        break;
+      case "session_meta_changed":
+        this.applySessionMeta({ title: event.title ?? null });
+        if (event.title) this.onSessionTitleChanged?.(event.title);
+        this.onSessionsChanged?.();
+        break;
+      case "tool_arguments_delta":
+      case "tool_started":
+      case "tool_output_delta":
+      case "message_delta":
+      case "subagent_updated":
+        break;
     }
   }
 
@@ -706,7 +636,7 @@ export class SessionStore {
     if (this.disposed) return;
     const refreshId = ++this.contextRefreshId;
     try {
-      const config = await transport.query<ConfigDto>({ type: "config.load" });
+      const config = await transport.query("config.load", {});
       if (this.disposed || refreshId !== this.contextRefreshId) return;
       const length = config?.contextLength;
       if (length != null && Number.isFinite(length) && length > 0) this.contextLength = length;
@@ -737,7 +667,7 @@ export class SessionStore {
     const maxTokens =
       this.metaMaxTokens ?? effectiveDetail?.maxTokens ?? config?.maxTokens ?? null;
     const contextLength =
-      this.metaContextLength ?? effectiveDetail?.contextLength ?? config?.contextLength ?? null;
+      effectiveDetail?.contextLength ?? config?.contextLength ?? null;
     const providerKind = providerKindOfCredential(
       effectiveDetail?.credential ?? config?.credential,
     );
@@ -772,19 +702,13 @@ export class SessionStore {
     if (this.disposed) return;
     const refreshId = ++this.profileRefreshId;
     try {
-      const meta = await transport.query<SessionMetaWire>({ type: "session.meta" }, sessionTarget(this.seed));
+      const meta = await transport.query("session.meta", { session_id: this.seed }) as SessionMetaWire | null;
       if (this.disposed || refreshId !== this.profileRefreshId) return;
-      this.metaProfile = typeof meta?.profile_id === "string" && meta.profile_id !== "" ? meta.profile_id : null;
-      this.metaModel =
-        typeof meta?.model_override === "string" && meta.model_override !== "" ? meta.model_override : null;
-      this.metaMaxTokens =
-        typeof meta?.max_tokens_override === "number" && meta.max_tokens_override > 0
-          ? meta.max_tokens_override
-          : null;
-      this.metaContextLength =
-        typeof meta?.context_length_override === "number" && meta.context_length_override > 0
-          ? meta.context_length_override
-          : null;
+      this.metaProfile = typeof meta?.profile === "string" && meta.profile !== "" ? meta.profile : null;
+      this.metaModelSelection = meta?.model_selection ?? null;
+      this.metaModel = this.metaModelSelection?.model_id ?? null;
+      this.metaMaxTokens = this.metaModelSelection?.options.max_output_tokens ?? null;
+      this.metaSettingsRevision = typeof meta?.settings_revision === "number" ? meta.settings_revision : null;
       this.metaEffort = typeof meta?.effort === "string" && meta.effort !== "" ? meta.effort : null;
       // 同一次 RPC 顺带取工具模式:后端 meta 空串 = standard(零迁移),前端
       // 不认识的模式名原样显示(与 effort 的 offLadder 同一取舍),不冒充。
@@ -802,67 +726,55 @@ export class SessionStore {
 
   /** 会话级换 profile;`null` = 清除选择、回到跟随全局默认 Profile。 */
   async setSessionProfile(profileId: string | null): Promise<void> {
-    await transport.command(
-      {
-        type: "session.settings.patch",
-        patch: { profile_id: profileId == null ? { kind: "inherit" } : { kind: "use", value: profileId } },
-      },
-      sessionTarget(this.seed),
-    );
-    await this.refreshProfile();
+    await this.patchSessionSettings({ profile: profileId ?? "" });
   }
 
   /** 会话级换思考强度 effort;`null` = 清除选择、回到跟随 profile 默认。 */
   async setSessionEffort(effort: string | null): Promise<void> {
-    await transport.command(
-      {
-        type: "session.settings.patch",
-        patch: { effort: effort == null ? { kind: "inherit" } : { kind: "use", value: effort } },
-      },
-      sessionTarget(this.seed),
-    );
-    await this.refreshProfile();
+    await this.patchSessionSettings({ effort: effort ?? "" });
   }
 
-  /** 会话级模型覆写;`null` = 清除覆写、跟随所选 Profile。 */
+  /** Model selection is a full provider/model pair in the v3 settings patch. */
   async setSessionModel(model: string | null): Promise<void> {
-    await transport.command(
-      {
-        type: "session.settings.patch",
-        patch: { model: model == null ? { kind: "inherit" } : { kind: "use", value: model } },
-      },
-      sessionTarget(this.seed),
-    );
-    await this.refreshProfile();
+    if (model == null) return this.patchSessionSettings({ model_selection: { kind: "inherit" } });
+    const current = this.metaModelSelection;
+    if (!current) throw new Error("当前会话没有可继承的 provider 选择，请先选择 Profile 或 provider");
+    await this.patchSessionSettings({ model_selection: { kind: "use", value: { ...current, model_id: model } } });
   }
 
   /** 会话级单回合输出上限;`null` = 跟随 Profile。 */
   async setSessionMaxTokens(maxTokens: number | null): Promise<void> {
-    await transport.command(
-      {
-        type: "session.settings.patch",
-        patch: {
-          max_tokens: maxTokens == null ? { kind: "inherit" } : { kind: "use", value: maxTokens },
-        },
+    const current = this.metaModelSelection;
+    if (!current) throw new Error("当前会话没有可继承的 model_selection，请先选择 Profile 或 provider");
+    await this.patchSessionSettings({
+      model_selection: {
+        kind: "use",
+        value: { ...current, options: { ...current.options, max_output_tokens: maxTokens } },
       },
-      sessionTarget(this.seed),
-    );
-    await this.refreshProfile();
+    });
   }
 
-  /** 会话级上下文窗口;`null` = 跟随 Profile。 */
-  async setSessionContextLength(contextLength: number | null): Promise<void> {
-    await transport.command(
-      {
-        type: "session.settings.patch",
-        patch: {
-          context_length:
-            contextLength == null ? { kind: "inherit" } : { kind: "use", value: contextLength },
-        },
-      },
-      sessionTarget(this.seed),
-    );
-    await this.refreshProfile();
+  private async patchSessionSettings(patch: SessionSettingsPatch): Promise<void> {
+    if (this.metaSettingsRevision == null) await this.refreshProfile();
+    const revision = this.metaSettingsRevision;
+    if (revision == null) throw new Error("无法读取会话设置版本，请刷新会话后重试");
+    try {
+      const ack = await transport.command(
+        { type: "session.settings.patch", patch },
+        sessionTarget(this.seed),
+        [{ kind: "settings_revision", revision }],
+      );
+      this.metaSettingsRevision = typeof ack.revision === "number" ? ack.revision : null;
+      await this.refreshProfile();
+    } catch (error) {
+      if (String((error as { code?: unknown })?.code ?? "").includes("revision")
+        || String(error instanceof Error ? error.message : error).includes("409")) {
+        this.metaSettingsRevision = null;
+        await this.refreshProfile();
+        throw new Error("会话设置已被其他客户端修改，当前更改没有覆盖新值；请重新选择后再试", { cause: error });
+      }
+      throw error;
+    }
   }
 
   /**
@@ -877,13 +789,7 @@ export class SessionStore {
     this.metaCustomTools = customTools;
     this.composerToolMode[1]({ mode: this.metaToolMode, customTools: this.metaCustomTools });
     try {
-      await transport.command(
-        {
-          type: "session.settings.patch",
-          patch: { tools: toolsSettingPatch(this.metaToolMode, customTools) },
-        },
-        sessionTarget(this.seed),
-      );
+      await this.patchSessionSettings({ tools: toolsSettingPatch(this.metaToolMode, customTools) });
     } finally {
       // 成功:重读对账(daemon ack ≠ 已应用);失败:重读即回滚。
       await this.refreshProfile();
@@ -892,14 +798,10 @@ export class SessionStore {
 
   async refreshActivity(): Promise<void> {
     try {
-      const bootstrap = (await this.host().sessionBootstrap(this.seed)) as any;
+      const bootstrap = await this.host().sessionBootstrap(this.seed);
       if (this.disposed || !this.active) return;
-      const control = bootstrap?.control?.state ?? {};
-      // bootstrap 的 `control.activity` 是 canonical 投影枚举
-      // (`SessionActivityState`: idle|running|interrupted)，不是旧 domain 枚举
-      // (working/…)。按 "domain" 读会让 `running` 落到未知值 → null，
-      // 重启后运行中的会话反而失去「正在工作」态。
-      this.activity[1](normalizeActivity(control.activity, "projection"));
+      const waiting = bootstrap.state.interactions.some((item) => item.resolution == null);
+      this.activity[1](waiting ? "waiting_user" : normalizeActivity(bootstrap.state.activity, "projection"));
     } catch {
       // best-effort;activity 由投影事件持续修正。
     }
@@ -931,7 +833,7 @@ export class SessionStore {
     while (this.todoRefreshPending && !this.disposed && activation === this.activationGeneration) {
       this.todoRefreshPending = false;
       try {
-        const result = await transport.query<Record<string, unknown>>({ type: "todo.list" }, sessionTarget(this.seed));
+        const result = await transport.query("todo.list", { session_id: this.seed });
         if (this.disposed || activation !== this.activationGeneration || this.todoRefreshPending) continue;
         if (!Array.isArray(result?.items)) throw new Error("todo.list response is missing items");
         writeStable(this.todos, result.items as TodoItemWire[]);
@@ -1090,13 +992,11 @@ export class SessionStore {
 
   // ── 动作 ────────────────────────────────────────────────────────────────────
 
-  async sendMessageWithAttachments(text: string, attachments: ContentRef[] = []): Promise<void> {
-    // 发送即收掉滞留的压缩终态卡(failed 保留);退场定时器随后空转,无需专撤。
-    this.compact[1]((current) => current.phase === "done" || current.phase === "skipped" ? { phase: "idle" } : current);
+  async sendMessageWithAttachments(text: string, attachments: SessionContentRef[] = []): Promise<void> {
     this.isSending[1](true);
     try {
       await transport.command(
-        { type: "conversation.send", text, attachments, input_purpose: "trigger_turn" },
+        { type: "conversation.send_message", text, attachments, input_purpose: "trigger_turn" },
         sessionTarget(this.seed),
       );
     } catch (error) {
@@ -1108,7 +1008,7 @@ export class SessionStore {
   async sendMessage(text: string): Promise<void> {
     const attachments = this.pendingAttachments[0]()
       .filter((item) => item.state === "ready" && item.reference != null)
-      .map((item) => item.reference as ContentRef);
+      .map((item) => item.reference as SessionContentRef);
     await this.sendMessageWithAttachments(text, attachments);
     // 投递失败会抛出,附件保持原样让用户重试。
     this.pendingAttachments[1]([]);
@@ -1156,12 +1056,7 @@ export class SessionStore {
           size: uploaded.size,
           mediaType: uploaded.media_type,
           state: "ready",
-          reference: {
-            content_id: uploaded.content_id,
-            media_type: uploaded.media_type,
-            sha256: uploaded.sha256,
-            truncated: uploaded.truncated,
-          },
+          reference: uploaded.content_ref,
         });
       } catch (error) {
         this.patchAttachment(item.id, {
@@ -1230,41 +1125,6 @@ export class SessionStore {
     if (this.cancelWatchdog != null) {
       clearTimeout(this.cancelWatchdog);
       this.cancelWatchdog = null;
-    }
-  }
-
-  /**
-   * 压缩卡写入的唯一入口:done/skipped 起延时退场定时器,failed 常驻等用户
-   * 处理;任何后续状态先撤掉旧定时器。
-   */
-  private setCompact(next: CompactState): void {
-    this.compact[1](next);
-    if (this.compactTimer != null) {
-      clearTimeout(this.compactTimer);
-      this.compactTimer = null;
-    }
-    if (next.phase === "done" || next.phase === "skipped") {
-      this.compactTimer = window.setTimeout(() => {
-        this.compactTimer = null;
-        // 期间可能已开新一轮压缩或被发送消息清掉:只收掉仍然滞留的终态。
-        this.compact[1]((current) => current.phase === "done" || current.phase === "skipped" ? { phase: "idle" } : current);
-      }, COMPACT_CARD_TTL_MS);
-    }
-  }
-
-  /**
-   * 手动压缩上下文。ack 只代表进队,所以先乐观置 running,否则按钮点了要等
-   * 第一帧过程事件才有反馈;真实终态以 `compact_finished` / `compaction_applied`
-   * 为准。终态原因读线上 `compact_finished.reason`(失败/跳过/取消都有中文说明);
-   * 只有"命令没送达"这条路径不会有事件,原因就地合成。
-   */
-  async compactContext(): Promise<void> {
-    this.setCompact({ phase: "running", compactId: null, turnsTotal: null, turnsKeeping: null, summary: "" });
-    try {
-      await transport.command({ type: "conversation.compact" }, sessionTarget(this.seed));
-    } catch (error) {
-      console.warn("[compact] 压缩命令投递失败", error);
-      this.setCompact({ phase: "failed", reason: compactDeliveryFailure(error) });
     }
   }
 

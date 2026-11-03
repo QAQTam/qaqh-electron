@@ -144,9 +144,10 @@ const steps = [
     `,
   },
   {
-    name: "服务商/存档从 profile.list 渲染",
+    name: "服务商目录与 profile 摘要分别读取",
     code: `
       const lists = __t.calls("profile.list").length;
+      const providerLists = __t.calls("provider.list").length;
       __t.nav("section-providers");
       await __t.wait(350);
       const providers = document.querySelectorAll(".provider-row").length;
@@ -154,14 +155,14 @@ const steps = [
       __t.nav("section-profiles");
       await __t.wait(350);
       const profiles = document.querySelectorAll(".profile-row").length;
-      const hasDefault = document.querySelector(".profile-row.active")?.innerText.includes("默认存档") === true;
-      return { ok: lists >= 1 && providers === 2 && profiles === 2 && hasDefault
-                 && referenced.includes("被 1 条存档引用"),
-               detail: { lists, providers, profiles, hasDefault, referenced } };
+      const hasDefault = document.querySelector(".profile-row.active")?.innerText.includes("默认模型") === true;
+      return { ok: lists >= 1 && providerLists >= 1 && providers === 2 && profiles === 2 && hasDefault
+                 && referenced.includes("OpenCode Zen"),
+               detail: { lists, providerLists, providers, profiles, hasDefault, referenced } };
     `,
   },
   {
-    name: "应用设置仍走 config.patch（只发差异项）",
+    name: "应用设置走 config.save（只发差异项）",
     code: `
       __t.nav("section-permission");
       await __t.wait(250);
@@ -179,24 +180,24 @@ const steps = [
     `,
   },
   {
-    name: "设为默认存档走 profile.set_default，不碰 config.patch",
+    name: "默认模型走 model.selection.set_default，不碰 config.save",
     code: `
       __t.nav("section-profiles");
       await __t.wait(300);
       const saves = __t.saves().length;
-      const before = __t.calls("profile.set_default").length;
+      const before = __t.calls("model.selection.set_default").length;
       const target = [...document.querySelectorAll(".profile-row:not(.active) button")]
         .find((button) => button.textContent.includes("设为默认"));
       target?.click();
       await __t.wait(700);
       const active = document.querySelector(".profile-row.active")?.innerText ?? "";
-      return { ok: __t.calls("profile.set_default").length === before + 1
-                 && __t.saves().length === saves && active.includes("默认存档"),
-               detail: { before, after: __t.calls("profile.set_default").length, saves, active } };
+      return { ok: __t.calls("model.selection.set_default").length === before + 1
+                 && __t.saves().length === saves && active.includes("默认模型"),
+               detail: { before, after: __t.calls("model.selection.set_default").length, saves, active } };
     `,
   },
   {
-    name: "新建存档走 profile.create，且不丢应用设置草稿",
+    name: "新建 legacy profile 使用平铺 profile.create，且不丢应用设置草稿",
     code: `
       // 先制造一份应用设置草稿（权限档降到 3，不保存）。
       __t.nav("section-permission");
@@ -212,21 +213,27 @@ const steps = [
       document.querySelector(".provider-cta")?.click();
       await __t.wait(300);
       __t.type("存档名称", "Fixture 存档");
-      __t.type("模型 id", "fixture-model");
+      document.querySelector('.profile-wizard-card [aria-label="模型"]')?.click();
+      await __t.wait(100);
+      [...document.querySelectorAll('[role="option"]')]
+        .find((option) => option.textContent.includes("ox-alpha-free"))?.click();
       await __t.wait(200);
       document.querySelector(".profile-wizard-card .primary-mini")?.click();
       await __t.wait(800);
 
       const dirtyAfter = document.querySelector(".settings-dirty-pill")?.innerText ?? "";
       const cards = document.querySelectorAll(".profile-row").length;
+      const created = __t.calls("profile.create").at(-1)?.command ?? {};
       return { ok: __t.calls("profile.create").length === creates + 1
                  && __t.saves().length === saves && dirtyBefore.includes("1 项")
-                 && dirtyAfter.includes("1 项") && cards === 3,
-               detail: { creates: __t.calls("profile.create").length, saves, dirtyBefore, dirtyAfter, cards } };
+                 && dirtyAfter.includes("1 项") && cards === 3
+                 && created.name === "Fixture 存档" && created.model === "ox-alpha-free"
+                 && created.profile === undefined,
+               detail: { creates: __t.calls("profile.create").length, created, saves, dirtyBefore, dirtyAfter, cards } };
     `,
   },
   {
-    name: "编辑服务商走 provider.upsert，同一份草稿仍然保留",
+    name: "编辑服务商走带 config_revision 的 ProviderUpsertDto，同一份草稿仍然保留",
     code: `
       __t.nav("section-providers");
       await __t.wait(350);
@@ -241,13 +248,19 @@ const steps = [
       await __t.wait(700);
       const renamed = __t.text(".provider-row").includes("OpenCode Zen Edited");
       const dirty = document.querySelector(".settings-dirty-pill")?.innerText ?? "";
+      const call = __t.calls("provider.upsert").at(-1) ?? {};
+      const provider = call.command?.provider ?? {};
+      const guard = call.preconditions?.find((item) => item.kind === "config_revision");
       return { ok: __t.calls("provider.upsert").length === before + 1
-                 && __t.saves().length === saves && renamed && dirty.includes("1 项"),
-               detail: { before, after: __t.calls("provider.upsert").length, saves, renamed, dirty } };
+                 && __t.saves().length === saves && renamed && dirty.includes("1 项")
+                 && typeof provider.base_url === "string" && provider.baseUrl === undefined
+                 && provider.api_key?.operation === "keep"
+                 && guard?.revision === window.__qaqhProbe.providerCatalog.revision - 1,
+               detail: { before, after: __t.calls("provider.upsert").length, provider, guard, saves, renamed, dirty } };
     `,
   },
   {
-    name: "默认存档不可删；非默认存档删除走 profile.delete",
+    name: "默认模型 profile 不可删；其他 profile 删除使用 name",
     code: `
       __t.nav("section-profiles");
       await __t.wait(350);
@@ -256,10 +269,16 @@ const steps = [
       const target = document.querySelector(".profile-row:not(.active) .ghost-mini.is-danger");
       const removable = target?.disabled === false;
       target?.click();
-      await __t.wait(700);
+      for (let attempt = 0; attempt < 20 && document.querySelectorAll(".profile-row").length !== 2; attempt += 1) {
+        await __t.wait(100);
+      }
+      const deleted = __t.calls("profile.delete").at(-1)?.command ?? {};
+      const remaining = document.querySelectorAll(".profile-row").length;
+      const profileIds = Object.keys(window.__qaqhProbe.registry.profiles);
       return { ok: defaultDisabled && removable && __t.calls("profile.delete").length === before + 1
-                 && document.querySelectorAll(".profile-row").length === 2,
-               detail: { defaultDisabled, removable, deletes: __t.calls("profile.delete").length } };
+                 && typeof deleted.name === "string" && deleted.id === undefined
+                 && remaining === 2,
+               detail: { defaultDisabled, removable, deleted, deletes: __t.calls("profile.delete").length, remaining, profileIds } };
     `,
   },
   {
@@ -313,18 +332,18 @@ const steps = [
       const style = getComputedStyle(probe);
       const got = { zIndex: style.zIndex, position: style.position };
       probe.remove();
-      return { ok: got.zIndex === "45" && got.position === "relative", detail: got };
+      return { ok: got.zIndex === "80" && got.position === "fixed", detail: got };
     `,
   },
   {
-    name: "零会话也能开设置(宿主对 config.* 不注入 seed)",
+    name: "零会话也能开设置(config.load 用 service_query 且不带 session id)",
     code: `
       const bootErrorShown = document.querySelector(".boot-error") != null;
       __t.key(",", { ctrlKey: true });
       await __t.wait(600);
       const loads = __t.calls("config.load");
-      return { ok: bootErrorShown && __t.modal() != null && loads.length >= 1
-                 && loads.every((call) => JSON.stringify(Object.keys(call.command ?? {})) === '["type"]'),
+      return { ok: !bootErrorShown && __t.modal() != null && loads.length >= 1
+                 && loads.every((call) => Object.keys(call.params ?? {}).length === 0),
                detail: { bootErrorShown, opened: __t.modal() != null, commands: loads.map((call) => call.command) } };
     `,
   },

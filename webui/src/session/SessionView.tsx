@@ -14,32 +14,9 @@ import IconLoader from "~icons/lucide/loader-circle";
 import { TurnView } from "../turn/TurnView";
 import { anchorScrollTop, clampPlaceholderHeight, EVICT_SCREENS, shouldLoadOlder, TURN_WINDOW } from "../session/pagination";
 import { STR } from "../lib/strings";
-import type { SessionStore, CompactState } from "../session/store";
+import type { SessionStore } from "../session/store";
 import { gapHeight, type Slot, type Wait } from "../session/types";
 import type { Tab } from "../tabs/store";
-
-/** 「保留 N/M 回合」进度;没有过程事件(未镜像进 v2)时为空串,卡片退化为纯状态。 */
-function compactProgress(state: CompactState): string {
-  if (state.phase !== "running" || state.turnsTotal == null) return "";
-  return STR.compactProgress(state.turnsKeeping ?? 0, state.turnsTotal);
-}
-
-/** 终态补充信息:合并了几个回合、摘要多少字。 */
-function compactMeta(state: CompactState): string {
-  if (state.phase !== "done") return "";
-  const parts: string[] = [];
-  if (state.turnsRemoved != null) parts.push(STR.compactTurnsRemoved(state.turnsRemoved));
-  if (state.summaryChars != null) parts.push(STR.compactSummaryChars(state.summaryChars));
-  return parts.join(" · ");
-}
-
-/**
- * 终态原因(失败/跳过/取消):后端 `CompactFinished.reason` 的中文整句,原样展示。
- * 标题仍用状态词(`压缩失败`),原因作为第二行补充——成功终态没有原因。
- */
-function compactReason(state: CompactState): string {
-  return state.phase === "failed" || state.phase === "skipped" ? state.reason ?? "" : "";
-}
 
 export const SessionView: Component<{ tab: Tab }> = (props) => {
   let scroller: HTMLDivElement | undefined;
@@ -49,11 +26,6 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
   const [hoveredNavKey, setHoveredNavKey] = createSignal<string | null>(null);
   const store = props.tab.store;
   const state = () => store.state[0];
-  /** 压缩卡片只在非 idle 时渲染;`Show` 的回调因此能拿到收窄后的联合类型。 */
-  const compactCard = () => {
-    const current = store.compact[0]();
-    return current.phase === "idle" ? null : current;
-  };
   const slots = createMemo(() => {
     state().structureVersion;
     // keying 只读普通结构快照,避免 For 订阅 50 个 store 槽位的 100+ 叶子。
@@ -350,62 +322,16 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
             部分正文加载失败，点击重试
           </button>
         </Show>
-        <Show when={store.compactedAfter[0]() != null && !state().slots.some((slot) => slot.key === store.compactedAfter[0]())}>
-          <div class="compact-divider" role="separator"><span>{STR.compactedAbove}</span></div>
-        </Show>
         <For each={slotGroups()} keyed={(group) => group.key}>
           {(group) => <div class="session-group"><For each={group().keys}>{(key) => (
             <Show when={slotTable().get(key)?.kind === "turn"} fallback={<>
               <GapRow slot={slotTable().get(key) ?? { kind: "gap", key, spans: [] }} />
-              {/* 锚点落在占位段(压缩前旧回合已被窗口淘汰)时,分隔线画在占位段
-                  下方、真实尾部回合上方,而不是退回整列顶部。 */}
-              <Show when={store.compactedAfter[0]() === key}>
-                <div class="compact-divider" role="separator"><span>{STR.compactedAbove}</span></div>
-              </Show>
             </>}>
               <TurnSlot store={store} slotKey={key} />
             </Show>
           )}</For></div>}
         </For>
       </div>
-      <Show when={compactCard()}>
-        {(compact) => {
-          // JSX 里的条件不会收窄联合类型,这几处显式收窄后再给 Show 用。
-          const headline = (): string => {
-            const current = compact();
-            if (current.phase === "running") return STR.compacting;
-            if (current.phase === "failed") return STR.compactFailed;
-            if (current.phase === "skipped") {
-              return current.status === "cancelled" ? STR.compactCancelled : STR.compactSkipped;
-            }
-            return STR.compacted;
-          };
-          const summary = (): string => {
-            const current = compact();
-            return current.phase === "running" ? current.summary : "";
-          };
-          return (
-            <div class={`compact-card ${compact().phase}`} role="status" aria-live="polite">
-              <div class="compact-card-head">
-                <span class="compact-card-mark" aria-hidden="true" />
-                <strong>{headline()}</strong>
-                <Show when={compactProgress(compact())}>
-                  <span class="compact-card-progress">{compactProgress(compact())}</span>
-                </Show>
-                <Show when={compactMeta(compact())}>
-                  <span class="compact-card-progress">{compactMeta(compact())}</span>
-                </Show>
-              </div>
-              <Show when={compactReason(compact()) !== ""}>
-                <p class="compact-card-reason">{compactReason(compact())}</p>
-              </Show>
-              <Show when={summary() !== ""}>
-                <pre class="compact-card-summary">{summary()}</pre>
-              </Show>
-            </div>
-          );
-        }}
-      </Show>
       <Show when={navItems().length > 1}>
         <nav class="turn-navigator" aria-label="当前已加载的用户消息">
           <For each={navItems()} keyed={(item) => item.key}>{(item, index) => (
@@ -484,9 +410,6 @@ const TurnSlot: Component<{ store: SessionStore; slotKey: string }> = (props) =>
     <div data-slot-key={props.slotKey}>
       <Show when={turn()} fallback={<GapRow slot={{ kind: "gap", key: props.slotKey, spans: [] }} />}>
         {(value) => <TurnView turn={value()} waits={waits()} store={props.store} />}
-      </Show>
-      <Show when={props.store.compactedAfter[0]() === props.slotKey}>
-        <div class="compact-divider" role="separator"><span>{STR.compactedAbove}</span></div>
       </Show>
     </div>
   );

@@ -54,27 +54,27 @@ describe("工具调用摘要条 shimmer 动效与 120 帧率设计", () => {
       isLatest: boolean,
     ) => {
       const st = step.status;
-      if (st === "error" || st === "denied" || st === "aborted") return false;
-      const active = isLatest || st === "running" || st === "pending";
+      if (st === "failed" || st === "cancelled" || st === "interrupted") return false;
+      const active = isLatest || st === "running" || st === "declared" || st === "awaiting_permission";
       return Boolean(active && (summary || hasCommandIcon));
     };
 
     // 最新且成功的工具调用，有摘要：展示 shimmer
-    expect(isStepShimmer({ id: "t3", status: "success" }, "src/main.rs", false, true)).toBe(true);
+    expect(isStepShimmer({ id: "t3", status: "finished" }, "src/main.rs", false, true)).toBe(true);
 
     // 历史已完成的工具调用（非最新）：不展示 shimmer
-    expect(isStepShimmer({ id: "t1", status: "success" }, "src/lib.rs", false, false)).toBe(false);
+    expect(isStepShimmer({ id: "t1", status: "finished" }, "src/lib.rs", false, false)).toBe(false);
 
     // 正在运行中的工具调用：展示 shimmer
     expect(isStepShimmer({ id: "t2", status: "running" }, "cargo test", true, false)).toBe(true);
 
-    // 失败/拒绝/中止的工具调用：绝不展示 shimmer
-    expect(isStepShimmer({ id: "t3", status: "error" }, "src/main.rs", false, true)).toBe(false);
-    expect(isStepShimmer({ id: "t3", status: "denied" }, "src/main.rs", false, true)).toBe(false);
-    expect(isStepShimmer({ id: "t3", status: "aborted" }, "src/main.rs", false, true)).toBe(false);
+    // 失败/取消/中断的工具调用：绝不展示 shimmer
+    expect(isStepShimmer({ id: "t3", status: "failed" }, "src/main.rs", false, true)).toBe(false);
+    expect(isStepShimmer({ id: "t3", status: "cancelled" }, "src/main.rs", false, true)).toBe(false);
+    expect(isStepShimmer({ id: "t3", status: "interrupted" }, "src/main.rs", false, true)).toBe(false);
 
     // 无摘要文本且无命令图标的纯语义工具：不展示 shimmer
-    expect(isStepShimmer({ id: "t3", status: "success" }, "", false, true)).toBe(false);
+    expect(isStepShimmer({ id: "t3", status: "finished" }, "", false, true)).toBe(false);
   });
 
   test("多回合下仅最新回合的最后一个工具为最新工具调用", () => {
@@ -103,8 +103,8 @@ describe("工具调用摘要条 shimmer 动效与 120 帧率设计", () => {
       turnIndex: 0,
       user: { text: "第一问" },
       steps: [
-        { kind: "tool", id: "t1", seq: 1, name: "read", status: "success" },
-        { kind: "tool", id: "t2", seq: 2, name: "edit", status: "success" },
+        { kind: "tool", id: "t1", seq: 1, name: "read", status: "finished" },
+        { kind: "tool", id: "t2", seq: 2, name: "edit", status: "finished" },
       ],
       answer: null,
       answerStepId: null,
@@ -117,7 +117,7 @@ describe("工具调用摘要条 shimmer 动效与 120 帧率设计", () => {
       turnIndex: 1,
       user: { text: "第二问" },
       steps: [
-        { kind: "tool", id: "t3", seq: 3, name: "read", status: "success" },
+        { kind: "tool", id: "t3", seq: 3, name: "read", status: "finished" },
         { kind: "tool", id: "t4", seq: 4, name: "exec", status: "running" },
       ],
       answer: null,

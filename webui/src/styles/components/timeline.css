@@ -154,7 +154,7 @@
   #composer textarea::placeholder { color: var(--muted); opacity: .72; }
 
   /* 内容列(§4):760px 居中 */
-  .turn, .history-note, .compact-divider, #approval-slot > *, #composer {
+  .turn, .history-note, #approval-slot > *, #composer {
     width: min(var(--content-width), 100%);
     margin-inline: auto;
   }

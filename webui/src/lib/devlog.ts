@@ -44,7 +44,7 @@ export function noteRpc(method: string, startedAtMs: number, cause: unknown | nu
   push("rpc", method, cause == null ? "ok" : clip(textOf(cause)), ms, cause != null);
 }
 
-/** 宿主转发事件(timeline://*、projection://*、conn://*)。 */
+/** 宿主转发事件(projection://*、conn://*)。 */
 export function noteEvent(name: string, payload: unknown): void {
   // 这两条本身就是故障通知,归到 error 类,日志里要一眼看见而不是混在事件流里。
   const failing = name === "conn://error" || name === "conn://incompatible";

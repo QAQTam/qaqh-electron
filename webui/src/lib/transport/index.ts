@@ -19,10 +19,6 @@ import {
   type StreamHandlers,
   type TodoItemWire,
   type TransportBackend,
-  type UserSkillDiagnostic,
-  type UserSkillFile,
-  type UserSkillRoot,
-  type UserSkillsWire,
 } from "./backend";
 
 export const transport: TransportBackend = new ElectronTransport();
@@ -30,7 +26,7 @@ export const transport: TransportBackend = new ElectronTransport();
 export { listenHostDiagnostics, openExternalUrl, desktopHostSurface };
 
 export { RINGING_SCHEMA, RINGING_VERSION, globalTarget, sessionTarget, workspaceTarget } from "./backend";
-export type { DaemonCommand, UnifiedCommand, UnifiedTarget } from "./backend";
+export type { CommandPrecondition, CommandTarget, RingingCommand, ServiceMethod, ServiceParams, ServiceResult } from "./backend";
 export { isDesktopRuntime } from "../desktop-host";
 export type {
   Ack,
@@ -44,8 +40,4 @@ export type {
   StreamHandlers,
   TodoItemWire,
   TransportBackend,
-  UserSkillDiagnostic,
-  UserSkillFile,
-  UserSkillRoot,
-  UserSkillsWire,
 };

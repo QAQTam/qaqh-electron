@@ -2,6 +2,7 @@ import { createRoot } from "solid-js";
 import { afterEach, expect, test, vi } from "vitest";
 import { desktopHostSurface, transport, type StreamHandlers } from "../src/lib/transport";
 import { SessionStore } from "../src/session/store";
+import { inline, sessionBootstrap } from "./session-fixtures";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -19,8 +20,9 @@ function setup() {
   const host = desktopHostSurface(transport)!;
   let handlers!: StreamHandlers;
   vi.spyOn(host, "subscribe").mockImplementation(async (next) => { handlers = next; return vi.fn(); });
-  vi.spyOn(host, "sessionBootstrap").mockResolvedValue({ control: { state: { activity: "running" } } });
-  vi.spyOn(transport, "attach").mockResolvedValue();
+  const bootstrap = sessionBootstrap("approval-session", { activity: "running" });
+  vi.spyOn(host, "sessionBootstrap").mockResolvedValue(bootstrap);
+  vi.spyOn(transport, "attach").mockImplementation(async () => { handlers.onProjectionBootstrap?.("approval-session", bootstrap); });
   vi.spyOn(transport, "query").mockResolvedValue({ items: [] } as never);
   vi.spyOn(transport, "invalidateApprovals").mockResolvedValue();
   let store!: SessionStore;
@@ -63,9 +65,10 @@ test("a control invalidation defeats an older approvals response and commits the
   const refresh = store.refreshApprovals();
   await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
   handlers().onProjectionEvent("approval-session", {
-    stream_key: { kind: "channel", data: "control" },
-    payload: { kind: "control_delta", data: { kind: "interaction_requested", data: { interaction_id: "i1" } } },
-  });
+    seq: 1,
+    type: "interaction_requested",
+    interaction: { interaction_id: "i1", kind: "ask", request: inline("Need an answer"), turn_id: null },
+  } as any);
   old.resolve([approval("stale")] as never);
   await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   expect(store.pending[0]()).toEqual([]);

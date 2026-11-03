@@ -56,8 +56,6 @@ const StoreRows: Component<{ store: SessionStore }> = (props) => {
       <b>{Object.keys(metrics().extras).length === 0 ? "—" : Object.entries(metrics().extras).map(([key, value]) => `${key}=${value}`).join(" ")}</b>
       <span>loadError / hasNewReply</span>
       <b>{String(props.store.loadError[0]())} / {String(props.store.hasNewReply[0]())}</b>
-      <span>压缩锚点</span>
-      <b>{props.store.compactedAfter[0]() ?? "—"}</b>
     </div>
   );
 };

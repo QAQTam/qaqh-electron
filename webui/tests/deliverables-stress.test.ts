@@ -22,7 +22,7 @@ function generateMockTurn(turnIdx: number, filesCount = 3): Turn {
       id: `step_${turnIdx}_${f}`,
       seq: turnIdx * 10 + f,
       name: "edit",
-      status: "success",
+      status: "finished",
       output: { diffText },
     });
   }

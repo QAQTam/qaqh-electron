@@ -78,12 +78,18 @@ try {
       const r = node.getBoundingClientRect();
       return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height };
     };
-    const back = document.querySelector('.titlebar-back');
-    const b = back?.getBoundingClientRect();
+    const candidate = document.querySelector('.titlebar-back');
+    const back = candidate && getComputedStyle(candidate).display !== 'none' ? candidate : null;
+    const backControl = back ?? (innerWidth <= 720 ? document.querySelector('.titlebar-menu') : null);
+    const b = backControl?.getBoundingClientRect();
+    const backPoint = b ? document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2) : null;
+    const backStyle = backControl ? getComputedStyle(backControl) : null;
     return { top: rect('#top'), nav: rect('.global-nav'), workspace: rect('.workspace'),
       main: rect('#main'), tools: rect('.tools-page'), settings: rect('.settings-page'),
       body: rect('.settings-body'), foot: rect('.settings-foot'),
-      backVisible: b ? back.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)) : null,
+      backVisible: b ? backControl.contains(backPoint) : null,
+      backElement: backControl?.className ?? null, backPoint: backPoint?.className ?? backPoint?.tagName ?? null,
+      backDisplay: backStyle?.display ?? null, backPointerEvents: backStyle?.pointerEvents ?? null,
       width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth };
   })()`);
   const capture = async (name) => {
@@ -193,22 +199,17 @@ try {
     }
     assert.equal(matrix[0].strong.weight, '600', "Emphasis must not alter the font size");
     assert.equal(await evaluate("document.querySelector('.session-tabs-region')"), null, "Goal capsule must remain unrendered");
-    // 内容列对齐(§4):「此前已压缩」分隔线与截断提示必须和回合共用同一条居中列。
-    // composer.css 里 `.compact-divider { margin: 8px 0 }` 的简写会清掉 timeline.css
-    // 组规则给的 `margin-inline: auto`,只在 #messages 内容宽 > --content-width 的
-    // 宽窗下才暴露(1920 下实测偏 394px),窄屏三档全都看不出差别。
+    // 截断提示与回合共用同一条居中列。
     const column = await evaluate(`(() => {
       const messages = document.querySelector('#messages');
       const note = document.createElement('div'); note.className = 'history-note'; note.textContent = '对照';
-      const divider = document.createElement('div'); divider.className = 'compact-divider'; divider.setAttribute('role', 'separator');
-      divider.innerHTML = '<span>此前已压缩</span>';
-      messages.append(note, divider);
-      const edges = [...messages.querySelectorAll(':scope > .turn, :scope > .history-note, :scope > .compact-divider')]
+      messages.append(note);
+      const edges = [...messages.querySelectorAll(':scope > .turn, :scope > .history-note')]
         .map((el) => { const r = el.getBoundingClientRect(); return { cls: el.className, left: +r.left.toFixed(1), right: +r.right.toFixed(1) }; });
-      note.remove(); divider.remove();
+      note.remove();
       return edges;
     })()`);
-    assert.ok(column.length >= 3, `Content-column alignment needs a turn, note and divider to compare: ${JSON.stringify(column)}`);
+    assert.ok(column.length >= 2, `Content-column alignment needs a turn and note to compare: ${JSON.stringify(column)}`);
     assert.equal(new Set(column.map((edge) => `${edge.left}/${edge.right}`)).size, 1,
       `Content-column rows must share one centered box: ${JSON.stringify(column)}`);
     const markers = await evaluate(`(() => {
@@ -228,17 +229,21 @@ try {
     await capture(`messages-${width}`);
 
     // 按标签点,不按下标:导航项后来加了「接入」,写死的 [2] 已经指到别的页面去了。
-    await evaluate("[...document.querySelectorAll('.global-nav-item')].find((n) => n.textContent.includes('工具')).click()");
+    await evaluate(`(() => {
+      const sidebar = document.querySelector('#app-sidebar');
+      if (sidebar?.classList.contains('drawer') && !sidebar.classList.contains('open')) document.querySelector('.titlebar-menu')?.click();
+      [...document.querySelectorAll('.sidebar-nav-item')].find((n) => n.textContent.includes('工具'))?.click();
+    })()`);
     await waitFor("Boolean(document.querySelector('.tools-page'))");
     g = await geometry();
     assert.ok(g.workspace.top >= g.top.bottom, "Tools must start below the titlebar");
     assert.ok(g.workspace.bottom <= height + 1, "Tools must stay inside the window");
     assert.ok(g.main.height >= g.workspace.height - 60, "Tools content must fill the remaining height");
     assert.ok(g.tools.height > 200, "Tools must not collapse into the 56px tabs row");
-    // Skills 目录(§6.5.1):两层发现范围各一组,组头常显、卡片可展开。夹具的
-    // 用户级回包走宿主命令 `skills_user_scan`(settings-check.tsx 的假 invoke);
-    // 旧壳没有这条命令时这一组只剩提示条,所以这里断言的是「两组都在、组头带得出
-    // 发现根、展开后正文真的渲染」。
+    // Skills 目录由 backend `skills.catalog` 解析。Renderer 只展示完成态元数据，
+    // 不再重复扫描文件、解析正文或自行标记同名遮蔽。
+    await evaluate("document.querySelector('.skill-card-head')?.click()");
+    await waitFor("Boolean(document.querySelector('.skill-card-body .skill-card-path'))");
     const skills = await evaluate(`(() => {
       const groups = [...document.querySelectorAll('.skill-group')];
       const cards = [...document.querySelectorAll('.skill-card')];
@@ -247,40 +252,49 @@ try {
         hint: group.querySelector('.skill-group-hint')?.textContent ?? '',
         cards: group.querySelectorAll('.skill-card').length,
       }));
-      const shadowed = document.querySelectorAll('.skill-card.is-shadowed').length;
-      // 展开第一条:卡片的折叠是卸载子树,正文必须真的挂上。
-      cards[0]?.querySelector('.skill-card-head')?.click();
-      return { heads, shadowed, total: cards.length };
+      return { heads, total: cards.length,
+        path: document.querySelector('.skill-card-body .skill-card-path')?.textContent ?? null,
+        markdownBody: document.querySelector('.skill-card-body .md-host') != null };
     })()`);
-    assert.equal(skills.heads.length, 2, `Skills must show both scopes: ${JSON.stringify(skills)}`);
+    assert.equal(skills.heads.length, 2, `Skills must show project and user scopes: ${JSON.stringify(skills)}`);
     assert.equal(skills.heads[0]?.title, "项目级");
     assert.equal(skills.heads[1]?.title, "用户级");
-    assert.ok(skills.heads[0]?.hint.includes(".agents/skills"), `项目级组头要写清扫的是哪些目录: ${JSON.stringify(skills)}`);
-    assert.ok(skills.heads[1]?.hint.includes("~/.agents/skills"), `用户级组头要带出发现根: ${JSON.stringify(skills)}`);
+    assert.ok(skills.heads.every((group) => group.hint.includes("daemon catalog")), `Both scopes must state their source: ${JSON.stringify(skills)}`);
     assert.ok(skills.heads[0].cards > 0, "项目级夹具至少一条 skill");
     assert.ok(skills.heads[1].cards > 0, "用户级夹具至少一条 skill");
-    assert.ok(skills.shadowed > 0, "同名覆盖要标出来,不能静默删条目");
-    await waitFor("Boolean(document.querySelector('.skill-card-body .md-host'))");
+    assert.equal(skills.total, 2, `Catalog fixture should provide one visible entry per scope: ${JSON.stringify(skills)}`);
+    assert.ok(typeof skills.path === "string" && skills.path.endsWith("SKILL.md"), `Catalog path should render: ${JSON.stringify(skills)}`);
+    assert.equal(skills.markdownBody, false, "Catalog metadata does not include skill bodies");
     g = await geometry();
     // headless 首帧竞态:切视图后 ~100ms 内 elementFromPoint 可能命中未绘制的根节点,短暂等待重测。
     for (let attempt = 0; attempt < 60 && g.backVisible !== true; attempt++) { await delay(50); g = await geometry(); }
-    assert.equal(g.backVisible, true, "Global back button must remain unobstructed");
-    assert.ok(g.scrollWidth <= width, "Shell must not overflow horizontally");
     await capture(`tools-${width}`);
+    assert.equal(g.backVisible, true, `Back or drawer control must remain unobstructed: ${JSON.stringify(g)}`);
+    assert.ok(g.scrollWidth <= width, "Shell must not overflow horizontally");
 
-    await evaluate("[...document.querySelectorAll('.global-nav-item')].find((n) => n.textContent.includes('设置')).click()");
+    await evaluate(`(() => {
+      const sidebar = document.querySelector('#app-sidebar');
+      if (sidebar?.classList.contains('drawer') && !sidebar.classList.contains('open')) document.querySelector('.titlebar-menu')?.click();
+      [...document.querySelectorAll('.sidebar-nav-item')].find((n) => n.textContent.includes('设置'))?.click();
+    })()`);
     await waitFor("Boolean(document.querySelector('.settings-section'))");
     g = await geometry();
     assert.ok(g.workspace.top >= g.top.bottom, "Settings must start below the titlebar");
     assert.ok(g.body.height > 200, "Settings form must have a usable scroll area");
     assert.ok(g.foot.bottom <= g.workspace.bottom + 1, "Settings footer must stay inside its workspace");
     for (let attempt = 0; attempt < 60 && g.backVisible !== true; attempt++) { await delay(50); g = await geometry(); }
-    assert.equal(g.backVisible, true, "Settings back button must remain unobstructed");
+    assert.equal(g.backVisible, true, "Settings back or drawer control must remain unobstructed");
     await capture(`settings-${width}`);
-    await evaluate("document.querySelector('.titlebar-back').click()");
-    await waitFor("Boolean(document.querySelector('.workspace-messages'))");
+    await evaluate(`(() => {
+      const back = document.querySelector('.titlebar-back');
+      if (back) { back.click(); return; }
+      const sidebar = document.querySelector('#app-sidebar');
+      if (sidebar?.classList.contains('drawer') && !sidebar.classList.contains('open')) document.querySelector('.titlebar-menu')?.click();
+      [...document.querySelectorAll('.sidebar-nav-item')].find((n) => n.textContent.includes('消息'))?.click();
+    })()`);
+    await waitFor("Boolean(document.querySelector('.startup-container'))");
     const restored = await geometry();
-    assert.ok(restored.top != null && restored.workspace.top >= restored.top.bottom, "Returning to messages must keep the shared titlebar");
+    assert.ok(restored.top != null && restored.workspace.top >= restored.top.bottom, "Returning to startup must keep the shared titlebar");
     console.log(`PASS native shell ${width}x${height}: messages, list markers, tools, settings, back navigation`);
   }
 
@@ -289,22 +303,27 @@ try {
   await waitFor("Boolean(document.querySelector('#composer .send'))");
   // Override only session IPC; keep the real App, Composer, tab store and transport.
   await evaluate(`(() => {
-    const internals = window.__qaqhInternals;
-    const original = internals.invoke.bind(internals);
-    const probe = window.__composerProbe = { sessions: [], creates: 0, sends: [], failCreate: true, failSend: false, deferSend: false, release: null, workspaces: [], workspaceCalls: [] };
-    const callbacks = new Map();
+    const host = window.qaqhHost;
+    const original = host.invoke.bind(host);
+    const probe = window.__composerProbe = { sessions: [], creates: 0, sends: [], attaches: [], failCreate: true, failSend: false, deferSend: false, release: null, workspaces: [], workspaceCalls: [], eventSeqs: new Map() };
     const listeners = new Map();
     let listenerId = 0;
-    const transform = internals.transformCallback.bind(internals);
-    internals.transformCallback = (callback, once) => {
-      const id = transform(callback, once);
-      callbacks.set(id, callback);
-      return id;
+    host.listen = (event, callback) => {
+      const id = ++listenerId;
+      listeners.set(id, { event, callback });
+      return () => listeners.delete(id);
     };
     probe.emit = (event, payload) => {
       for (const [id, listener] of listeners) {
-        if (listener.event === event) callbacks.get(listener.handler)?.({ event, id, payload });
+        if (listener.event === event) listener.callback(payload);
       }
+    };
+    probe.finishSend = (sessionId) => {
+      let seq = probe.eventSeqs.get(sessionId) ?? 0;
+      const turnId = 'fixture-turn-' + (seq + 1);
+      probe.emit('projection://event', { session_id: sessionId, event: { seq: ++seq, type: 'turn_started', turn_id: turnId, input_id: null, mode: 'normal' } });
+      probe.emit('projection://event', { session_id: sessionId, event: { seq: ++seq, type: 'turn_ended', turn_id: turnId, outcome: { kind: 'finished', data: { terminal: 'completed', usage: null, error: null } } } });
+      probe.eventSeqs.set(sessionId, seq);
     };
     // toast 是先到先得的证据:自动消失后 MutationObserver 日志还在。
     window.__toastLog = [];
@@ -314,39 +333,46 @@ try {
         if (window.__toastLog.at(-1) !== text) window.__toastLog.push(text);
       }
     }).observe(document.body, { childList: true, subtree: true });
-    internals.invoke = async (cmd, args = {}) => {
-      if (cmd === 'plugin:event|listen') {
-        const id = ++listenerId;
-        listeners.set(id, { event: args.event, handler: args.handler });
-        return id;
-      }
-      if (cmd === 'plugin:event|unlisten') { listeners.delete(args.eventId); return null; }
+    host.invoke = async (cmd, args = {}) => {
       if (cmd === 'session_list') return structuredClone(probe.sessions);
-      if (cmd === 'create_session') {
-        probe.creates++;
-        if (probe.failCreate) throw new Error('fixture create failure');
-        probe.sessions.push({ session_id: 'composer-' + probe.creates, title: '对话 ' + probe.creates });
-        return { status: 'accepted' };
+      if (cmd === 'attach') {
+        probe.attaches.push(args.seed);
+        probe.emit('projection://status', { session_id: args.seed, status: 'live' });
+        return null;
       }
-      if (cmd === 'timeline_status') return { status: 'open', session_id: args.seed };
-      if (cmd === 'session_bootstrap') return { control: { state: { activity: 'idle' } } };
+      if (cmd === 'session_bootstrap') return {
+        schema: 'qaqh.Ringing', version: 2, server_epoch: 'fixture', session_id: args.seed,
+        state: {
+          session_id: args.seed, seq: 0, activity: 'idle', current_turn_id: null, title: null,
+          turns: [], timeline: [], tools: [], interactions: [], subagents: [],
+        },
+      };
       if (cmd === 'pending_approvals') return [];
-      if (cmd === 'send_message') {
-        probe.sends.push({ seed: args.seed, text: args.text });
-        if (probe.failSend) throw new Error('fixture send failure');
-        if (probe.deferSend) await new Promise(resolve => { probe.release = resolve; });
-        return { status: 'accepted' };
-      }
-      if (cmd === 'service_rpc') {
-        // 工作区名录 + 两个组织写面(归属只活在桩里,断言看调用参数与分组结果)。
-        if (args.method === 'workspace.list') return structuredClone(probe.workspaces);
-        if (args.method === 'workspace.move_session' || args.method === 'workspace.detach') {
-          probe.workspaceCalls.push({ method: args.method, params: args.params });
-          const target = probe.sessions.find((session) => session.session_id === args.params.session_id);
-          if (target != null) target.workspace_id = args.method === 'workspace.detach' ? null : args.params.workspace_id;
-          return null;
+      if (cmd === 'command') {
+        const command = args.command ?? {};
+        const target = args.target;
+        if (command.type === 'session.create') {
+          probe.creates++;
+          if (probe.failCreate) throw new Error('fixture create failure');
+          const sessionId = 'composer-' + probe.creates;
+          probe.sessions.push({ session_id: sessionId, title: '对话 ' + probe.creates });
+          return { command_id: 'fixture-create-' + probe.creates, operation: command.type, status: 'accepted', result: { session_id: sessionId } };
+        }
+        if (command.type === 'conversation.send_message') {
+          probe.sends.push({ seed: target?.session_id, text: command.text });
+          if (probe.failSend) throw new Error('fixture send failure');
+          if (probe.deferSend) await new Promise(resolve => { probe.release = resolve; });
+          probe.finishSend(target?.session_id);
+          return { command_id: 'fixture-send-' + probe.sends.length, status: 'accepted' };
+        }
+        if (command.type === 'workspace.move_session' || command.type === 'workspace.detach') {
+          probe.workspaceCalls.push({ type: command.type, target, command });
+          const session = probe.sessions.find((item) => item.session_id === target?.session_id);
+          if (session != null) session.workspace_id = command.type === 'workspace.detach' ? null : command.workspace_id;
+          return { command_id: 'fixture-workspace-' + probe.workspaceCalls.length, status: 'accepted' };
         }
       }
+      if (cmd === 'service_query' && args.method === 'workspace.list') return structuredClone(probe.workspaces);
       return original(cmd, args);
     };
   })()`);
@@ -358,7 +384,8 @@ try {
   const clickSend = () => evaluate("document.querySelector('#composer .send').click()");
   const key = (key, options = "") => evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, ${options} }))`);
 
-  assert.equal(await evaluate("document.querySelector('.message-create').disabled"), false, "Session list must expose an enabled create action");
+  assert.equal(await evaluate("Boolean(document.querySelector('#composer .send'))"), true, "Startup must expose the composer send action");
+  assert.equal(await evaluate("document.querySelector('#composer .send').disabled"), true, "An empty startup draft must not be sendable");
   await capture("composer-empty-shell");
   // 启动页重构后空态按钮没了:StartupView 的发送键就是「建会话+发首条消息」的原子提交。
   await typeDraft("你好，先写草稿再新建对话");
@@ -381,7 +408,7 @@ try {
   await evaluate("window.__composerProbe.deferSend = true");
   await clickSend();
   await waitFor("window.__composerProbe.sends.length === 2 && Boolean(window.__composerProbe.release)");
-  assert.equal(await evaluate("document.querySelector('#composer .send').disabled"), true, "Pending acknowledgement must prevent duplicate sends");
+  assert.equal(await evaluate("!document.querySelector('#composer .send') && Boolean(document.querySelector('#composer .stop'))"), true, "Pending acknowledgement must keep Send unavailable while the turn is active");
   await evaluate("document.querySelector('#composer textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))");
   assert.equal(await evaluate("window.__composerProbe.sends.length"), 2, "Repeated Enter must not duplicate an in-flight send");
   await typeDraft("等待发送确认时写的下一条草稿");
@@ -447,14 +474,18 @@ try {
 
   await evaluate("[...document.querySelectorAll('.message-session-menu button')].find((el) => el.innerText.includes('桌面壳')).click()");
   await waitFor("window.__composerProbe.workspaceCalls.length === 1");
-  assert.deepEqual(await evaluate("window.__composerProbe.workspaceCalls[0]"), { method: "workspace.move_session", params: { session_id: seed, workspace_id: "w2" } });
+  assert.deepEqual(await evaluate("window.__composerProbe.workspaceCalls[0]"), {
+    type: "workspace.move_session", target: { kind: "session", session_id: seed }, command: { type: "workspace.move_session", workspace_id: "w2" },
+  });
   assert.equal(await evaluate("document.querySelector('.message-session-menu')"), null, "Choosing a workspace must close the row menu");
   await awaitGroup('桌面壳');
 
   await openRowMenu();
   await evaluate("[...document.querySelectorAll('.message-session-menu button')].find((el) => el.innerText.includes('移出工作区')).click()");
   await waitFor("window.__composerProbe.workspaceCalls.length === 2");
-  assert.deepEqual(await evaluate("window.__composerProbe.workspaceCalls[1]"), { method: "workspace.detach", params: { session_id: seed } });
+  assert.deepEqual(await evaluate("window.__composerProbe.workspaceCalls[1]"), {
+    type: "workspace.detach", target: { kind: "session", session_id: seed }, command: { type: "workspace.detach" },
+  });
   await awaitGroup('未分组');
   await openRowMenu();
   assert.equal((await rowMenu()).some((item) => item.text.includes('移出工作区')), false, "Ungrouped session must not offer detach");
@@ -509,17 +540,58 @@ try {
   assert.ok(anims.includes("session-pending-slide-out"), `Resolving must play slide-out before unmounting, got ${anims}`);
   console.log("PASS pending: status flips slide the card in (measured marquee, whole-row cover, labelled button) and slide it back out on resolve");
 
+  // headless 下 startViewTransition 回调被推迟到下一帧,迟到的旧回调会把刚激活的
+  // store deactivate(订阅被拆,后续事件无人接收)。发事件前像真实用户一样显式
+  // 重开目标会话,以宿主 attach 到达为准,保证订阅在场。
+  await evaluate(`(() => {
+    const probe = window.__composerProbe;
+    const target = probe.sessions.at(-1);
+    const row = [...document.querySelectorAll('.message-session-item')]
+      .find((el) => (el.textContent ?? '').includes(target.title));
+    if (row == null) return 'row missing';
+    row.click();
+    return target.session_id;
+  })()`);
+  await waitFor("window.__composerProbe.attaches.at(-1) === window.__composerProbe.sessions.at(-1).session_id");
+
   // Reuse the existing message timeline: exactly one four-line thinking scroller,
   // with full history, and no second rendering beside the composer.
   await evaluate(`(() => {
     const probe = window.__composerProbe;
     const seed = probe.sessions.at(-1).session_id;
-    let seq = 0;
-    const feed = event => probe.emit('timeline://entry', { session_id: seed, entry: { timeline_seq: ++seq, turn_id: 'width-check', event } });
-    window.__reasoningProbe = { feed };
-    feed({ type: 'block_opened', block: { block_id: 'width-reasoning', kind: 'reasoning', state: 'open' } });
-    feed({ type: 'text_delta', block_id: 'width-reasoning', delta: '短思考' });
+    let seq = probe.eventSeqs.get(seed) ?? 0;
+    let reasoningText = '';
+    const emit = event => {
+      probe.emit('projection://event', { session_id: seed, event: { seq: ++seq, ...event } });
+      probe.eventSeqs.set(seed, seq);
+    };
+    const block = (text) => ({
+      type: 'timeline_appended',
+      entry: { kind: 'assistant_block', data: {
+        block_id: 'width-reasoning', turn_id: 'width-check', block_kind: 'reasoning',
+        content: { kind: 'inline', data: { text } }, model: 'fixture', usage: null,
+      } },
+    });
+    window.__reasoningProbe = {
+      reset: () => { reasoningText = ''; emit(block(reasoningText)); },
+      append: text => {
+        reasoningText += text;
+        emit({ type: 'message_delta', turn_id: 'width-check', block_id: 'width-reasoning', text: reasoningText });
+      },
+      replace: text => {
+        reasoningText = text;
+        emit({ type: 'message_delta', turn_id: 'width-check', block_id: 'width-reasoning', text: reasoningText });
+      },
+      sealBlock: () => emit(block(reasoningText)),
+      endTurn: () => emit({ type: 'turn_ended', turn_id: 'width-check', outcome: {
+        kind: 'finished', data: { terminal: 'completed', usage: null, error: null },
+      } }),
+    };
+    window.__reasoningProbe.reset();
+    window.__reasoningProbe.append('短思考');
   })()`);
+  await waitFor("Boolean(document.querySelector('#messages .timeline-row.thinking .timeline-label'))");
+  await evaluate("document.querySelector('#messages .timeline-row.thinking .timeline-label').click()");
   await waitFor("document.querySelector('#messages .thinking-full')?.textContent === '短思考'");
   assert.equal(await evaluate("document.querySelector('.thinking-chain')"), null, "Bottom thinking strip must be removed");
   assert.equal(await evaluate("document.querySelectorAll('.thinking-full').length"), 1, "The existing timeline must render each reasoning block once");
@@ -537,7 +609,7 @@ try {
   })()`);
   for (const [width, height] of [[1920, 1000], [1280, 800], [480, 640]]) {
     await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-    await evaluate("window.__reasoningProbe.feed({ type: 'block_checkpoint', block_id: 'width-reasoning', text: '短思考' })");
+    await evaluate("window.__reasoningProbe.replace('短思考')");
     await waitFor("document.querySelector('.thinking-full')?.textContent === '短思考'");
     const before = await reasoningBounds();
     for (const [name, text] of [
@@ -545,7 +617,7 @@ try {
       ['path', 'C:\\workspace\\deeply-nested-directory\\filename-without-spaces.txt'.repeat(4000) + '-latest-end'],
       ['mixed', 'Thinking about中文代码与路径 '.repeat(4000) + 'latest-最新结尾'],
     ]) {
-      await evaluate(`window.__reasoningProbe.feed({ type: 'block_checkpoint', block_id: 'width-reasoning', text: ${JSON.stringify(text)} })`);
+      await evaluate(`window.__reasoningProbe.replace(${JSON.stringify(text)})`);
       await waitFor(`document.querySelector('.thinking-full')?.textContent === ${JSON.stringify(text)}`);
       await waitFor("(() => { const el = document.querySelector('.thinking-full'); return el.scrollHeight - el.scrollTop - el.clientHeight <= 2; })()");
       const after = await reasoningBounds();
@@ -558,22 +630,22 @@ try {
       assert.equal(after.scroller.chars, text.length, "Scrolling must expose the full reasoning history");
     }
     await capture(`thinking-long-${width}`);
-    await evaluate("window.__reasoningProbe.feed({ type: 'text_delta', block_id: 'width-reasoning', delta: '\\n' })");
+    await evaluate("window.__reasoningProbe.append('\\n')");
     await waitFor("document.querySelector('.thinking-full').textContent.endsWith('latest-最新结尾\\n')");
     console.log(`PASS reasoning ${width}x${height}: four-line message viewport, full history, long CJK/path/mixed text without layout shifts`);
   }
 
   const history = Array.from({ length: 40 }, (_, i) => `第 ${i + 1} 行思考`).join("\n");
-  await evaluate(`window.__reasoningProbe.feed({ type: 'block_checkpoint', block_id: 'width-reasoning', text: ${JSON.stringify(history)} })`);
+  await evaluate(`window.__reasoningProbe.replace(${JSON.stringify(history)})`);
   await waitFor("(() => { const el = document.querySelector('.thinking-full'); return el.scrollHeight - el.scrollTop - el.clientHeight <= 2; })()");
   let scroll = (await reasoningBounds()).scroller;
   assert.ok(Math.abs(scroll.height / scroll.lineHeight - 4) < 0.1, "Long thinking must display four lines");
   await evaluate("(() => { const el = document.querySelector('.thinking-full'); el.dispatchEvent(new WheelEvent('wheel', { deltaY: -120 })); el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); })()");
-  await evaluate("(async () => { window.__reasoningProbe.feed({ type: 'text_delta', block_id: 'width-reasoning', delta: '\\n第 41 行思考' }); await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); })()");
+  await evaluate("(async () => { window.__reasoningProbe.append('\\n第 41 行思考'); await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); })()");
   scroll = (await reasoningBounds()).scroller;
   assert.equal(scroll.top, 0, "New streaming text must not pull the user away from earlier thinking");
   assert.ok(scroll.tail.endsWith("第 41 行思考"), "Thinking must continue streaming while reviewing history");
-  await evaluate("(() => { const el = document.querySelector('.thinking-full'); el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); window.__reasoningProbe.feed({ type: 'text_delta', block_id: 'width-reasoning', delta: '\\n第 42 行思考' }); })()");
+  await evaluate("(() => { const el = document.querySelector('.thinking-full'); el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); window.__reasoningProbe.append('\\n第 42 行思考'); })()");
   await waitFor("(() => { const el = document.querySelector('.thinking-full'); return el.textContent.endsWith('第 42 行思考') && el.scrollHeight - el.scrollTop - el.clientHeight <= 2; })()");
   await capture("thinking-four-lines-history");
 
@@ -581,9 +653,9 @@ try {
   await waitFor("document.querySelector('.thinking-full') == null");
   await evaluate("document.querySelector('.timeline-row.thinking .timeline-label').click()");
   await waitFor("document.querySelector('.thinking-full')?.textContent.endsWith('第 42 行思考')");
-  await evaluate("window.__reasoningProbe.feed({ type: 'block_sealed', block_id: 'width-reasoning' })");
+  await evaluate("window.__reasoningProbe.sealBlock()");
   assert.equal(await evaluate("document.querySelectorAll('.thinking-full').length"), 1, "Manually opened thinking should remain available after sealing");
-  await evaluate("window.__reasoningProbe.feed({ type: 'turn_sealed', state: 'completed' })");
+  await evaluate("window.__reasoningProbe.endTurn()");
   await waitFor("document.querySelector('.thinking-full') == null");
   await evaluate("document.querySelector('.work-group .collapsed-row').click()");
   await waitFor("Boolean(document.querySelector('.timeline-row.thinking .timeline-label'))");

@@ -7,7 +7,7 @@
  *
  * 三条不可省的现实:
  *  1. 写 = Merge Patch,只发差异(见 `./patch`);整包写回会覆盖别的端的改动。
- *  2. 保存成功后**重新 load**:`config.patch` 只返回 ack,落盘前还有服务端归一化
+ *  2. 保存成功后**重新 load**:`config.save` 只返回 ack,落盘前还有服务端归一化
  *     (u64→u32 饱和、空串清除、掩码守卫)——草稿不是事实。
  *  3. 掩码 `"****"` 是读模型对密钥的全部表达(qaqh-config/src/dto.rs:22),
  *     前端永不可能读到明文,也就不可能把它写回。
@@ -59,7 +59,7 @@ async function fetchConfig(): Promise<void> {
   setLoading(true);
   setError(null);
   try {
-    const dto = await transport.query<ConfigDto>({ type: "config.load" });
+    const dto = await transport.query("config.load", {});
     setBaseline(dto);
     setDraft(structuredClone(dto));
     applyTheme(storedTheme());
@@ -178,7 +178,7 @@ export async function save(): Promise<void> {
   setError(null);
   try {
     if (!isPatchEmpty(next)) {
-      await transport.command({ type: "config.patch", patch: next as JsonValue });
+      await transport.command({ type: "config.save", patch: next as JsonValue });
     }
     await fetchConfig();
     // 本页自己的基线刷新了,但**输入区的镜像**(模型芯片、上下文百分比的分母)各有

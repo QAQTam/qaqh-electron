@@ -19,6 +19,7 @@ import {
 import { isDesktopRuntime } from "../lib/transport/backend";
 import { fetchModelCatalog } from "../oauth/model-catalog";
 import { DSACCOUNT_CONTEXT_LENGTH, OAUTH_CONTEXT_LENGTH } from "../oauth/mode";
+import type { ModelDef } from "@qaqh/sdk/protocol";
 import { Field, TextInput } from "../settings/controls";
 import { Select } from "../ui/Select";
 import { WIRE_LABELS, WIRE_PROTOCOLS } from "../settings/patch";
@@ -29,6 +30,7 @@ import {
   registry,
   registryError,
   saveProfile,
+  saveModel,
   saveProvider,
 } from "../settings/registry";
 import { fetchLiveModels } from "../settings/registry/model-fetcher";
@@ -210,9 +212,8 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
     }
     await refreshRegistry();
     const current = registry();
-    const profileId = newId(name, (current?.profiles ?? []).map((item) => item.id));
     const providerId = newId(
-      `${profileId}-provider`,
+      `${name}-provider`,
       (current?.providers ?? []).map((item) => item.id),
     );
     const providerSaved = await saveProvider(providerId, {
@@ -226,14 +227,25 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
       setError(registryError() ?? "保存服务商失败");
       return;
     }
+    const modelDefinition: ModelDef = {
+      enabled: true,
+      display_name: liveModels().find((item) => item.id === modelId)?.label ?? null,
+      context_window: context,
+      max_output_tokens: tokens,
+      reasoning_levels: [],
+      capabilities: { tool_calls: false, image_input: false, native_web_search: false, reasoning: false },
+      defaults: { max_output_tokens: tokens, native_web_search: false },
+    };
+    if (!await saveModel(providerId, modelId, modelDefinition)) {
+      setError(registryError() ?? "保存模型目录失败");
+      return;
+    }
     const saved = await saveProfile(
       {
-        id: profileId,
         name,
         provider: providerId,
         model: modelId,
         effort: null,
-        contextLength: context,
         maxTokens: tokens,
       },
       { makeDefault: true },

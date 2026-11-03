@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { extractTurnDeliverables, getTurnFileDiff, splitPath } from "../src/diff/deliverables";
 import { diffReviewStore } from "../src/diff/review-store";
-import { outputFromDisplay } from "../src/session/reducer";
 import type { ToolStep, Turn } from "../src/session/types";
 
 describe("splitPath", () => {
@@ -54,7 +53,7 @@ describe("extractTurnDeliverables", () => {
           id: "step1",
           seq: 1,
           name: "exec",
-          status: "success",
+          status: "finished",
           output: { text: "done" },
         },
       ],
@@ -79,7 +78,7 @@ describe("extractTurnDeliverables", () => {
           id: "step1",
           seq: 1,
           name: "edit",
-          status: "success",
+          status: "finished",
           output: { diffText: sampleDiff1 },
         },
         {
@@ -87,7 +86,7 @@ describe("extractTurnDeliverables", () => {
           id: "step2",
           seq: 2,
           name: "edit",
-          status: "success",
+          status: "finished",
           output: { diffText: sampleDiff2 },
         },
       ],
@@ -142,7 +141,7 @@ describe("extractTurnDeliverables", () => {
           id: "step1",
           seq: 1,
           name: "edit",
-          status: "success",
+          status: "finished",
           output: { diffText: sampleDiff1 },
         },
         {
@@ -150,7 +149,7 @@ describe("extractTurnDeliverables", () => {
           id: "step3",
           seq: 3,
           name: "edit",
-          status: "success",
+          status: "finished",
           output: { diffText: secondDiffForFile1 },
         },
       ],
@@ -180,7 +179,7 @@ describe("extractTurnDeliverables", () => {
           id: "step1",
           seq: 1,
           name: "edit",
-          status: "success",
+          status: "finished",
           output: { diffText: sampleDiff1 },
         },
       ],
@@ -199,13 +198,7 @@ describe("extractTurnDeliverables", () => {
   });
 });
 
-/**
- * 后端真实线上形状(取自 `~/.qaqh/ringing/ringing-timeline/*.json` 的 write 终态):
- * `body.kind` 恒为 `text`(工具收据文本),权威 unified diff 只挂在顶层
- * `display.diff`,`ToolBody::Diff` 没有任何生产者。此前测试全部手搓
- * `output: { diffText }`,于是抽屉在真数据上永远是骨架屏。
- */
-describe("交付物提取接后端真实 wire 槽位", () => {
+describe("v3 tool output and structured code deltas", () => {
   const cwd = "E:\\qaqh-backend";
   const wireDiff = `--- E:\\qaqh-backend\\crates\\qaqh-siwc\\Cargo.toml
 +++ E:\\qaqh-backend\\crates\\qaqh-siwc\\Cargo.toml
@@ -215,17 +208,15 @@ describe("交付物提取接后端真实 wire 槽位", () => {
 +version = "0.1.0"
 `;
 
-  function turnFromWriteTool(tool: Record<string, unknown>): Turn {
-    const display = tool.display as any;
-    const legacy = tool.output || tool.diff ? { text: tool.output as string, diffText: tool.diff as string } : undefined;
+  function turnFromWriteTool(output?: ToolStep["output"], codeDelta?: ToolStep["codeDelta"]): Turn {
     const step: ToolStep = {
       kind: "tool",
       id: "w1",
       seq: 0,
       name: "write",
-      status: "success",
-      display,
-      output: outputFromDisplay(display, legacy),
+      status: "finished",
+      output,
+      codeDelta,
     };
     return {
       id: "t1",
@@ -240,20 +231,15 @@ describe("交付物提取接后端真实 wire 槽位", () => {
     };
   }
 
-  const display = {
-    summary: "写入 crates/qaqh-siwc/Cargo.toml",
-    diff: wireDiff,
-    lines_added: 3,
-    header: { kind: "path", path: "E:\\qaqh-backend\\crates\\qaqh-siwc\\Cargo.toml", op: "write" },
-    body: { kind: "text", text: "[OK] Cargo.toml — 44 bytes, 3 lines (new file)", truncated: false },
-  };
-
-  test("display.diff 进 ToolOutput,卡片与抽屉都取得到内容", () => {
-    const turn = turnFromWriteTool({ display });
+  test("raw unified diff provides file paths and code_delta supplies aggregate counts", () => {
+    const turn = turnFromWriteTool(
+      { text: "[OK] Cargo.toml written", diffText: wireDiff },
+      { lines_added: 3, lines_removed: 0, files_created: 1, files_deleted: 0, file: null },
+    );
     const step = turn.steps[0]!;
     if (step.kind !== "tool") throw new Error("expect tool");
     expect(step.output?.diffText).toBe(wireDiff);
-    expect(step.output?.text).toContain("(new file)");
+    expect(step.output?.text).toContain("written");
 
     const deliverables = extractTurnDeliverables(turn, cwd);
     expect(deliverables).not.toBeNull();
@@ -269,31 +255,20 @@ describe("交付物提取接后端真实 wire 槽位", () => {
     expect(getTurnFileDiff(turn, "crates/qaqh-siwc/Cargo.toml", cwd)).toContain("+name = \"qaqh-siwc\"");
   });
 
-  test("归档 rebuild 后 legacy tool.diff 为 None,display.diff 仍能出图", () => {
-    const turn = turnFromWriteTool({ diff: null, display });
-    const step = turn.steps[0]!;
-    if (step.kind !== "tool") throw new Error("expect tool");
-    expect(step.output?.diffText).toBe(wireDiff);
-    expect(extractTurnDeliverables(turn, cwd)?.totalFiles).toBe(1);
-  });
-
-  test("display.diff 缺席时回退 legacy tool.diff", () => {
-    const turn = turnFromWriteTool({ diff: wireDiff, display: { ...display, diff: null } });
-    const step = turn.steps[0]!;
-    if (step.kind !== "tool") throw new Error("expect tool");
-    expect(step.output?.diffText).toBe(wireDiff);
+  test("code_delta without raw diff does not invent a file row or unified diff", () => {
+    const turn = turnFromWriteTool(undefined, {
+      lines_added: 3, lines_removed: 1, files_created: 1, files_deleted: 0, file: null,
+    });
+    expect(extractTurnDeliverables(turn, cwd)).toBeNull();
+    expect(getTurnFileDiff(turn, "crates/qaqh-siwc/Cargo.toml", cwd)).toBeNull();
   });
 });
 
 /**
- * apply_patch 的线上形状（`qaqh-file-tools/src/apply_patch.rs` 的
- * `ApplyPatchOutput::display`）：header 只报**第一个**文件的 path，
- * `lines_added/removed` 是整张补丁的合计，逐文件原文只在 `display.diff`
- * ——一次补丁可命中多个文件，裸 unified（无 `diff --git` 头）逐段拼接。
- *
- * 修复前该槽恒为 None，抽屉里只剩指纹：文件列表有 `+N −M`，diff 区空态。
+ * Multi-file raw unified diff stays path-addressable; code_delta supplies the
+ * aggregate net line count without being rendered as diff text.
  */
-describe("apply_patch 多文件 display.diff", () => {
+describe("apply_patch multi-file raw diff", () => {
   const wireApplyPatchDiff = `--- a/replica/src/App.tsx
 +++ b/replica/src/App.tsx
 @@ -1,3 +1,4 @@
@@ -308,24 +283,15 @@ describe("apply_patch 多文件 display.diff", () => {
 +export const why = "apply_patch";
 `;
 
-  const display = {
-    summary: "replica/src/App.tsx +3 −0",
-    diff: wireApplyPatchDiff,
-    lines_added: 3,
-    lines_removed: 0,
-    header: { kind: "path", path: "replica/src/App.tsx", op: "patch" },
-    body: { kind: "text", text: "[OK] apply_patch — applied: 2 file(s), +3 -0", truncated: false },
-  };
-
   function applyPatchTurn(): Turn {
     const step: ToolStep = {
       kind: "tool",
       id: "p1",
       seq: 0,
       name: "apply_patch",
-      status: "success",
-      display: display as any,
-      output: outputFromDisplay(display as any, undefined),
+      status: "finished",
+      codeDelta: { lines_added: 3, lines_removed: 0, files_created: 1, files_deleted: 0, file: null },
+      output: { text: "[OK] apply_patch — applied: 2 file(s), +3 -0", diffText: wireApplyPatchDiff },
     };
     return {
       id: "t1",

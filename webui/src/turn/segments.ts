@@ -9,7 +9,7 @@ export function workSegmentEnd(group: WorkSegment): number | undefined {
   if (group.until != null) return group.until;
   if (!group.closed && group.steps.some((step) =>
     step.kind === "tool"
-      ? step.status === "pending" || step.status === "running"
+      ? step.status === "declared" || step.status === "awaiting_permission" || step.status === "running"
       : step.endedAt == null)) return undefined;
   const ends = group.steps.flatMap((step) => step.endedAt == null ? [] : [step.endedAt]);
   return ends.length > 0 ? Math.max(...ends) : undefined;

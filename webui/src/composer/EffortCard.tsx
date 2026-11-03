@@ -72,13 +72,10 @@ export const EffortCard: Component<{
   onEffort?: (effort: ReasoningTier | null) => Promise<void> | void;
   maxTokens?: () => number | null;
   onMaxTokens?: (maxTokens: number | null) => Promise<void> | void;
-  contextLength?: () => number | null;
-  onContextLength?: (contextLength: number | null) => Promise<void> | void;
 }> = (props) => {
   const [pickingModel, setPickingModel] = createSignal(false);
   const [customModel, setCustomModel] = createSignal("");
   const [maxTokensDraft, setMaxTokensDraft] = createSignal("");
-  const [contextLengthDraft, setContextLengthDraft] = createSignal("");
   const [paramError, setParamError] = createSignal<string | null>(null);
   const [dragging, setDragging] = createSignal(false);
   /** 拖动中的**本地预览值**：不落盘，松手才写一次。 */
@@ -100,9 +97,6 @@ export const EffortCard: Component<{
       setPickingModel(false);
       setCustomModel(effectiveModel());
       setMaxTokensDraft(props.maxTokens?.() == null ? "" : String(props.maxTokens?.()));
-      setContextLengthDraft(
-        props.contextLength?.() == null ? "" : String(props.contextLength?.()),
-      );
       setParamError(null);
       void refreshConfig();
       void loadCatalog(kind);
@@ -337,7 +331,7 @@ export const EffortCard: Component<{
             </div>
           </Show>
 
-          <Show when={props.onMaxTokens != null || props.onContextLength != null}>
+          <Show when={props.onMaxTokens != null}>
             <div class="effort-card__params">
               <Show when={props.onMaxTokens != null}>
                 <label>
@@ -350,33 +344,6 @@ export const EffortCard: Component<{
                     onInput={(event) => setMaxTokensDraft(event.currentTarget.value)}
                     onBlur={() =>
                       void commitParam(maxTokensDraft(), props.maxTokens?.() ?? null, props.onMaxTokens)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        event.currentTarget.blur();
-                      }
-                    }}
-                  />
-                </label>
-              </Show>
-              <Show when={props.onContextLength != null}>
-                <label>
-                  <span>上下文窗口</span>
-                  <input
-                    class="field-input"
-                    inputmode="numeric"
-                    placeholder={
-                      props.contextLength?.() == null ? "跟随 Profile" : String(props.contextLength?.())
-                    }
-                    value={contextLengthDraft()}
-                    onInput={(event) => setContextLengthDraft(event.currentTarget.value)}
-                    onBlur={() =>
-                      void commitParam(
-                        contextLengthDraft(),
-                        props.contextLength?.() ?? null,
-                        props.onContextLength,
-                      )
                     }
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {

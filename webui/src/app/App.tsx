@@ -193,7 +193,10 @@ async function stopStaleAndReconnect(): Promise<void> {
     setHostIncompatible(null);
     setHostActionNote(null);
     // 停止是异步收敛:稍候让 boot 重新走 discovery(旧记录已消失 → 拉起 sidecar)。
-    setTimeout(() => void bootTabs().catch(() => setBootError(STR.bootFailed)), 800);
+    setTimeout(() => void bootTabs().catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      setBootError(detail === "" ? STR.bootFailed : `${STR.bootFailed}：${detail}`);
+    }), 800);
   } catch (error) {
     setHostActionNote(`${STR.hostError}:${String(error instanceof Error ? error.message : error)}`);
   }
@@ -337,7 +340,8 @@ const App: Component = () => {
       // boot() 只对「没有可用会话」写 bootError;bootstrap/网络异常在此兜底,
       // 给出可执行的下一步(§16 错误文案),而不是静默空屏。
       console.error(error);
-      setBootError(STR.bootFailed);
+      const detail = error instanceof Error ? error.message : String(error);
+      setBootError(detail === "" ? STR.bootFailed : `${STR.bootFailed}：${detail}`);
     });
     // 后台标签状态点(§5.2):轮询 sessions 列表(turn_count/running/title)。
     const poll = setInterval(() => void pollSessions(), 15_000);
@@ -377,7 +381,7 @@ const App: Component = () => {
       applyTheme(stored, false);
     } else {
       void transport
-        .query<{ theme: string | null }>({ type: "config.load" })
+        .query("config.load", {})
         .then((config) => applyTheme(config.theme, false))
         .catch(() => {});
     }
@@ -650,7 +654,7 @@ const App: Component = () => {
   const openQuitDialog = (): void => {
     setQuitConfirmStop(false);
     setQuitError(null);
-    void transport.query<Array<{ state?: string }>>({ type: "session.activity" })
+    void transport.query("session.activity", {})
       .then((activities) => {
         const activeCount = activities.filter((item) =>
           item.state === "starting" || item.state === "working" || item.state === "waiting_user",
@@ -732,6 +736,7 @@ const App: Component = () => {
   );
 
   const navigateSection = (next: GlobalSection): void => {
+    if (appCols() === 1) setSidebarDrawerOpen(false);
     if (next === "settings") {
       setSettingsSection(undefined);
       if (settingsOpen()) requestSettingsClose();
@@ -785,14 +790,6 @@ const App: Component = () => {
       await tab.store.setSessionMaxTokens(maxTokens);
     } catch (error) {
       toast(`切换最大输出失败：${String(error instanceof Error ? error.message : error)}`, "err");
-    }
-  };
-
-  const switchContextLength = async (tab: Tab, contextLength: number | null): Promise<void> => {
-    try {
-      await tab.store.setSessionContextLength(contextLength);
-    } catch (error) {
-      toast(`切换上下文窗口失败：${String(error instanceof Error ? error.message : error)}`, "err");
     }
   };
 
@@ -898,8 +895,8 @@ const App: Component = () => {
         sessions={sessionCatalog()}
         activeSeed={isStartup() ? null : (activeTab()?.seed ?? null)}
         activePending={() => activeTab()?.store.pending[0]() ?? []}
-        onSelect={(seed) => { setSection("messages"); void openSession(seed); }}
-        onCreate={() => { setSection("messages"); openStartup(); }}
+        onSelect={(seed) => { setSidebarDrawerOpen(false); setSection("messages"); void openSession(seed); }}
+        onCreate={() => { setSidebarDrawerOpen(false); setSection("messages"); openStartup(); }}
         creating={creating()}
         canCreate={hostIncompatible() == null}
         onMove={(seed, workspaceId) => { void moveSessionToWorkspace(seed, workspaceId); }}
@@ -991,8 +988,6 @@ const App: Component = () => {
                         onStop={() => tab.store.cancelTurn()}
                         focusToken={focusToken()}
                         metrics={() => tab.store.composerMetrics[0]()}
-                        onCompact={() => void tab.store.compactContext().catch(() => {})}
-                        compactPhase={() => tab.store.compact[0]().phase}
                         onPickAttachments={() => void tab.store.addAttachments().catch((error) => {
                           toast(`${STR.attachmentFailed}：${String(error instanceof Error ? error.message : error)}`, "err");
                         })}
@@ -1011,8 +1006,6 @@ const App: Component = () => {
                         onEffort={(effort) => switchEffort(tab, effort)}
                         maxTokensView={() => tab.store.composerMaxTokens[0]()}
                         onMaxTokens={(maxTokens) => switchMaxTokens(tab, maxTokens)}
-                        contextLengthView={() => tab.store.composerContextLength[0]()}
-                        onContextLength={(contextLength) => switchContextLength(tab, contextLength)}
                         toolModeView={() => tab.store.composerToolMode[0]()}
                         onToolMode={(mode, customTools) => void switchToolMode(tab, mode, customTools)}
                         /* 新建会话的目标工作区(§1.5):只改「下一条会话落在哪」,

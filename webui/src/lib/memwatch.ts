@@ -1,5 +1,6 @@
 /**
- * 内存探测客户端 —— daemon `diagnostics.memwatch` / `diagnostics.dump` 的读面。
+ * 内存探测客户端 —— daemon `diagnostics.memory.start/stop` 与
+ * `diagnostics.memory.snapshot` 的读面。
  *
  * 三条来自后端的硬约束在类型上有直接体现:
  *  - 采集是 **opt-in**:`start` 之前不采样,`snapshot` 只读环形缓冲
@@ -10,7 +11,7 @@
  *    `dropped_phase_samples` 非零时历史不连续,UI 不得装作连续。
  * 方法名与字段名以 daemon 的 serde 输出为准(snake_case),改一边另一边会红。
  */
-import { transport } from "./transport";
+import { transport, type Ack } from "./transport";
 
 export type ProcessMemory = {
   resident_bytes: number | null;
@@ -101,15 +102,15 @@ export const PHASE_KEEP = 240;
 
 export type MemoryStartResult = { enabled: boolean; started_at_ms: number };
 
-export const startMemoryProbe = (): Promise<MemoryStartResult> =>
-  transport.query<MemoryStartResult>({ type: "diagnostics.memwatch", action: "start" });
+export const startMemoryProbe = (): Promise<Ack> =>
+  transport.command({ type: "diagnostics.memory.start" });
 
-export const stopMemoryProbe = (): Promise<{ enabled: boolean }> =>
-  transport.query<{ enabled: boolean }>({ type: "diagnostics.memwatch", action: "stop" });
+export const stopMemoryProbe = (): Promise<Ack> =>
+  transport.command({ type: "diagnostics.memory.stop" });
 
-/** 统一命令 `diagnostics.dump` 恒回全量有界环;增量合并由调用方按 sequence 去重。 */
-export const loadMemorySnapshot = (): Promise<MemorySnapshot> =>
-  transport.query<MemorySnapshot>({ type: "diagnostics.dump" });
+/** 当前只轮询 snapshot；main event bridge 尚未转发 diagnostics.memory SSE。 */
+export const loadMemorySnapshot = async (afterSequence?: number): Promise<MemorySnapshot> =>
+  await transport.query("diagnostics.memory.snapshot", afterSequence === undefined ? {} : { after_sequence: afterSequence }) as MemorySnapshot;
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 

@@ -44,7 +44,7 @@ export const AboutSection: Component = () => {
   loadBuildInfo().then(setBuild, () => { setFailed(true); });
   onSettled(() => {
     // daemon.version is a JSON string (build-injected version), not an object.
-    void transport.query<unknown>({ type: "daemon.version" }).then((value) => {
+    void transport.query("daemon.version", {}).then((value) => {
       setDaemonVersion(typeof value === "string" && value.trim() !== "" ? value : null);
     }).catch(() => {});
     // Discovery carries the control protocol version; it is optional when the

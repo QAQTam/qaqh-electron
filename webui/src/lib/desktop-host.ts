@@ -13,7 +13,7 @@ export type HostCommand =
   | "invalidate_approvals"
   | "respond_approval"
   | "command"
-  | "skills_user_scan"
+  | "service_query"
   | "session_bootstrap"
   | "content_read_text"
   | "content_read_cancel"

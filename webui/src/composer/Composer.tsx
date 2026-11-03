@@ -15,7 +15,6 @@ import IconPlus from "~icons/lucide/plus";
 import IconPaperclip from "~icons/lucide/paperclip";
 import IconCamera from "~icons/lucide/camera";
 import IconChevronDown from "~icons/lucide/chevron-down";
-import IconArchive from "~icons/lucide/archive";
 import IconFolder from "~icons/lucide/folder";
 import IconX from "~icons/lucide/x";
 import { STR } from "../lib/strings";
@@ -86,8 +85,6 @@ export const Composer: Component<{
   onEffort?: (effort: import("../models/specs").ReasoningTier | null) => void;
   maxTokensView?: () => number | null;
   onMaxTokens?: (maxTokens: number | null) => Promise<void> | void;
-  contextLengthView?: () => number | null;
-  onContextLength?: (contextLength: number | null) => Promise<void> | void;
   /** 会话级工具模式视图 + 写口(§1.5)。不传 `onToolMode` 即不渲染选择器。 */
   toolModeView?: () => import("../session/store").SessionToolModeView;
   onToolMode?: (mode: string, customTools: string[]) => Promise<void> | void;
@@ -97,10 +94,6 @@ export const Composer: Component<{
   sessionWorkspace?: () => string | null;
   /** 身份行:局域网面是否开着;null = 未知,隐藏该项。 */
   lanActive?: () => boolean | null;
-  /** 上下文面板里的「压缩上下文」;未接宿主(夹具页)时不传即隐藏。 */
-  onCompact?: () => void;
-  /** 压缩进行态,用于禁用重复触发。 */
-  compactPhase?: () => "idle" | "running" | "done" | "skipped" | "failed";
   /**
    * 附件:选文件(内含宿主对话框 + 上传)。不传则不渲染附件入口——夹具页与
    * 浏览器预览没有原生对话框,拿不到这一面。
@@ -378,8 +371,6 @@ export const Composer: Component<{
               onEffort={props.onEffort}
               maxTokens={props.maxTokensView}
               onMaxTokens={props.onMaxTokens}
-              contextLength={props.contextLengthView}
-              onContextLength={props.onContextLength}
             />
             {/* 工具模式（会话级）：同一条菜单位规则；触发器由 ToolModeCard 自带。 */}
             <Show when={props.onToolMode != null && props.toolModeView != null}>
@@ -521,15 +512,6 @@ export const Composer: Component<{
                           <strong>{STR.contextBreakdownPending}</strong>
                           <small>{STR.contextBreakdownNote}</small>
                         </div>
-                        <button
-                          type="button"
-                          class="composer-context-compact"
-                          disabled={props.running() || props.compactPhase?.() === "running"}
-                          title={props.running() ? STR.contextCompactDisabledRunning : STR.contextCompactAction}
-                          onClick={() => { props.onCompact?.(); setOpenMenu(null); }}
-                        >
-                          <IconArchive />{STR.contextCompactAction}
-                        </button>
                       </div>
                     </Show>
                   </span>

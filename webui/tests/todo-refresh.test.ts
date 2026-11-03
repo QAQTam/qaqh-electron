@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { SessionStore } from "../src/session/store";
 import { transport, desktopHostSurface, type StreamHandlers } from "../src/lib/transport";
 import { createRoot } from "solid-js";
+import { sessionBootstrap } from "./session-fixtures";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -17,25 +18,29 @@ test("real host projection dispatch refreshes todos after tool completion withou
   let handlers!: StreamHandlers;
   const unlisten = vi.fn();
   vi.spyOn(host, "subscribe").mockImplementation(async (value) => { handlers = value; return unlisten; });
-  vi.spyOn(host, "sessionBootstrap").mockResolvedValue({ control: { state: { activity: "idle" } } });
+  vi.spyOn(host, "sessionBootstrap").mockResolvedValue(sessionBootstrap("todo-session"));
   vi.spyOn(transport, "attach").mockResolvedValue();
   vi.spyOn(transport, "approvals").mockResolvedValue([]);
   let items = [{ id: "T1", title: "live task", status: "pending" }];
-  const rpc = vi.spyOn(transport, "query").mockImplementation(async () => ({ items }) as never);
+  const query = vi.spyOn(transport, "query").mockImplementation(async (method) =>
+    (method === "todo.list" ? { items } : {}) as never);
   let store!: SessionStore;
   createRoot((dispose) => { store = new SessionStore("todo-session"); void dispose; });
   await store.activate();
   await vi.waitFor(() => expect(store.todos[0]()[0]?.status).toBe("pending"));
-  const event = { stream_key: { kind: "channel", data: "control" }, payload: { kind: "control_delta", data: { kind: "tool_finished", data: { call_id: "call-1", terminal_status: "succeeded" } } } };
-  rpc.mockClear();
+  const event = { seq: 1, type: "tool_finished", call_id: "call-1", status: "finished", output: null, output_truncated: false, error: null, metrics: null } as const;
+  query.mockClear();
   handlers.onProjectionEvent("another-session", event);
-  expect(rpc).not.toHaveBeenCalled();
+  expect(query).not.toHaveBeenCalled();
   items = [{ id: "T1", title: "live task", status: "completed" }];
   handlers.onProjectionEvent("todo-session", event);
   await vi.waitFor(() => expect(store.todos[0]()[0]?.status).toBe("completed"));
-  expect(rpc).toHaveBeenCalledWith({ type: "todo.list" }, { kind: "session", session_id: "todo-session" });
+  expect(query).toHaveBeenCalledWith("todo.list", { session_id: "todo-session" });
   items = [];
-  handlers.onProjectionEvent("todo-session", { stream_key: { kind: "channel", data: "conversation" }, payload: { kind: "conversation_delta", data: { kind: "turn_finished", data: {} } } });
+  handlers.onProjectionEvent("todo-session", {
+    seq: 2, type: "turn_ended", turn_id: "turn-1",
+    outcome: { kind: "finished", data: { terminal: "completed", usage: null, error: null } },
+  } as never);
   await vi.waitFor(() => expect(store.todos[0]()).toEqual([]));
   store.dispose();
   expect(unlisten).toHaveBeenCalledOnce();
@@ -84,12 +89,12 @@ test("RPC failures expose pending sync and retry automatically without a new eve
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const host = desktopHostSurface(transport)!;
   vi.spyOn(host, "subscribe").mockImplementation(async () => vi.fn());
-  vi.spyOn(host, "sessionBootstrap").mockResolvedValue({ control: { state: { activity: "idle" } } });
+  vi.spyOn(host, "sessionBootstrap").mockResolvedValue(sessionBootstrap("todo-session"));
   vi.spyOn(transport, "attach").mockResolvedValue();
   vi.spyOn(transport, "approvals").mockResolvedValue([]);
   let todoCalls = 0;
-  vi.spyOn(transport, "query").mockImplementation(async (command) => {
-    if (command.type !== "todo.list") return {} as never;
+  vi.spyOn(transport, "query").mockImplementation(async (method) => {
+    if (method !== "todo.list") return {} as never;
     todoCalls++;
     if (todoCalls === 1) throw new Error("offline");
     return { items: [{ id: "T2", status: "pending" }] } as never;

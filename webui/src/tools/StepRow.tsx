@@ -53,7 +53,7 @@ const ShellText: Component<{ text: string }> = (props) => {
 
 const ExecResult: Component<{ step: ToolStep }> = (props) => {
   const content = createMemo(() => shellContent(props.step));
-  const live = () => props.step.status === "running" || props.step.status === "pending";
+  const live = () => ["declared", "awaiting_permission", "running"].includes(props.step.status);
   let scroller: HTMLDivElement | undefined;
   let following = true;
   let frame: number | undefined;
@@ -85,7 +85,7 @@ export const ToolDetail: Component<{ step: ToolStep }> = (props) => {
   const file = () => !isSkillStep(step()) && ["read", "edit"].includes(toolPresentation(step()));
   return <div class="tool-detail">
     <Show when={file()}>
-      <Show when={step().status === "success" && step().output?.diffText}>
+      <Show when={step().status === "finished" && step().output?.diffText}>
         <div class="tool-detail-label">修改结果<span class="spacer" /><CopyButton text={() => step().output?.diffText ?? ""} /></div>
         <DiffList diffText={step().output!.diffText!} hideSingleFilePath />
       </Show>
@@ -94,9 +94,6 @@ export const ToolDetail: Component<{ step: ToolStep }> = (props) => {
       <ExecResult step={step()} />
     </Show>
     <Show when={step().error}><pre class="tool-text tool-error">{step().error}</pre></Show>
-    <Show when={step().permission != null && (step().status === "pending" || step().status === "running")}>
-      <div class="tool-waiting">等待授权:{step().permission?.reason || step().permission?.category}</div>
-    </Show>
   </div>;
 };
 
@@ -104,9 +101,9 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
   const step = () => props.step;
   const kind = () => isSkillStep(step()) ? "skill" : toolPresentation(step());
   const semantic = () => semanticLabel(step());
-  const commandIcon = () => kind() === "shell" ? toolCommandIcon(step().argsJson, step().display) : undefined;
+  const commandIcon = () => kind() === "shell" ? toolCommandIcon(step().argsJson) : undefined;
   const paths = createMemo(() => ["read", "edit"].includes(kind()) ? toolPaths(step(), props.cwd) : []);
-  const summary = () => semantic() ? "" : paths().length ? paths().join(" · ") : primaryArg(step().argsJson, step().display);
+  const summary = () => semantic() ? "" : paths().length ? paths().join(" · ") : primaryArg(step().argsJson);
   const isLatest = createMemo(() => {
     if (props.isLatest !== undefined) return props.isLatest;
     const toolSteps = (props.turn?.steps ?? []).filter((s) => s.kind === "tool");
@@ -115,41 +112,31 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
   const isShimmer = createMemo(() => {
     if (props.isShimmer !== undefined) return props.isShimmer;
     const st = step().status;
-    if (st === "error" || st === "denied" || st === "aborted") return false;
-    const active = isLatest() || st === "running" || st === "pending";
+    if (st === "failed" || st === "cancelled" || st === "interrupted") return false;
+    const active = isLatest() || st === "running" || st === "declared" || st === "awaiting_permission";
     return Boolean(active && (summary() || commandIcon()));
   });
   const hasDetails = () => kind() === "shell"
-    || (["read", "edit"].includes(kind()) && step().status === "success" && Boolean(step().output?.diffText))
-    || Boolean(step().error || (step().permission && ["pending", "running"].includes(step().status)));
+    || (["read", "edit"].includes(kind()) && step().status === "finished" && Boolean(step().output?.diffText))
+    || Boolean(step().error);
   const [override, setOverride] = createSignal<boolean | null>(null);
   // exec 默认直接展示流与终态输出；用户折叠意图优先且不会被终态重置。
-  const open = () => hasDetails() && (override() ?? (kind() === "shell" || step().status === "error"));
+  const open = () => hasDetails() && (override() ?? (kind() === "shell" || step().status === "failed"));
   const stats = createMemo(() => {
-    if (kind() !== "edit") return null;
-    if (step().status === "success") {
-      // 成功终态用后端权威行差(display 是唯一真相)。
-      const add = step().display?.lines_added ?? 0, del = step().display?.lines_removed ?? 0;
-      return add || del ? { add, del, estimating: false } : null;
-    }
-    // 失败/拒绝/中止没有"正在发生"的行数;只有真正在跑时才用估算垫显示。
-    if (["error", "denied", "aborted", "backgrounded"].includes(step().status)) return null;
-    // streamEstimate 是"参数流里数出来的行数"(tool_estimated),口径与终态同源但
-    // 语义是"模型想改多少"而非实际改动(replace_all 成倍/命中失败归零)——
-    // 必须带「估算」角标,不能被读成结果(tool-render-audit-2026-10-09 §结果真实性)。
-    const est = step().streamEstimate;
-    return est != null && (est.add || est.del) ? { add: est.add, del: est.del, estimating: true } : null;
+    const delta = step().codeDelta;
+    if (delta == null || (delta.lines_added === 0 && delta.lines_removed === 0)) return null;
+    return { add: delta.lines_added, del: delta.lines_removed };
   });
   return (
     <Show when={todoCardData(step())} fallback={<div class={{ "step-row": true, tool: true, [`st-${step().status}`]: true, "is-latest": isLatest() }}>
     <button type="button" class="tool-head" disabled={!hasDetails()} aria-expanded={hasDetails() ? open() ? "true" : "false" : undefined} onClick={() => setOverride(!open())}>
       <Switch>
-        <Match when={step().status === "pending" || step().status === "running"}><span class="tool-icon spin"><IconLoader /></span></Match>
-        <Match when={step().status === "success"}><span class="tool-icon muted" title="已完成"><Switch fallback={<IconWrench />}>
+        <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running"}><span class="tool-icon spin"><IconLoader /></span></Match>
+        <Match when={step().status === "finished"}><span class="tool-icon muted" title="已完成"><Switch fallback={<IconWrench />}>
           <Match when={kind() === "shell"}><IconTerminal /></Match><Match when={kind() === "read" || kind() === "skill"}><IconFile /></Match><Match when={kind() === "edit"}><IconEdit /></Match><Match when={kind() === "search"}><IconSearch /></Match>
         </Switch></span></Match>
-        <Match when={step().status === "error" || step().status === "denied"}><span class="tool-icon err"><IconX /></span></Match>
-        <Match when={step().status === "aborted" || step().status === "backgrounded"}><span class="tool-icon muted"><IconChevronRight /></span></Match>
+        <Match when={step().status === "failed"}><span class="tool-icon err"><IconX /></span></Match>
+        <Match when={step().status === "cancelled" || step().status === "interrupted"}><span class="tool-icon muted"><IconChevronRight /></span></Match>
       </Switch>
       <span class="tool-name">{semantic() ?? toolLabel(step().name)}</span>
       <span class="tool-summary" title={summary()}>
@@ -168,16 +155,14 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
         </Show>
         <span class="tool-summary-text"><TextShimmer text={summary()} active={isShimmer()} /></span>
       </span>
-      <Show when={stats()}><span class={{ "tool-diffstat": true, "is-estimate": stats()!.estimating }}><b class="diff-stat-add">+{stats()!.add}</b><b class="diff-stat-del">−{stats()!.del}</b><Show when={stats()!.estimating}><span class="diff-stat-flag">估算</span></Show></span></Show>
+      <Show when={stats()}><span class="tool-diffstat"><b class="diff-stat-add">+{stats()!.add}</b><b class="diff-stat-del">−{stats()!.del}</b></span></Show>
       <Switch>
-        <Match when={step().status === "pending" || step().status === "running"}>
+        <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running"}>
           <span class="tool-state">{toolPhaseLabel(step())}</span>
           <LiveElapsed startedAt={step().startedAt} />
         </Match>
-        <Match when={step().status === "error"}><span class="tool-state err">{STR.failed}</span></Match>
-        <Match when={step().status === "denied"}><span class="tool-state err">已拒绝</span></Match>
-        <Match when={step().status === "aborted"}><span class="tool-state">{STR.aborted}</span></Match>
-        <Match when={step().status === "backgrounded"}><span class="tool-state">{STR.backgrounded}</span></Match>
+        <Match when={step().status === "failed"}><span class="tool-state err">{STR.failed}</span></Match>
+        <Match when={step().status === "cancelled" || step().status === "interrupted"}><span class="tool-state">{STR.aborted}</span></Match>
       </Switch>
       <Show when={hasDetails()}><IconChevronRight class={`tool-chevron${open() ? " is-open" : ""}`} /></Show>
     </button>

@@ -222,7 +222,7 @@
   .tool-icon.err { color: var(--err); }
   .tool-icon.muted { color: var(--muted); }
   .tool-name { flex: none; font-size: var(--fs-xs); color: var(--muted); }
-  .st-running .tool-name, .st-error .tool-name, .st-denied .tool-name { color: var(--text); }
+  .st-running .tool-name, .st-failed .tool-name { color: var(--text); }
   .tool-chevron { flex: none; width: 12px; height: 12px; color: var(--muted); transition: transform var(--dur-fast) var(--ease); }
   .tool-chevron.is-open { transform: rotate(90deg); }
   .tool-summary {
@@ -255,8 +255,6 @@
   .tool-diffstat { display: inline-flex; gap: 5px; font-size: var(--fs-xs); font-family: var(--font-code); font-variant-numeric: tabular-nums; }
   .diff-stat-add { color: var(--ok); font-weight: 500; }
   .diff-stat-del { color: var(--err); font-weight: 500; }
-  .tool-diffstat.is-estimate { opacity: .66; text-decoration: underline dashed 1px; text-underline-offset: 3px; }
-  .diff-stat-flag { margin-left: 3px; font-weight: 400; opacity: .75; }
 
   .tool-detail { display: grid; gap: 6px; margin: 2px 6px 12px 30px; padding: 4px 0; min-width: 0; }
   .tool-detail-label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--fs-xs); }

@@ -1,41 +1,7 @@
-/* QAQ-Harness WebUI —— 工作区右栏与上下文压缩卡片 (Workspace & Context) */
+/* QAQ-Harness WebUI —— 工作区右栏与上下文面板 (Workspace & Context) */
 
 @layer components {
-  /* ── 压缩:聊天区卡片 + 上下文面板 ─────────────────────────────────────── */
-  .compact-card {
-    display: grid; gap: 6px;
-    width: min(var(--content-width), 100%); margin: 0 auto;
-    padding: 10px 12px;
-    border: 1px solid var(--border); border-top: 0;
-    background: var(--surface-2);
-    color: var(--muted); font-size: var(--fs-xs);
-  }
-  .compact-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .compact-card-head strong { color: var(--text); font-weight: 600; }
-  .compact-card-progress { margin-left: auto; white-space: nowrap; }
-  /* running 用脉冲点示意进行中,避免在正文里塞动画图标 */
-  .compact-card-mark { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
-  .compact-card.running .compact-card-mark { animation: compact-pulse 1.2s ease-in-out infinite; }
-  .compact-card.done .compact-card-mark,
-  .compact-card.skipped .compact-card-mark { background: var(--muted); }
-  .compact-card.failed .compact-card-mark { background: var(--err); }
-  .compact-card.failed .compact-card-head strong { color: var(--err); }
-  /* 失败/跳过的具体原因(线上 `CompactFinished.reason`):状态词做标题,原因另起一行。 */
-  .compact-card-reason {
-    margin: 0; line-height: 1.5;
-    white-space: pre-wrap; word-break: break-word;
-  }
-  .compact-card.failed .compact-card-reason { color: var(--err); }
-  .compact-card-summary {
-    max-height: 168px; overflow: auto;
-    margin: 0; padding: 8px 10px;
-    border: 1px solid var(--border); border-radius: var(--r-sm);
-    background: var(--surface); color: var(--text);
-    font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; line-height: 1.5;
-    white-space: pre-wrap; word-break: break-word;
-  }
-  @keyframes compact-pulse { 0%, 100% { opacity: .35 } 50% { opacity: 1 } }
-
+  /* ── 上下文面板 ──────────────────────────────────────────────────────── */
   .composer-context-wrap { position: relative; }
   .composer-context-trigger {
     padding: 2px 6px; border: 1px solid transparent; border-radius: var(--r-sm);
@@ -65,23 +31,6 @@
   .composer-context-breakdown { display: grid; gap: 2px; padding: 8px 10px; border: 1px dashed var(--border); border-radius: var(--r-sm); }
   .composer-context-breakdown strong { color: var(--muted); font-weight: 500; }
   .composer-context-breakdown small { color: var(--muted); opacity: .8; line-height: 1.4; overflow-wrap: anywhere; }
-  .composer-context-compact {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    width: 100%; min-height: 32px; padding: 0 12px;
-    border: 1px solid var(--border-strong); border-radius: var(--r-md);
-    background: var(--surface-2); color: var(--text); font-size: var(--fs-xs);
-  }
-  /* `.composer-menu > button`(composer.css) 是 `display: grid`:图标与文字会被拆成
-     上下两行。这个按钮要的是横排,用同特异度的选择器把它扳回来。 */
-  .composer-menu > button.composer-context-compact {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    width: 100%; min-height: 32px; padding: 0 12px;
-    border: 1px solid var(--border-strong); border-radius: var(--r-md);
-  }
-  .composer-context-compact:hover:not(:disabled) { background: var(--surface); }
-  .composer-context-compact:disabled { opacity: .55; cursor: not-allowed; }
-  .composer-context-compact svg { width: 14px; height: 14px; }
-
   /* ── 任务右栏(spec §6.3):#app 的第三列(真实列宽,不覆盖正文) ──────────── */
   .workspace-panel {
     grid-column: 3; grid-row: 2;

@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { SessionStore, CANCEL_WATCHDOG_MS } from "../src/session/store";
 import { forceSealTurn, emptySession } from "../src/session/reducer";
 import { transport } from "../src/lib/transport";
+import { applyFrame } from "./session-fixtures";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -39,26 +40,13 @@ test("cancelTurn 默认不带 turn_id（只有「取消当前回合」保留后�
   const store = new SessionStore("test-cancel");
   const cmdSpy = vi.spyOn(transport, "command").mockResolvedValue({ status: "accepted" });
 
-  (store as any).applyProjection(
-    { kind: "channel", data: "conversation" },
-    {
-      kind: "conversation_delta",
-      data: {
-        kind: "turn_started",
-        data: { turn_id: "active-turn-123", input_id: "in1", mode: "normal", revision: 1 },
-      },
-    },
-  );
+  applyFrame(store, { seq: 1, type: "turn_started", turn_id: "active-turn-123", input_id: "in1", mode: "normal" });
 
   await store.cancelTurn();
 
   expect(cmdSpy).toHaveBeenCalledWith(
-    "conversation",
-    expect.objectContaining({
-      type: "conversation_cancel",
-      turn_id: null,
-    }),
-    "test-cancel",
+    { type: "conversation.cancel", turn_id: null },
+    { kind: "session", session_id: "test-cancel" },
   );
 });
 
@@ -69,9 +57,8 @@ test("cancelTurn({ turnId }) 仍可定向取消（多客户端/历史视图）",
   await store.cancelTurn({ turnId: "turn-explicit" });
 
   expect(cmdSpy).toHaveBeenCalledWith(
-    "conversation",
-    expect.objectContaining({ type: "conversation_cancel", turn_id: "turn-explicit" }),
-    "test-cancel-targeted",
+    { type: "conversation.cancel", turn_id: "turn-explicit" },
+    { kind: "session", session_id: "test-cancel-targeted" },
   );
 });
 
@@ -81,16 +68,7 @@ test("取消看门狗：cancel 后超过宽限期仍无终态，就地收口 run
   vi.spyOn(transport, "command").mockResolvedValue({ status: "accepted" });
   const loadBootstrapSpy = vi.spyOn(store, "loadBootstrap").mockResolvedValue();
 
-  (store as any).applyProjection(
-    { kind: "channel", data: "conversation" },
-    {
-      kind: "conversation_delta",
-      data: {
-        kind: "turn_started",
-        data: { turn_id: "t-stuck", input_id: "in1", mode: "normal", revision: 1 },
-      },
-    },
-  );
+  applyFrame(store, { seq: 1, type: "turn_started", turn_id: "t-stuck", input_id: "in1", mode: "normal" });
   store.isSending[1](true);
 
   await store.cancelTurn();
@@ -114,27 +92,17 @@ test("取消看门狗：真实终态 delta 到达即撤防，不再重复收口"
   vi.spyOn(transport, "command").mockResolvedValue({ status: "accepted" });
   const loadBootstrapSpy = vi.spyOn(store, "loadBootstrap").mockResolvedValue();
 
-  (store as any).applyProjection(
-    { kind: "channel", data: "conversation" },
-    {
-      kind: "conversation_delta",
-      data: {
-        kind: "turn_started",
-        data: { turn_id: "t-fast", input_id: "in1", mode: "normal", revision: 1 },
-      },
-    },
-  );
+  applyFrame(store, { seq: 1, type: "turn_started", turn_id: "t-fast", input_id: "in1", mode: "normal" });
 
   await store.cancelTurn();
 
   // 终态 delta 在宽限期内到达
-  (store as any).applyProjection(
-    { kind: "channel", data: "conversation" },
-    {
-      kind: "conversation_delta",
-      data: { kind: "turn_interrupted", data: { turn_id: "t-fast", reason: "cancel_before_seal" } },
-    },
-  );
+  applyFrame(store, {
+    seq: 2,
+    type: "turn_ended",
+    turn_id: "t-fast",
+    outcome: { kind: "interrupted", data: { reason: "cancel_before_seal" } },
+  });
 
   await vi.advanceTimersByTimeAsync(CANCEL_WATCHDOG_MS * 2);
   // 终态路径收口一次即止，看门狗没有二次触发

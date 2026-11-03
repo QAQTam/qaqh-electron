@@ -29,7 +29,6 @@ import {
   removeStartupAttachment,
   clearStartupAttachments,
 } from "../tabs/store";
-import type { ConfigDto } from "../api/qaqh/ConfigDto";
 import { toast } from "../ui/toast";
 
 const SUGGESTIONS = [
@@ -77,7 +76,7 @@ export const StartupView: Component<{
 
   void (async () => {
     try {
-      const config = await transport.query<ConfigDto>({ type: "config.load" });
+      const config = await transport.query("config.load", {});
       if (config) {
         setConfigProfiles({
           activeProfile: config.activeProfile,
@@ -139,7 +138,7 @@ export const StartupView: Component<{
     if (!text || creating()) return;
     const ok = await submitStartupSession({
       cwd: newSessionCwd(),
-      profileId: selectedProfile(),
+      profile: selectedProfile(),
       text,
       attachmentPaths: startupAttachments(),
     });

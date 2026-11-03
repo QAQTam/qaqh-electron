@@ -1,17 +1,12 @@
 /**
- * 工具页(spec 「工具」):Skills 目录 + MCP/LSP 只读表 + 插件占位。
+ * 工具页(spec 「工具」):daemon Skills catalog + MCP/LSP 只读表 + 插件占位。
  *
- * skills 分两层展示,因为两层的读盘面不同(见 `src/skills/scan.ts` 顶部注释):
- *  - **项目级**:UI 工作区注册表下的 `SKILL.md`,走宿主已放行的 fs.list/fs.read;
- *  - **用户级**:`~/.qaqh/skills`、`~/.agents/skills`,走宿主命令 `skills_user_scan`
- *    ——daemon 的 fs.* 白名单不含这两个根,而 daemon 自己的 catalog 只经 Ringing
- *    控制事件出去(投影里没有对应 fact),webview 收不到。
+ * skills 由 `skills.catalog` 解析、校验并处理同名遮蔽；renderer 只分组展示。
  *
  * MCP/LSP 复用 config.load 的只读投影(与设置页「MCP / LSP(只读)」同源,
  * SettingsView.tsx:465-503);插件(plugin)按 codex PluginManifest 形状留占位。
  *
- * 展开正文用 Markdown 组件(与消息流同一渲染管线:marked + DOMPurify,
- * 远程图降链、外链 noopener);streaming=false 让正文整块直出。
+ * Skills catalog 只给 metadata；正文需要后续读取能力支持时再接线。
  */
 import { createEffect, createSignal, For, onSettled, Show, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
@@ -60,7 +55,9 @@ const SkillCard: Component<{ skill: SkillEntry }> = (props) => {
       <Show when={open()}>
         <div class="skill-card-body">
           <p class="skill-card-path" title={props.skill.path}>{props.skill.path}</p>
-          <Markdown text={() => props.skill.body} streaming={false} />
+          <Show when={props.skill.body != null && props.skill.body !== ""}>
+            <Markdown text={() => props.skill.body ?? ""} streaming={false} />
+          </Show>
         </div>
       </Show>
     </article>
@@ -126,7 +123,7 @@ export const ToolsPage: Component = () => {
   const [configError, setConfigError] = createSignal<string | null>(null);
 
   const loadConfig = (): void => {
-    transport.query<ConfigDto>({ type: "config.load" })
+    transport.query("config.load", {})
       .then((dto) => { setConfig(dto); setConfigError(null); })
       .catch((cause) => { setConfigError(cause instanceof Error ? cause.message : String(cause)); });
   };
@@ -162,7 +159,7 @@ export const ToolsPage: Component = () => {
     <div class="tools-page">
       <header class="tools-page-head">
         <h1>工具</h1>
-        <p>会话可用的 skills 与扩展。skills 扫两层:已注册工作区下的项目级目录,以及 home 下的用户级目录。</p>
+        <p>会话可用的 skills 与扩展。条目由 daemon 按当前工作区目录解析与校验。</p>
         <button type="button" class="ghost-mini tools-refresh" onClick={refresh} disabled={state().status === "scanning"}>
           <IconRefreshCw class={`tools-refresh-icon${state().status === "scanning" ? " spinning" : ""}`} />
           {state().status === "scanning" ? "扫描中…" : "重新扫描"}
@@ -176,36 +173,27 @@ export const ToolsPage: Component = () => {
           <div class="tools-note">
             <span class="tools-note-icon" aria-hidden="true"><IconTriangleAlert /></span>
             <div>
-              <strong>daemon 不可达,项目级 skills 展示内置演示数据</strong>
-              <p>连接桌面壳后,这里会扫描所有已注册工作区下的 SKILL.md;用户级一层由宿主直接读,不受影响。</p>
-            </div>
-          </div>
-        </Show>
-        <Show when={state().userScanUnsupported}>
-          <div class="tools-note">
-            <span class="tools-note-icon" aria-hidden="true"><IconTriangleAlert /></span>
-            <div>
-              <strong>这一版壳读不了用户级 skills</strong>
-              <p>用户级目录(~/.qaqh/skills、~/.agents/skills)不在 daemon 的 fs.* 可读根内,由宿主的 skills_user_scan 命令直接读;当前宿主没有这条命令,升级桌面壳后可见。</p>
+              <strong>daemon 不可达，无法读取 skills catalog</strong>
+              <p>恢复 daemon 连接后重新扫描。</p>
             </div>
           </div>
         </Show>
         {/* 两组常显:空态、诊断与卡片各有归属——组头带发现根,「一个都没有」才可自查。 */}
         <SkillGroup
           title="项目级"
-          hint="工作区 .qaqh/skills、.agents/skills、skills"
+          hint="由 daemon catalog 提供"
           icon={IconFolderTree}
           skills={state().project}
-          issues={state().daemonUnreachable ? [] : state().issues.filter((issue) => issue.scope === "project")}
-          empty={state().status === "scanning" ? "扫描中…" : "已注册工作区下没有 SKILL.md——放到 <工作区>/skills/<名字>/SKILL.md。"}
+          issues={state().issues.filter((issue) => issue.scope === "project")}
+          empty={state().status === "scanning" ? "读取中…" : "当前工作区 catalog 没有 project skills。"}
         />
         <SkillGroup
           title="用户级"
-          hint={userRootHint()}
+          hint="由 daemon catalog 提供"
           icon={IconUserRound}
           skills={state().user}
           issues={state().issues.filter((issue) => issue.scope === "user")}
-          empty={state().status === "scanning" ? "扫描中…" : "home 下的用户级目录里没有 SKILL.md——放到 ~/.agents/skills/<名字>/SKILL.md。"}
+          empty={state().status === "scanning" ? "读取中…" : "catalog 没有 user skills。"}
         />
       </section>
 
@@ -273,10 +261,4 @@ export const ToolsPage: Component = () => {
     </div>
   );
 
-  /** 用户级分组头:把发现根与「在不在」摊开,否则「一个都没有」无法自查。 */
-  function userRootHint(): string {
-    const roots = state().userRoots;
-    if (roots.length === 0) return "~/.qaqh/skills、~/.agents/skills";
-    return roots.map((root) => (root.exists ? root.label : `${root.label}(不存在)`)).join("、");
-  }
 };

@@ -60,7 +60,6 @@
     .session-pending-body::before,
     .session-pending-track,
     .dev-live,
-    .compact-card.running .compact-card-mark,
     .skeletonPulse,
     .genui-pulse
   ),
@@ -73,7 +72,6 @@
     .session-pending-body::before,
     .session-pending-track,
     .dev-live,
-    .compact-card.running .compact-card-mark,
     .skeletonPulse,
     .genui-pulse
   ) {

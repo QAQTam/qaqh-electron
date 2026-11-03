@@ -489,7 +489,7 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
   const loadConfig = async (): Promise<void> => {
     if (!available) return;
     try {
-      const next = await transport.query<ConfigDto>({ type: "config.load" });
+      const next = await transport.query("config.load", {});
       setConfig(next);
       setError(null);
       // 生效那一家的模型目录：不拉的话，接入页与输入区都只能显示"空列表"。

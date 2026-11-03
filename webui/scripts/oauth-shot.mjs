@@ -197,13 +197,17 @@ try {
       const internals = window.__qaqhInternals = {
         invoke: (cmd, args) => {
           window.__oauthRequests.push({ cmd, method: args?.method, params: args?.params });
-          if (cmd !== "service_rpc") return Promise.resolve(null);
-          const method = args?.method;
-          if (method === 'config.save') { Object.assign(FIXTURES['config.load'], args.params); return Promise.resolve(null); }
-          if (method === 'provider.upsert' || method === 'profile.create' || method === 'profile.update'
-              || method === 'profile.set_default' || method === 'profile.delete' || method === 'provider.delete') {
-            return Promise.resolve(null);
+          if (cmd === "command") {
+            if (args?.command?.type === "provider.list") {
+              return Promise.resolve({
+                status: "accepted",
+                result: { revision: 1, providers: { [providerId]: { ...provider, models: { [profile.model]: {} } } } },
+              });
+            }
+            return Promise.resolve({ status: "accepted" });
           }
+          if (cmd !== "service_query") return Promise.resolve(null);
+          const method = args?.method;
           if (method === 'siwc.sign_in.start') return Promise.resolve({ flowId: 'fixture-flow', authorizeUrl: 'https://example.test/oauth', expiresAtMs, redirectUri: '', usageUrl: '' });
           if (method === 'siwc.sign_in.status') return Promise.resolve({ flowId: 'fixture-flow', state: 'failed', error: { code: 'cancelled', message: '演示：授权被取消' } });
           if (method === 'dsaccount.sign_in.start') return Promise.resolve({ attemptId: 'fixture-attempt', authorizeUrl: 'https://example.test/oauth', expiresAtMs });

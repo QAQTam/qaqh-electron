@@ -1,10 +1,9 @@
 /**
  * 开发夹具:真实 `App` + 假宿主 IPC,在浏览器里跑设置浮层的读写语义。
  *
- * 为什么要有它:设置页的唯一通路是 Electron 的 `command` 统一命令面,浏览器里既
- * 没有 daemon 也没有宿主。这里把宿主替身做成「闭集式」的——只认统一命令,
- * 其余抛错,于是 fixture 里能验的是语义而不是便利:`config.patch` 收到什么 patch,
- * 就是 webview 真的发出去了什么。
+ * 为什么要有它:设置写入走 Electron 的 `command` 统一命令面，读取走类型化
+ * `service_query`。浏览器里既没有 daemon 也没有宿主，所以夹具分别模拟这两条边界；
+ * `config.save` 收到什么 patch，就是 webview 实际发出去的 patch。
  *
  * 不进产品构建:vite 构建入口是 `index.html`,本文件只被 `/settings-check.html` 引用。
  */
@@ -19,7 +18,12 @@ import type { McpServerDto } from "./api/qaqh/McpServerDto";
 import type { LspServerDto } from "./api/qaqh/LspServerDto";
 import type { DesktopHostBridge } from "./lib/desktop-host";
 
-type CommandCall = { command: Record<string, unknown> };
+type CommandCall = {
+  command: Record<string, unknown>;
+  target?: Record<string, unknown>;
+  preconditions?: Array<Record<string, unknown>>;
+  params?: Record<string, unknown>;
+};
 
 const baseConfig = (): ConfigDto => ({
   model: "ox-alpha-free",
@@ -40,10 +44,7 @@ const baseConfig = (): ConfigDto => ({
   profiles: ["default", "fast"],
   profilesDetail: {
     default: {
-      id: "default",
       name: "默认",
-      providerId: "default-provider",
-      providerName: "OpenCode Zen",
       model: "ox-alpha-free",
       baseUrl: "https://opencode.ai/zen/go/v1",
       wire: "chat",
@@ -54,10 +55,7 @@ const baseConfig = (): ConfigDto => ({
       credential: "api_key",
     },
     fast: {
-      id: "fast",
       name: "极速",
-      providerId: "fast-provider",
-      providerName: "OpenCode Zen",
       model: "ox-alpha-fast",
       baseUrl: "https://opencode.ai/zen/go/v1",
       wire: "chat",
@@ -121,7 +119,6 @@ const baseConfig = (): ConfigDto => ({
   sandbox: { enabled: true },
   toolAllowlistEnabled: false,
   toolAllowlist: [],
-  defaultToolMode: "",
   tokenizerPath: null,
 });
 
@@ -129,7 +126,7 @@ const probe = {
   calls: [] as CommandCall[],
   saves: [] as Record<string, unknown>[],
   config: baseConfig(),
-  /** `profile.list` 的权威快照；写命令与 config.load 的读投影都从它派生。 */
+  /** Legacy profile service 与新 provider/model catalog 分开维护。 */
   registry: {
     revision: 1,
     default_profile: "default",
@@ -143,28 +140,86 @@ const probe = {
       },
       "fast-provider": {
         name: "OpenCode Zen",
-        base_url: "https://opencode.ai/zen/go/v1",
+        base_url: "https://opencode.ai/zen/fast/v1",
         wire: "chat",
         credential: "api_key",
         api_key: "****",
       },
     },
+    // profile.list 现返回 ProfileSummaryDto 摘要(camelCase、按 baseUrl 对回目录,
+    // 无 provider 指针);default_profile 仅供夹具内部的 config 投影使用。
     profiles: {
       default: {
         name: "默认",
-        provider: "default-provider",
         model: "ox-alpha-free",
-        reasoning_effort: "max",
-        context_length: 1000000,
-        max_tokens: 96000,
+        baseUrl: "https://opencode.ai/zen/go/v1",
+        wire: "chat",
+        effort: "max",
+        contextLength: 1000000,
+        maxTokens: 96000,
+        apiKeySet: true,
+        credential: "api_key",
       },
       fast: {
         name: "极速",
-        provider: "fast-provider",
         model: "ox-alpha-fast",
-        reasoning_effort: "medium",
-        context_length: 200000,
-        max_tokens: 8192,
+        baseUrl: "https://opencode.ai/zen/fast/v1",
+        wire: "chat",
+        effort: "medium",
+        contextLength: 200000,
+        maxTokens: 8192,
+        apiKeySet: true,
+        credential: "api_key",
+      },
+    },
+  } as Record<string, any>,
+  providerCatalog: {
+    revision: 1,
+    default_model_selection: {
+      provider_id: "default-provider",
+      model_id: "ox-alpha-free",
+      options: { max_output_tokens: 96000, reasoning_effort: "max" },
+    },
+    providers: {
+      "default-provider": {
+        name: "OpenCode Zen",
+        base_url: "https://opencode.ai/zen/go/v1",
+        wire: "chat",
+        credential: "api_key",
+        api_key: "set",
+        headers: {},
+        compat: null,
+        models: {
+          "ox-alpha-free": {
+            enabled: true,
+            display_name: "Ox Alpha Free",
+            context_window: 1000000,
+            max_output_tokens: 96000,
+            reasoning_levels: ["medium", "high", "max"],
+            capabilities: { tool_calls: true, image_input: true, native_web_search: false, reasoning: true },
+            defaults: { max_output_tokens: 96000, reasoning_effort: "max", native_web_search: false },
+          },
+        },
+      },
+      "fast-provider": {
+        name: "OpenCode Zen",
+        base_url: "https://opencode.ai/zen/fast/v1",
+        wire: "chat",
+        credential: "api_key",
+        api_key: "set",
+        headers: {},
+        compat: null,
+        models: {
+          "ox-alpha-fast": {
+            enabled: true,
+            display_name: "Ox Alpha Fast",
+            context_window: 200000,
+            max_output_tokens: 8192,
+            reasoning_levels: ["medium", "high"],
+            capabilities: { tool_calls: true, image_input: false, native_web_search: false, reasoning: true },
+            defaults: { max_output_tokens: 8192, reasoning_effort: "medium", native_web_search: false },
+          },
+        },
       },
     },
   } as Record<string, any>,
@@ -175,52 +230,45 @@ const probe = {
 /** 把 profiles.toml 快照投影回 `config.load` 的顶字段（与 daemon 的读模型一致）。 */
 function syncProbeProjection(): void {
   const doc = probe.registry;
+  // 摘要没有 provider 指针,和 registry.ts 一样按 baseUrl 对回旧目录。
+  const providerIdOf = (baseUrl: string): string =>
+    Object.entries(doc.providers).find(([, item]: [string, any]) => item.base_url === baseUrl)?.[0] ?? "";
   const defaultId = doc.default_profile == null ? null : String(doc.default_profile);
   const profile = defaultId == null ? null : doc.profiles[defaultId];
-  const provider = profile == null ? null : doc.providers[profile.provider];
+  const provider = profile == null ? null : doc.providers[providerIdOf(profile.baseUrl)];
   probe.config.activeProfile = defaultId ?? "";
   probe.config.profiles = Object.keys(doc.profiles);
   probe.config.profilesDetail = Object.fromEntries(
-    Object.entries(doc.profiles).map(([id, item]: [string, any]) => {
-      const itemProvider = doc.providers[item.provider];
-      return [
-        id,
-        {
-          id,
-          name: item.name,
-          providerId: item.provider,
-          providerName: itemProvider?.name ?? item.provider,
-          model: item.model,
-          baseUrl: itemProvider?.base_url ?? "",
-          wire: itemProvider?.wire ?? "chat",
-          effort: item.reasoning_effort ?? null,
-          contextLength: item.context_length ?? null,
-          maxTokens: item.max_tokens ?? null,
-          apiKeySet: itemProvider?.api_key != null,
-          credential: itemProvider?.credential ?? "api_key",
-        },
-      ];
-    }),
+    Object.entries(doc.profiles).map(([id, item]: [string, any]) => [
+      id,
+      {
+        name: item.name,
+        model: item.model,
+        baseUrl: item.baseUrl ?? "",
+        wire: item.wire ?? "chat",
+        effort: item.effort ?? null,
+        contextLength: item.contextLength ?? null,
+        maxTokens: item.maxTokens ?? null,
+        apiKeySet: item.apiKeySet ?? false,
+        credential: item.credential ?? "api_key",
+      },
+    ]),
   );
   if (profile == null || provider == null) return;
   probe.config.model = profile.model;
   probe.config.baseUrl = provider.base_url;
   probe.config.wire = provider.wire;
   probe.config.credential = provider.credential;
-  probe.config.reasoningEffort = profile.reasoning_effort ?? "";
-  probe.config.contextLength = profile.context_length ?? 0;
-  probe.config.maxTokens = profile.max_tokens ?? 0;
+  probe.config.reasoningEffort = profile.effort ?? "";
+  probe.config.contextLength = profile.contextLength ?? 0;
+  probe.config.maxTokens = profile.maxTokens ?? 0;
   probe.config.apiKey = provider.api_key == null ? "" : "****";
 }
 
-/**
- * 项目级 skills 夹具:`workspace.list` 里注册一个工作区,`fs.list`/`fs.read`
- * 给出它下面的 `skills/` 目录(形状与 daemon 的 `fs_git.rs:98-196` 一致)。
- *
- * 与用户级夹具成对:两层各一条同名 `shadowed-skill`,用来在布局闸里验「被同名
- * 覆盖」的降级态真的渲染出来了。
- */
-const projectWorkspace = { id: "w1", title: "演示仓库", path: "E:/fixtures/demo-repo", order: 0 };
+/** Skills 夹具直接采用 daemon `skills.catalog` 的完成态结果。 */
+const projectWorkspace = {
+  id: "w1", title: "演示仓库", path: "E:/fixtures/demo-repo", order: 0, session_ids: [], missing_dir: false,
+};
 
 /**
  * `?workspaces=multi`:再挂三条与真实用户机器同形的 Windows 工作区——长盘符路径、
@@ -229,51 +277,26 @@ const projectWorkspace = { id: "w1", title: "演示仓库", path: "E:/fixtures/d
  */
 const multiWorkspaces = new URLSearchParams(window.location.search).get("workspaces") === "multi"
   ? [
-      { id: "w2", title: "qaqh-desktop-app", path: "D:/eew/QAQHarness/qaqh-desktop-app", order: 1 },
-      { id: "w3", title: "qaqh-backend", path: "D:/eew/QAQHarness/qaqh-backend", order: 2 },
-      { id: "w4", title: "claude-desktop", path: "C:/Users/tsy3m/AppData/Local/Programs/claude-desktop", order: 3 },
+      { id: "w2", title: "qaqh-desktop-app", path: "D:/eew/QAQHarness/qaqh-desktop-app", order: 1, session_ids: [], missing_dir: false },
+      { id: "w3", title: "qaqh-backend", path: "D:/eew/QAQHarness/qaqh-backend", order: 2, session_ids: [], missing_dir: false },
+      { id: "w4", title: "claude-desktop", path: "C:/Users/tsy3m/AppData/Local/Programs/claude-desktop", order: 3, session_ids: [], missing_dir: false },
     ]
   : [];
-const projectFs: Record<string, unknown> = {
-  [projectWorkspace.path]: [
-    { name: "skills", path: `${projectWorkspace.path}/skills`, is_dir: true, is_file: false },
-  ],
-  [`${projectWorkspace.path}/skills`]: [
-    { name: "shadowed-skill", path: `${projectWorkspace.path}/skills/shadowed-skill`, is_dir: true, is_file: false },
-  ],
-  [`${projectWorkspace.path}/skills/shadowed-skill`]: [
-    { name: "SKILL.md", path: `${projectWorkspace.path}/skills/shadowed-skill/SKILL.md`, is_dir: false, is_file: true },
-  ],
-};
-const projectFiles: Record<string, string> = {
-  [`${projectWorkspace.path}/skills/shadowed-skill/SKILL.md`]:
-    "---\nname: shadowed-skill\ndescription: 项目级同名条目。(layout fixture)\n---\n\n# Shadowed\n",
-};
-
-/**
- * 用户级 skills 夹具(`skills_user_scan` 的回包形状,见 `qaqh-electron/src/main/skills-scanner.ts`)。
- *
- * 这里是**宿主命令**而不是 daemon rpc:用户级那两个根不在 daemon `fs.*` 的
- * allowed_roots 里,布局回归要验的正是「宿主这一层真的被接上」——所以夹具给的
- * 是宿主的形状,而不是把用户级伪装成一次 fs.list。
- */
-const userSkillsFixture = {
-  roots: [
-    { path: "C:/Users/fixture/.qaqh/skills", label: "~/.qaqh/skills", exists: false },
-    { path: "C:/Users/fixture/.agents/skills", label: "~/.agents/skills", exists: true },
-  ],
+const skillsCatalogFixture = {
   skills: [
     {
-      root: "C:/Users/fixture/.agents/skills",
-      path: "C:/Users/fixture/.agents/skills/mc-bug-audit/SKILL.md",
-      content: "---\nname: mc-bug-audit\ndescription: 独立审计 / 主动找 bug。(layout fixture)\n---\n\n# Independent bug audit\n",
-      bytes: 160,
+      name: "shadowed-skill",
+      description: "项目级同名条目。(layout fixture)",
+      scope: "project",
+      origin: "project",
+      path: `${projectWorkspace.path}/skills/shadowed-skill/SKILL.md`,
     },
     {
-      root: "C:/Users/fixture/.agents/skills",
-      path: "C:/Users/fixture/.agents/skills/shadowed-skill/SKILL.md",
-      content: "---\nname: shadowed-skill\ndescription: 用户级同名条目,项目级已先占。(layout fixture)\n---\n\n# Shadowed(user)\n",
-      bytes: 160,
+      name: "mc-bug-audit",
+      description: "独立审计 / 主动找 bug。(layout fixture)",
+      scope: "user",
+      origin: "user",
+      path: "C:/Users/fixture/.agents/skills/mc-bug-audit/SKILL.md",
     },
   ],
   diagnostics: [],
@@ -307,129 +330,172 @@ function applyMergePatch(target: ConfigDto, patch: Record<string, unknown>): voi
   }
 }
 
-function hostCommand(command: Record<string, unknown>): unknown {
-  probe.calls.push({ command });
-  switch (command.type) {
+function hostService(method: string, params: Record<string, unknown> = {}): unknown {
+  probe.calls.push({ command: { type: method }, params: structuredClone(params) });
+  switch (method) {
     case "config.load":
+      syncProbeProjection();
       return structuredClone(probe.config);
-    case "config.patch": {
+    case "profile.list":
+      return structuredClone(probe.registry);
+    case "daemon.version":
+      return "3.0.20261103-1";
+    case "session.list":
+    case "session.activity":
+      return [];
+    case "session.meta":
+    case "plan.read":
+      return null;
+    case "workspace.list":
+      return [projectWorkspace, ...multiWorkspaces];
+    case "skills.catalog":
+      return structuredClone(skillsCatalogFixture);
+    case "todo.list":
+      return { items: [] };
+    case "todo.status":
+      return { items: [] };
+    case "skills.list_tools":
+      return [];
+    case "diagnostics.memory.snapshot":
+      return simMemorySnapshot();
+    default:
+      throw new Error(`service query not allowed in fixture: ${method}`);
+  }
+}
+
+function hostCommand(
+  command: Record<string, unknown>,
+  target?: Record<string, unknown>,
+  preconditions?: Array<Record<string, unknown>>,
+): Record<string, unknown> {
+  probe.calls.push({ command, target, preconditions });
+  const guardedWrites = new Set([
+    "provider.upsert", "provider.delete", "provider.model.upsert", "provider.model.delete", "model.selection.set_default",
+  ]);
+  if (guardedWrites.has(String(command.type))) {
+    const guard = preconditions?.find((item) => item.kind === "config_revision");
+    if (typeof guard?.revision !== "number" || guard.revision !== probe.providerCatalog.revision) {
+      return {
+        status: "rejected",
+        command_id: "fixture-command",
+        code: "config_revision_conflict",
+        message: "provider catalog revision changed",
+      };
+    }
+  }
+  let result: unknown;
+  let revision: number | undefined;
+  switch (command.type) {
+    case "config.save": {
       const patch = (command.patch ?? {}) as Record<string, unknown>;
       probe.saves.push(structuredClone(patch));
       applyMergePatch(probe.config, patch);
-      return structuredClone(probe.config);
+      break;
     }
-    case "profile.list":
-      syncProbeProjection();
-      return structuredClone(probe.registry);
+    case "provider.list":
+      result = structuredClone(probe.providerCatalog);
+      revision = probe.providerCatalog.revision;
+      break;
     case "provider.upsert": {
       const id = String(command.id);
       const input = (command.provider ?? {}) as Record<string, unknown>;
-      const previous = probe.registry.providers[id] ?? {};
-      const next: Record<string, unknown> = { ...previous, ...input };
-      if ("baseUrl" in input) {
-        next.base_url = input.baseUrl;
-        delete next.baseUrl;
-      }
-      if ("apiKey" in input) {
-        if (input.apiKey === "") delete next.api_key;
-        else next.api_key = "****";
-        delete next.apiKey;
-      }
-      probe.registry.providers[id] = next;
-      probe.registry.revision += 1;
-      return null;
+      const previous = probe.providerCatalog.providers[id] ?? { models: {} };
+      const secret = input.api_key as Record<string, unknown> | undefined;
+      const apiKey = secret?.operation === "clear" ? null
+        : secret?.operation === "set" ? "set"
+        : previous.api_key;
+      probe.providerCatalog.providers[id] = {
+        ...previous,
+        ...input,
+        api_key: apiKey,
+      };
+      probe.registry.providers[id] = {
+        ...(probe.registry.providers[id] ?? {}),
+        name: input.name,
+        base_url: input.base_url,
+        wire: input.wire,
+        credential: input.credential,
+        api_key: apiKey,
+      };
+      probe.providerCatalog.revision += 1;
+      revision = probe.providerCatalog.revision;
+      syncProbeProjection();
+      break;
+    }
+    case "provider.model.upsert": {
+      const providerId = String(command.provider_id);
+      const modelId = String(command.model_id);
+      const provider = probe.providerCatalog.providers[providerId];
+      if (provider == null) throw new Error(`provider ${providerId} 不存在`);
+      provider.models ??= {};
+      provider.models[modelId] = structuredClone(command.model);
+      probe.providerCatalog.revision += 1;
+      revision = probe.providerCatalog.revision;
+      break;
+    }
+    case "provider.model.delete": {
+      const provider = probe.providerCatalog.providers[String(command.provider_id)];
+      if (provider != null) delete provider.models?.[String(command.model_id)];
+      probe.providerCatalog.revision += 1;
+      revision = probe.providerCatalog.revision;
+      break;
+    }
+    case "model.selection.set_default": {
+      const selection = command.selection as Record<string, unknown>;
+      probe.providerCatalog.default_model_selection = structuredClone(selection);
+      const providerIdOf = (baseUrl: string): string =>
+        Object.entries(probe.registry.providers).find(([, item]: [string, any]) => item.base_url === baseUrl)?.[0] ?? "";
+      const selectedProfile = Object.entries(probe.registry.profiles).find(([, profile]: [string, any]) =>
+        providerIdOf(profile.baseUrl) === selection.provider_id && profile.model === selection.model_id);
+      probe.registry.default_profile = selectedProfile?.[0] ?? null;
+      probe.providerCatalog.revision += 1;
+      revision = probe.providerCatalog.revision;
+      break;
     }
     case "profile.create": {
-      const id = String(command.id);
-      const input = (command.profile ?? {}) as Record<string, unknown>;
+      const id = String(command.id ?? command.name);
       probe.registry.profiles[id] = {
-        name: input.name,
-        provider: input.provider,
-        model: input.model,
-        reasoning_effort: input.reasoningEffort ?? null,
-        context_length: input.contextLength ?? null,
-        max_tokens: input.maxTokens ?? null,
+        name: command.name,
+        model: command.model,
+        baseUrl: command.base_url ?? "",
+        wire: command.wire ?? "chat",
+        effort: command.reasoning_effort ?? null,
+        contextLength: command.context_length ?? 0,
+        maxTokens: command.max_tokens ?? null,
+        apiKeySet: command.api_key != null,
+        credential: "api_key",
       };
-      // 与后端一致：第一条存档自动成为默认。
-      if (probe.registry.default_profile == null) {
-        probe.registry.default_profile = id;
-      }
-      probe.registry.revision += 1;
+      if (probe.registry.default_profile == null) probe.registry.default_profile = id;
       syncProbeProjection();
-      return null;
-    }
-    case "profile.update": {
-      const id = String(command.id);
-      const input = (command.profile ?? {}) as Record<string, unknown>;
-      probe.registry.profiles[id] = {
-        name: input.name,
-        provider: input.provider,
-        model: input.model,
-        reasoning_effort: input.reasoningEffort ?? null,
-        context_length: input.contextLength ?? null,
-        max_tokens: input.maxTokens ?? null,
-      };
-      probe.registry.revision += 1;
-      syncProbeProjection();
-      return null;
-    }
-    case "profile.set_default": {
-      const id = String(command.id);
-      if (probe.registry.profiles[id] == null) throw new Error(`profile ${id} 不存在`);
-      probe.registry.default_profile = id;
-      probe.registry.revision += 1;
-      syncProbeProjection();
-      return null;
+      break;
     }
     case "profile.delete": {
-      const id = String(command.id);
-      if (probe.registry.default_profile === id) throw new Error("默认存档不可删除");
+      const id = String(command.name);
+      const profile = probe.registry.profiles[id];
+      const selection = probe.providerCatalog.default_model_selection;
+      const providerIdOf = (baseUrl: string): string =>
+        Object.entries(probe.registry.providers).find(([, item]: [string, any]) => item.base_url === baseUrl)?.[0] ?? "";
+      const profileProviderId = profile == null ? "" : providerIdOf(profile.baseUrl);
+      if (profile != null && selection?.provider_id === profileProviderId && selection?.model_id === profile.model) {
+        throw new Error("默认模型存档不可删除");
+      }
       delete probe.registry.profiles[id];
-      probe.registry.revision += 1;
       syncProbeProjection();
-      return null;
+      break;
     }
-    case "provider.delete": {
-      const id = String(command.id);
-      const referenced = Object.values(probe.registry.profiles).some(
-        (profile: any) => profile.provider === id,
-      );
-      if (referenced) throw new Error("服务商仍被存档引用");
-      delete probe.registry.providers[id];
-      probe.registry.revision += 1;
-      return null;
-    }
-    case "daemon.version":
-      return "2.0.20261028";
-    case "session.list":
-      return [];
-    case "workspace.list":
-      // 裸数组,与 `todo.list` 的
-      // `{ items }` 不同形;侧栏按数组直接 `.map`,给成对象会当场halt掉反应式系统。
-      return [projectWorkspace, ...multiWorkspaces];
-    case "fs.list": {
-      const entries = projectFs[String(command.path)];
-      if (entries == null) throw new Error(`fs.list ${String(command.path)}: 系统找不到指定的文件。(fixture)`);
-      return entries;
-    }
-    case "fs.read": {
-      const content = projectFiles[String(command.path)];
-      if (content == null) throw new Error(`fs.read ${String(command.path)}: 系统找不到指定的文件。(fixture)`);
-      return { path: command.path, size: content.length, truncated: false, content };
-    }
-    case "todo.list":
-      return { items: [] };
-    case "session.meta":
-      return null;
-    case "diagnostics.memwatch":
-      return command.action === "start"
-        ? { enabled: true, started_at_ms: Date.now() }
-        : { enabled: false };
-    case "diagnostics.dump":
-      return simMemorySnapshot();
+    case "diagnostics.memory.start":
+    case "diagnostics.memory.stop":
+      break;
     default:
       throw new Error(`command not allowed in fixture: ${String(command.type)}`);
   }
+  return {
+    status: "accepted",
+    command_id: "fixture-command",
+    operation: String(command.type),
+    ...(result === undefined ? {} : { result }),
+    ...(revision === undefined ? {} : { revision }),
+  };
 }
 
 /**
@@ -510,13 +576,13 @@ const internals = {
   },
   async invoke(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
     if (cmd === "command") {
-      return {
-        status: "completed",
-        command_id: "fixture-command",
-        result: hostCommand((args.command ?? {}) as Record<string, unknown>),
-      };
+      return hostCommand(
+        (args.command ?? {}) as Record<string, unknown>,
+        args.target as Record<string, unknown> | undefined,
+        args.preconditions as Array<Record<string, unknown>> | undefined,
+      );
     }
-    if (cmd === "skills_user_scan") return structuredClone(userSkillsFixture);
+    if (cmd === "service_query") return hostService(String(args.method ?? ""), (args.params ?? {}) as Record<string, unknown>);
     if (cmd === "session_list") return [];
     if (cmd === "timeline_status") return null;
     if (cmd === "daemon_lan_status") return lanView();

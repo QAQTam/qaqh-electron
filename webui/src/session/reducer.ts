@@ -1,26 +1,21 @@
-/**
- * Ringing v2 conversation reducer (SPEC-2026-10-29-PURGE):
- *
- * 纯 Canonical 事实模型：
- * - applyConversationSnapshot: 全量快照初始化
- * - applyConversationDelta: 单流增量驱动
- *
- * 单源原则：结构与顺序事实只来自后端 ConversationSnapshot / ConversationDelta。
- */
+/** Reduce the Ringing v3 bootstrap and flattened session event stream. */
 import {
   emptySession,
   type SessionState,
   type Slot,
   type Step,
-  type ToolDisplay,
   type ToolOutput,
-  type ToolStatus,
   type Turn,
   type TurnStatus,
 } from "./types";
-import type { ConversationSnapshot } from "../api/qaqh/ConversationSnapshot";
-import type { ConversationDelta } from "../api/qaqh/ConversationDelta";
-import type { ContentValue } from "../api/qaqh/ContentValue";
+import type {
+  ContentValue,
+  SessionBootstrap as RingingBootstrap,
+  SessionEventFrame,
+  TimelineEntry,
+  ToolCallView,
+  TurnOutcome,
+} from "@qaqh/sdk/protocol";
 import { now } from "../lib/time";
 
 export { emptySession };
@@ -141,60 +136,6 @@ export function parseToolOutput(outputContent: string): ToolOutput {
   return { text, stderr, exitCode, diffText };
 }
 
-export function normalizeToolStatus(state: unknown): ToolStatus {
-  switch (state) {
-    case "succeeded":
-    case "success":
-      return "success";
-    case "running":
-      return "running";
-    case "failed":
-    case "error":
-    case "timed_out":
-    case "indeterminate":
-      return "error";
-    case "cancelled":
-    case "aborted":
-      return "aborted";
-    case "denied":
-      return "denied";
-    case "backgrounded":
-      return "backgrounded";
-    case "partial":
-      return "running";
-    case "prepared":
-    case "pending":
-    default:
-      return "pending";
-  }
-}
-
-export function outputFromDisplay(display: ToolDisplay | undefined, legacy: ToolOutput | undefined): ToolOutput | undefined {
-  const body = display?.body;
-  if (!body) return legacy;
-  switch (body.kind) {
-    case "none":
-      return display?.diff ? { diffText: display.diff } : undefined;
-    case "text":
-      return { text: String(body.text ?? ""), truncated: body.truncated === true, diffText: display?.diff ?? legacy?.diffText };
-    case "diff":
-      return { diffText: String(body.unified ?? "") };
-    case "shell":
-      return { text: String(body.output ?? ""), exitCode: typeof body.exit_code === "number" ? body.exit_code : undefined, truncated: body.truncated === true };
-    case "streams":
-      return {
-        text: String(body.stdout ?? ""),
-        stderr: body.stderr ? String(body.stderr) : undefined,
-        exitCode: typeof body.exit_code === "number" ? body.exit_code : undefined,
-        truncated: body.truncated === true,
-      };
-    case "subagent":
-      return { text: `subagent:${body.name} ${body.session_id}` };
-    default:
-      return legacy;
-  }
-}
-
 export function getActiveTurn(draft: SessionState): Turn | undefined {
   if (draft.activeTurnKey && draft.turns[draft.activeTurnKey]) {
     return draft.turns[draft.activeTurnKey];
@@ -259,395 +200,379 @@ export function recomputeDerived(draft: SessionState): void {
   draft.activeReasoningTurnKey = open?.turnKey ?? null;
 }
 
-/**
- * 全量快照初始装载：打开会话或重连时，直接将 ConversationSnapshot 物化为 Solid Store。
- */
-export function applyConversationSnapshot(
-  draft: SessionState,
-  snapshot: ConversationSnapshot,
-  ts: number = now(),
-): SessionState {
-  draft.turns = {};
-  draft.slots = [];
-
-  // 1. 初始化所有已存在的回合容器
-  for (let i = 0; i < snapshot.turns.length; i++) {
-    const turnState = snapshot.turns[i]!;
-    const turnId = turnState.turn_id;
-    const outcome = turnState.outcome;
-    let status: TurnStatus = "running";
-    let error: { message: string } | undefined;
-    if (outcome) {
-      if (outcome.kind === "finished") {
-        const terminal = outcome.data.terminal;
-        status = terminal === "completed" ? "done" : terminal === "cancelled" ? "aborted" : "failed";
-        if (outcome.data.error) {
-          error = { message: outcome.data.error.message || outcome.data.error.code || "回合失败" };
-        }
-      } else if (outcome.kind === "interrupted") {
-        status = "aborted";
-      }
-    }
-
-    const key = `#${i}`;
-    const turn: Turn = {
-      id: turnId,
-      key,
-      turnIndex: i,
-      user: { text: "" },
-      steps: [],
-      answer: null,
-      answerStepId: null,
-      status,
-      workStartedAt: ts,
-      error,
-      expanded: false,
-    };
-    if (turnState.input_id) {
-      (turn as any).inputId = turnState.input_id;
-    }
-    draft.turns[turn.key] = turn;
-    if (turn.id !== turn.key) {
-      draft.turns[turn.id] = turn;
-    }
-    draft.slots.push({ kind: "turn", key: turn.key });
-  }
-
-  // 2. 遍历 context 事实，原位装配到对应的 turn
-  for (const entry of snapshot.context) {
-    const item = entry.kind;
-    switch (item.kind) {
-      case "input": {
-        const inputData = item.data;
-        const turn = Object.values(draft.turns).find(t => {
-          const turnState = snapshot.turns.find(ts => ts.turn_id === t.id);
-          return turnState?.input_id === inputData.input_id || (t as any).inputId === inputData.input_id;
-        }) || (draft.slots.length > 0 ? draft.turns[draft.slots[draft.slots.length - 1]!.key] : undefined);
-        if (turn) {
-          turn.user.text = contentValueToText(inputData.content);
-          turn.user.contentRef = contentRefOf(inputData.content);
-        }
-        break;
-      }
-      case "assistant_block": {
-        const blockData = item.data;
-        const turn = draft.turns[blockData.turn_id];
-        if (!turn) break;
-        const text = contentValueToText(blockData.content);
-        if (blockData.block_kind === "reasoning") {
-          turn.steps.push({
-            kind: "thinking",
-            id: blockData.block_id,
-            seq: 0,
-            text,
-            contentRef: contentRefOf(blockData.content),
-            endedAt: ts,
-          });
-        } else if (blockData.block_kind === "answer") {
-          turn.steps.push({
-            kind: "text",
-            id: blockData.block_id,
-            seq: 0,
-            text,
-            contentRef: contentRefOf(blockData.content),
-            endedAt: ts,
-          });
-          turn.answer = { text, startedAt: turn.workStartedAt };
-          turn.answerStepId = blockData.block_id;
-        }
-        break;
-      }
-      case "tool_call": {
-        const toolData = item.data;
-        const turnId = toolData.turn_id;
-        const turn = turnId ? draft.turns[turnId] : (draft.slots.length > 0 ? draft.turns[draft.slots[draft.slots.length - 1]!.key] : undefined);
-        if (!turn) break;
-        const res = toolData.result;
-        const status = res ? normalizeToolStatus(res.terminal_status) : "running";
-        const argsText = toolData.args ? contentValueToText(toolData.args) : undefined;
-        const outText = res?.output ? contentValueToText(res.output) : undefined;
-        const step: Extract<Step, { kind: "tool" }> = {
-          kind: "tool",
-          id: toolData.call_id,
-          seq: 0,
-          name: toolData.tool_name ?? "",
-          argsJson: argsText,
-          argsRef: contentRefOf(toolData.args),
-          status,
-          startedAt: res?.metrics?.started_at_ms ?? ts,
-          endedAt: res?.metrics?.finished_at_ms,
-          elapsedMs: res?.metrics ? (res.metrics.finished_at_ms >= res.metrics.started_at_ms ? res.metrics.finished_at_ms - res.metrics.started_at_ms : undefined) : undefined,
-          output: outText ? parseToolOutput(outText) : undefined,
-          outputRef: contentRefOf(res?.output),
-          error: res?.error?.message || res?.error?.code,
-        };
-        turn.steps.push(step);
-        break;
-      }
-      case "compaction": {
-        break;
-      }
-    }
-  }
-
-  draft.totalTurns = draft.slots.length;
-  recomputeDerived(draft);
-  return draft;
+function findTurn(draft: SessionState, turnId: string | null | undefined): Turn | undefined {
+  if (!turnId) return undefined;
+  return Object.values(draft.turns).find((turn) => turn.id === turnId);
 }
 
-/**
- * 增量事件原子驱动：根据单一流推送的 ConversationDelta 更新状态。
- */
-export function applyConversationDelta(draft: SessionState, delta: ConversationDelta): SessionState {
-  const ts = now();
-  switch (delta.kind) {
-    case "input_accepted": {
-      const text = contentValueToText(delta.data.content);
-      const inputId = delta.data.input_id;
-      const turnId = `input_${inputId}`;
-      const turn: Turn = {
-        id: turnId,
-        key: turnId,
-        turnIndex: null,
-        user: { text, contentRef: contentRefOf(delta.data.content) },
-        steps: [],
-        answer: null,
-        answerStepId: null,
-        status: "running",
-        workStartedAt: ts,
-        expanded: false,
-      };
-      (turn as any).inputId = inputId;
-      draft.turns[turn.id] = turn;
-      draft.slots.push({ kind: "turn", key: turn.key });
+function ensureTurn(draft: SessionState, turnId: string | null | undefined, inputId?: string | null): Turn {
+  let turn = findTurn(draft, turnId);
+  if (!turn && inputId) turn = Object.values(draft.turns).find((item) => item.inputId === inputId);
+  if (turn) {
+    if (turnId) turn.id = turnId;
+    if (inputId) turn.inputId = inputId;
+    return turn;
+  }
+  const id = turnId || (inputId ? `input:${inputId}` : `pending:${crypto.randomUUID()}`);
+  const key = id;
+  turn = {
+    id,
+    key,
+    inputId: inputId ?? null,
+    turnIndex: null,
+    user: { text: "" },
+    steps: [],
+    answer: null,
+    answerStepId: null,
+    status: "running",
+    workStartedAt: now(),
+    expanded: false,
+  };
+  draft.turns[key] = turn;
+  draft.slots.push({ kind: "turn", key });
+  return turn;
+}
+
+function statusFromOutcome(outcome: TurnOutcome | null | undefined): { status: TurnStatus; error?: { message: string }; usage?: Turn["usage"] } {
+  if (!outcome) return { status: "running" };
+  if (outcome.kind === "interrupted") return { status: "aborted" };
+  const { terminal, error, usage } = outcome.data;
+  const status: TurnStatus = terminal === "completed" ? "done" : terminal === "cancelled" ? "aborted" : "failed";
+  return {
+    status,
+    ...(error ? { error: { message: error.message || error.code || "回合失败" } } : {}),
+    usage,
+  };
+}
+
+function displayJson(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "string") return value;
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+function upsertAssistantBlock(
+  draft: SessionState,
+  turnId: string,
+  blockId: string,
+  blockKind: "reasoning" | "answer" | "tool_call",
+  content: ContentValue,
+  sealed: boolean,
+): void {
+  if (blockKind === "tool_call") return;
+  const turn = ensureTurn(draft, turnId);
+  const kind = blockKind === "reasoning" ? "thinking" : "text";
+  const pending = draft.pendingBlocks[blockId];
+  const text = pending?.text ?? contentValueToText(content);
+  const ref = contentRefOf(content);
+  const existing = turn.steps.find((step) => step.id === blockId);
+  if (existing && existing.kind === kind) {
+    existing.text = text;
+    existing.contentRef = ref;
+    if (sealed) existing.endedAt = now();
+  } else {
+    const step: Step = kind === "thinking"
+      ? { kind, id: blockId, seq: turn.steps.length, text, contentRef: ref, ...(sealed ? { endedAt: now() } : {}) }
+      : { kind, id: blockId, seq: turn.steps.length, text, contentRef: ref, ...(sealed ? { endedAt: now() } : {}) };
+    turn.steps.push(step);
+  }
+  delete draft.pendingBlocks[blockId];
+  if (kind === "text") {
+    turn.answer = { text, startedAt: turn.workStartedAt };
+    turn.answerStepId = blockId;
+  } else {
+    demoteAnswerIfStale(turn);
+  }
+  turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+}
+
+function upsertToolCall(draft: SessionState, call: ToolCallView, fallbackTurnId?: string | null): void {
+  const turn = ensureTurn(draft, call.turn_id ?? fallbackTurnId);
+  const pendingArgs = draft.pendingToolArguments[call.call_id];
+  const args = pendingArgs?.text ?? displayJson(call.args);
+  const outputText = call.output ? contentValueToText(call.output) : "";
+  const next: Extract<Step, { kind: "tool" }> = {
+    kind: "tool",
+    id: call.call_id,
+    seq: turn.steps.length,
+    name: call.tool_name ?? "",
+    argsJson: args ?? undefined,
+    argsRef: undefined,
+    status: call.status,
+    startedAt: call.metrics?.started_at_ms,
+    endedAt: call.metrics?.finished_at_ms,
+    elapsedMs: call.metrics && call.metrics.finished_at_ms >= call.metrics.started_at_ms
+      ? call.metrics.finished_at_ms - call.metrics.started_at_ms : undefined,
+    output: outputText
+      ? { ...parseToolOutput(outputText), truncated: call.output_truncated }
+      : call.output_truncated ? { truncated: true } : undefined,
+    outputRef: call.output ? contentRefOf(call.output) : undefined,
+    error: call.error?.message || call.error?.code,
+    codeDelta: call.code_delta,
+    effects: call.effects,
+  };
+  const index = turn.steps.findIndex((step) => step.id === call.call_id);
+  if (index >= 0 && turn.steps[index]?.kind === "tool") turn.steps[index] = { ...turn.steps[index] as Extract<Step, { kind: "tool" }>, ...next };
+  else turn.steps.push(next);
+  delete draft.pendingToolArguments[call.call_id];
+  turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+}
+
+function applyTimelineEntry(draft: SessionState, entry: TimelineEntry, tools: Map<string, ToolCallView>): void {
+  switch (entry.kind) {
+    case "input": {
+      const data = entry.data;
+      const turn = ensureTurn(draft, data.turn_id);
+      turn.user.text = contentValueToText(data.content);
+      turn.user.contentRef = contentRefOf(data.content);
+      turn.renderVersion = (turn.renderVersion ?? 0) + 1;
       break;
     }
-    case "turn_started": {
-      const inputId = delta.data.input_id;
-      const turnId = delta.data.turn_id;
-      const existing = Object.values(draft.turns).find(t => (t as any).inputId === inputId);
-      if (existing) {
-        const oldKey = existing.key;
-        delete draft.turns[existing.id];
-        existing.id = turnId;
-        existing.key = turnId;
-        existing.status = "running";
-        existing.workStartedAt = ts;
-        draft.turns[existing.id] = existing;
-        const slotIdx = draft.slots.findIndex(s => s.kind === "turn" && s.key === oldKey);
-        if (slotIdx !== -1) {
-          draft.slots[slotIdx] = { kind: "turn", key: existing.key };
-        }
-      } else {
-        let turn = draft.turns[turnId];
-        if (!turn) {
-          turn = {
-            id: turnId,
-            key: turnId,
-            turnIndex: null,
-            user: { text: "" },
-            steps: [],
-            answer: null,
-            answerStepId: null,
-            status: "running",
-            workStartedAt: ts,
-            expanded: false,
-          };
-          (turn as any).inputId = inputId;
-          draft.turns[turn.id] = turn;
-          draft.slots.push({ kind: "turn", key: turn.key });
-        } else {
-          turn.status = "running";
-          turn.workStartedAt = ts;
-        }
+    case "assistant_block":
+      upsertAssistantBlock(draft, entry.data.turn_id, entry.data.block_id, entry.data.block_kind, entry.data.content, true);
+      if (entry.data.block_kind === "answer" && entry.data.usage) {
+        const turn = findTurn(draft, entry.data.turn_id);
+        if (turn) turn.usage = entry.data.usage;
+      }
+      break;
+    case "tool_call": {
+      const call = tools.get(entry.data.call_id);
+      if (call) upsertToolCall(draft, call, entry.data.turn_id);
+      else {
+        const turn = ensureTurn(draft, entry.data.turn_id);
+        const pending = draft.pendingToolArguments[entry.data.call_id];
+        const old = turn.steps.find((step) => step.id === entry.data.call_id);
+        if (!old) turn.steps.push({ kind: "tool", id: entry.data.call_id, seq: turn.steps.length, name: "", argsJson: pending?.text, status: "declared" });
+        delete draft.pendingToolArguments[entry.data.call_id];
       }
       break;
     }
-    case "tool_call_declared": {
-      const turn = draft.turns[delta.data.turn_id] || getActiveTurn(draft);
-      if (turn) {
-        demoteAnswerIfStale(turn);
-        const existing = turn.steps.find(s => s.id === delta.data.call_id);
-        if (!existing) {
-          const step: Extract<Step, { kind: "tool" }> = {
-            kind: "tool",
-            id: delta.data.call_id,
-            seq: 0,
-            name: delta.data.tool_name,
-            argsJson: contentValueToText(delta.data.args),
-            argsRef: contentRefOf(delta.data.args),
-            status: "running",
-            startedAt: ts,
-          };
-          turn.steps.push(step);
-        }
+    case "tool_result": {
+      const turn = findTurn(draft, entry.data.turn_id);
+      const step = turn?.steps.find((item) => item.kind === "tool" && item.id === entry.data.call_id);
+      if (turn && step?.kind === "tool" && step.output == null && step.outputRef == null) {
+        const text = contentValueToText(entry.data.content);
+        step.output = text ? parseToolOutput(text) : undefined;
+        step.outputRef = contentRefOf(entry.data.content);
         turn.renderVersion = (turn.renderVersion ?? 0) + 1;
       }
       break;
     }
-    case "tool_finished": {
-      const callId = delta.data.call_id;
+    case "compaction": {
+      const text = contentValueToText(entry.data.summary);
+      if (text && !draft.compactionSummaries.includes(text)) draft.compactionSummaries.push(text);
+      break;
+    }
+  }
+}
+
+/** Materialize the canonical bootstrap without routing through the retired ConversationSnapshot shape. */
+export function applySessionBootstrap(draft: SessionState, bootstrap: RingingBootstrap): SessionState {
+  const expanded = new Map(Object.values(draft.turns).map((turn) => [turn.id, turn.expanded]));
+  draft.turns = {};
+  draft.slots = [];
+  draft.pendingBlocks = {};
+  draft.pendingToolArguments = {};
+  draft.interactionIds = bootstrap.state.interactions.filter((item) => item.resolution == null).map((item) => item.interaction_id);
+  draft.waits = [];
+  draft.compactionSummaries = [];
+  draft.serverEpoch = bootstrap.server_epoch;
+  draft.watermark = bootstrap.state.seq;
+
+  for (const item of bootstrap.state.turns) {
+    const status = statusFromOutcome(item.outcome);
+    const turn: Turn = {
+      id: item.turn_id,
+      key: item.turn_id,
+      inputId: item.input_id ?? null,
+      turnIndex: null,
+      user: { text: "" },
+      steps: [],
+      answer: null,
+      answerStepId: null,
+      status: status.status,
+      workStartedAt: item.turn_id === bootstrap.state.current_turn_id ? now() : undefined,
+      error: status.error,
+      usage: status.usage,
+      expanded: expanded.get(item.turn_id) ?? false,
+    };
+    draft.turns[turn.key] = turn;
+    draft.slots.push({ kind: "turn", key: turn.key });
+  }
+  draft.waits = bootstrap.state.interactions.filter((item) => item.resolution == null).map((item) => ({
+    interactionId: item.interaction_id,
+    turnKey: findTurn(draft, item.turn_id)?.key ?? null,
+    kind: item.kind === "ask" ? "ask" : "approval",
+    from: now(),
+  }));
+
+  const tools = new Map(bootstrap.state.tools.map((tool) => [tool.call_id, tool]));
+  for (const entry of bootstrap.state.timeline) applyTimelineEntry(draft, entry, tools);
+  for (const tool of bootstrap.state.tools) {
+    if (!Object.values(draft.turns).some((turn) => turn.steps.some((step) => step.kind === "tool" && step.id === tool.call_id))) {
+      upsertToolCall(draft, tool);
+    }
+  }
+  draft.totalTurns = bootstrap.state.turns.length;
+  draft.hasMore = false;
+  draft.truncatedBefore = false;
+  draft.oldestIndex = null;
+  recomputeDerived(draft);
+  return draft;
+}
+
+function appendBounded(current: string | undefined, addition: string): { value: string; truncated: boolean } {
+  const combined = (current ?? "") + addition;
+  const limit = 16 * 1024;
+  return combined.length > limit ? { value: combined.slice(-limit), truncated: true } : { value: combined, truncated: false };
+}
+
+function turnForEvent(draft: SessionState, turnId: string): Turn {
+  return findTurn(draft, turnId) ?? ensureTurn(draft, turnId);
+}
+
+/** Reduce one flattened v3 event directly into the UI view model. */
+export function applySessionEvent(draft: SessionState, event: SessionEventFrame): SessionState {
+  const streaming = event.type === "message_delta" || event.type === "tool_arguments_delta" || event.type === "tool_output_delta";
+  switch (event.type) {
+    case "activity_changed":
+      if (event.current_turn_id && event.activity === "running") turnForEvent(draft, event.current_turn_id).status = "running";
+      break;
+    case "turn_started": {
+      const turn = ensureTurn(draft, event.turn_id, event.input_id);
+      turn.status = "running";
+      turn.workStartedAt ??= now();
+      break;
+    }
+    case "turn_ended": {
+      const turn = turnForEvent(draft, event.turn_id);
+      const status = statusFromOutcome(event.outcome);
+      turn.status = status.status;
+      turn.error = status.error;
+      turn.usage = status.usage;
+      if (turn.answer == null) {
+        const answer = [...turn.steps].reverse().find((step) => step.kind === "text");
+        if (answer?.kind === "text") { turn.answer = { text: answer.text, startedAt: turn.workStartedAt }; turn.answerStepId = answer.id; }
+      }
+      turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+      break;
+    }
+    case "tool_arguments_delta": {
+      const turn = turnForEvent(draft, event.turn_id);
+      const step = turn.steps.find((item) => item.kind === "tool" && item.id === event.call_id);
+      if (step?.kind === "tool") { step.argsJson = event.text; turn.renderVersion = (turn.renderVersion ?? 0) + 1; }
+      else draft.pendingToolArguments[event.call_id] = { turnId: event.turn_id, text: event.text };
+      break;
+    }
+    case "tool_started": {
       for (const turn of Object.values(draft.turns)) {
-        const step = turn.steps.find(s => s.id === callId);
-        if (step && step.kind === "tool") {
-          step.status = normalizeToolStatus(delta.data.terminal_status);
-          step.endedAt = delta.data.metrics?.finished_at_ms ?? ts;
-          if (delta.data.metrics) {
-            step.elapsedMs = delta.data.metrics.finished_at_ms >= delta.data.metrics.started_at_ms
-              ? delta.data.metrics.finished_at_ms - delta.data.metrics.started_at_ms
-              : undefined;
-          }
-          const outText = delta.data.output ? contentValueToText(delta.data.output) : undefined;
-          step.output = outText != null ? parseToolOutput(outText) : undefined;
-          step.outputRef = contentRefOf(delta.data.output);
-          if (delta.data.error) {
-            step.error = delta.data.error.message || delta.data.error.code;
-          }
+        const step = turn.steps.find((item) => item.kind === "tool" && item.id === event.call_id);
+        if (step?.kind === "tool") { step.status = "running"; turn.renderVersion = (turn.renderVersion ?? 0) + 1; break; }
+      }
+      break;
+    }
+    case "tool_output_delta": {
+      for (const turn of Object.values(draft.turns)) {
+        const step = turn.steps.find((item) => item.kind === "tool" && item.id === event.call_id);
+        if (step?.kind === "tool") {
+          const isStderr = event.stream === "stderr";
+          const next = appendBounded(isStderr ? step.progressStderrTail : step.progressTail, event.text);
+          if (isStderr) step.progressStderrTail = next.value;
+          else step.progressTail = next.value;
+          step.progressTruncated = step.progressTruncated === true || next.truncated;
           turn.renderVersion = (turn.renderVersion ?? 0) + 1;
           break;
         }
       }
       break;
     }
-    case "assistant_block_sealed": {
-      const turn = draft.turns[delta.data.turn_id] || getActiveTurn(draft);
-      if (turn) {
-        const text = contentValueToText(delta.data.content);
-        if (delta.data.block_kind === "reasoning") {
-          const existing = turn.steps.find(s => s.id === delta.data.block_id);
-          if (existing && existing.kind === "thinking") {
-            existing.text = text;
-            existing.contentRef = contentRefOf(delta.data.content);
-            existing.endedAt = ts;
-          } else {
-            turn.steps.push({
-              kind: "thinking",
-              id: delta.data.block_id,
-              seq: 0,
-              text,
-              contentRef: contentRefOf(delta.data.content),
-              endedAt: ts,
-            });
-          }
-          demoteAnswerIfStale(turn);
-        } else if (delta.data.block_kind === "answer") {
-          const existing = turn.steps.find(s => s.id === delta.data.block_id);
-          if (existing && existing.kind === "text") {
-            existing.text = text;
-            existing.contentRef = contentRefOf(delta.data.content);
-            existing.endedAt = ts;
-          } else {
-            const step: Extract<Step, { kind: "text" }> = {
-              kind: "text",
-              id: delta.data.block_id,
-              seq: 0,
-              text,
-              contentRef: contentRefOf(delta.data.content),
-              endedAt: ts,
-            };
-            turn.steps.push(step);
-          }
-          turn.answer = { text, startedAt: turn.workStartedAt ?? ts };
-          turn.answerStepId = delta.data.block_id;
+    case "tool_finished": {
+      let target: Turn | undefined;
+      let step: Extract<Step, { kind: "tool" }> | undefined;
+      for (const turn of Object.values(draft.turns)) {
+        const candidate = turn.steps.find((item) => item.kind === "tool" && item.id === event.call_id);
+        if (candidate?.kind === "tool") { target = turn; step = candidate; break; }
+      }
+      if (!target || !step) {
+        target = getActiveTurn(draft);
+        if (target) {
+          step = { kind: "tool", id: event.call_id, seq: target.steps.length, name: "", status: "declared" };
+          target.steps.push(step);
         }
-        turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+      }
+      if (target && step) {
+        step.status = event.status;
+        step.endedAt = event.metrics?.finished_at_ms ?? now();
+        step.elapsedMs = event.metrics && event.metrics.finished_at_ms >= event.metrics.started_at_ms
+          ? event.metrics.finished_at_ms - event.metrics.started_at_ms : undefined;
+        const text = event.output ? contentValueToText(event.output) : "";
+        step.output = text
+          ? { ...parseToolOutput(text), truncated: event.output_truncated }
+          : event.output_truncated ? { truncated: true } : undefined;
+        step.outputRef = event.output ? contentRefOf(event.output) : undefined;
+        step.error = event.error?.message || event.error?.code;
+        step.codeDelta = event.code_delta;
+        step.effects = event.effects;
+        step.progressTail = undefined;
+        step.progressStderrTail = undefined;
+        target.renderVersion = (target.renderVersion ?? 0) + 1;
       }
       break;
     }
-    case "turn_finished": {
-      const turn = draft.turns[delta.data.turn_id] || getActiveTurn(draft);
-      if (turn) {
-        turn.status = delta.data.terminal === "completed" ? "done" : delta.data.terminal === "cancelled" ? "aborted" : "failed";
-        if (delta.data.error) {
-          turn.error = { message: delta.data.error.message || delta.data.error.code || "回合失败" };
-        }
+    case "timeline_appended":
+      applyTimelineEntry(draft, event.entry, new Map(bootstrapTools(draft)));
+      break;
+    case "message_delta": {
+      const turn = turnForEvent(draft, event.turn_id);
+      const step = turn.steps.find((item) => item.id === event.block_id);
+      if (step?.kind === "thinking" || step?.kind === "text") {
+        step.text = event.text;
+        if (step.kind === "text" && turn.answerStepId === step.id) turn.answer = { text: event.text, startedAt: turn.workStartedAt };
         turn.renderVersion = (turn.renderVersion ?? 0) + 1;
-      }
+      } else draft.pendingBlocks[event.block_id] = { turnId: event.turn_id, text: event.text };
       break;
     }
-    case "turn_interrupted": {
-      const turn = draft.turns[delta.data.turn_id] || getActiveTurn(draft);
-      if (turn) {
-        turn.status = "aborted";
-        turn.renderVersion = (turn.renderVersion ?? 0) + 1;
-      }
+    case "interaction_requested": {
+      const interaction = event.interaction;
+      if (!draft.interactionIds.includes(interaction.interaction_id)) draft.interactionIds.push(interaction.interaction_id);
+      draft.waits.push({ interactionId: interaction.interaction_id, turnKey: findTurn(draft, interaction.turn_id)?.key ?? null, kind: interaction.kind === "ask" ? "ask" : "approval", from: now() });
       break;
     }
-    case "assistant_block_progress": {
-      // 生成中的累计快照：同一个 block_id 被后续帧持续替换，
-      // 封口的 assistant_block_sealed 复用同一 id，因此不会出现"流一份、封口再追加一份"。
-      const turn = draft.turns[delta.data.turn_id] || getActiveTurn(draft);
-      if (turn) {
-        const text = delta.data.text;
-        const existing = turn.steps.find(s => s.id === delta.data.block_id);
-        if (delta.data.block_kind === "reasoning") {
-          if (existing && existing.kind === "thinking") {
-            existing.text = text;
-          } else {
-            turn.steps.push({
-              kind: "thinking",
-              id: delta.data.block_id,
-              seq: 0,
-              startedAt: ts,
-              text,
-            });
-          }
-          if (!existing) {
-            draft.activeReasoningId = delta.data.block_id;
-            draft.activeReasoningTurnKey = turn.key;
-          }
-          demoteAnswerIfStale(turn);
-        } else {
-          if (existing && existing.kind === "text") {
-            existing.text = text;
-          } else {
-            turn.steps.push({
-              kind: "text",
-              id: delta.data.block_id,
-              seq: 0,
-              startedAt: ts,
-              text,
-            });
-          }
-          turn.answer = { text, startedAt: turn.workStartedAt ?? ts };
-          turn.answerStepId = delta.data.block_id;
-        }
-        turn.renderVersion = (turn.renderVersion ?? 0) + 1;
-      }
+    case "interaction_resolved":
+      draft.interactionIds = draft.interactionIds.filter((id) => id !== event.interaction_id);
+      draft.waits = draft.waits.map((wait) => wait.interactionId === event.interaction_id && wait.to == null ? { ...wait, to: now() } : wait);
       break;
-    }
-    case "tool_input_progress": {
-      // 参数未校验完成，只更新展示：不建可执行状态，也不提前触发任何命令。
-      const turn = draft.turns[delta.data.turn_id] || getActiveTurn(draft);
-      if (turn) {
-        const existing = turn.steps.find(s => s.id === delta.data.call_id);
-        if (existing && existing.kind === "tool") {
-          existing.argsJson = delta.data.args;
-        } else {
-          turn.steps.push({
-            kind: "tool",
-            id: delta.data.call_id,
-            seq: 0,
-            name: delta.data.tool_name,
-            argsJson: delta.data.args,
-            status: "pending",
-            startedAt: ts,
-          });
-        }
-        turn.renderVersion = (turn.renderVersion ?? 0) + 1;
-      }
-      break;
-    }
-    case "compaction_applied":
-    case "compact_started":
-    case "compact_progress":
-    case "compact_finished":
+    case "subagent_updated":
+    case "session_meta_changed":
       break;
   }
-  const streaming = delta.kind === "assistant_block_progress" || delta.kind === "tool_input_progress";
   if (!streaming) recomputeDerived(draft);
-  // 流式帧只更新对应块本身：不提升结构版本，避免每帧重建整棵消息树。
   return draft;
+}
+
+function bootstrapTools(draft: SessionState): [string, ToolCallView][] {
+  const result: [string, ToolCallView][] = [];
+  for (const turn of Object.values(draft.turns)) {
+    for (const step of turn.steps) {
+      if (step.kind !== "tool") continue;
+      const args = step.argsJson ? (parseJsonish(step.argsJson) ?? step.argsJson) : null;
+      const output = step.outputRef
+        ? { kind: "ref" as const, data: { content_ref: step.outputRef } }
+        : step.output?.text ? { kind: "inline" as const, data: { text: step.output.text } } : null;
+      result.push([step.id, {
+        call_id: step.id,
+        turn_id: turn.id,
+        tool_name: step.name,
+        args,
+        status: step.status,
+        output,
+        output_truncated: step.output?.truncated === true,
+        error: step.error ? { code: "tool_error", message: step.error, retryable: false } : null,
+        metrics: null,
+      }]);
+    }
+  }
+  return result;
 }
 
 /** 防御性收口 helper。 */
@@ -659,7 +584,7 @@ export function forceSealTurn(
 ): boolean {
   let target: Turn | undefined;
   if (turnId) {
-    target = draft.turns[turnId];
+    target = findTurn(draft, turnId);
   }
   if (!target && draft.activeTurnKey) {
     target = draft.turns[draft.activeTurnKey];

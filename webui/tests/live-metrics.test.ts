@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { SessionStore, estimateTokens } from "../src/session/store";
+import { applyFrame } from "./session-fixtures";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -19,11 +20,7 @@ test("estimateTokens 针对 CJK 与拉丁字符的粗估", () => {
 
 function createMetricsHarness() {
   const store = new SessionStore("test-metrics");
-  const feedProjection = (delta: unknown) =>
-    (store as unknown as { applyProjection(key: unknown, payload: unknown): void }).applyProjection(
-      { kind: "channel", data: "conversation" },
-      { kind: "conversation_delta", data: delta },
-    );
+  const feedProjection = (event: Parameters<typeof applyFrame>[1]) => applyFrame(store, event);
   return { store, feedProjection };
 }
 
@@ -38,20 +35,14 @@ test("常驻：配置加载后即便尚未生成，contextPercent 也发布为 0
   expect(metrics.isStreaming).toBe(false);
 });
 
-test("回合封顶：assistant_block_sealed 结算官方 usage 并定格均值，切换 isStreaming: false", () => {
+test("turn_ended settles official usage and updates context and cache metrics", () => {
   const { store, feedProjection } = createMetricsHarness();
   (store as unknown as { contextLength: number }).contextLength = 100_000;
 
-  // 服务端下发 assistant_block_sealed 携带 usage
-  feedProjection({
-    kind: "assistant_block_sealed",
+  feedProjection({ seq: 1, type: "turn_ended", turn_id: "t1", outcome: {
+    kind: "finished",
     data: {
-      revision: 1,
-      turn_id: "t1",
-      block_id: "ans_1",
-      block_kind: "answer",
-      content: { kind: "inline", data: { text: "回答完毕" } },
-      model: "test-model",
+      terminal: "completed",
       usage: {
         prompt_tokens: 12_000,
         completion_tokens: 80,
@@ -61,8 +52,9 @@ test("回合封顶：assistant_block_sealed 结算官方 usage 并定格均值�
         reasoning_tokens: 0,
         cache_usage_reported: true,
       },
+      error: null,
     },
-  });
+  } });
 
   const settled = store.composerMetrics[0]();
   expect(settled.isStreaming).toBe(false);
@@ -74,15 +66,7 @@ test("turn_started 复位 isStreaming 状态", () => {
   const { store, feedProjection } = createMetricsHarness();
   store.composerMetrics[1]((current) => ({ ...current, isStreaming: true }));
 
-  feedProjection({
-    kind: "turn_started",
-    data: {
-      revision: 2,
-      turn_id: "t2",
-      input_id: "in2",
-      mode: "normal",
-    },
-  });
+  feedProjection({ seq: 1, type: "turn_started", turn_id: "t2", input_id: "in2", mode: "normal" });
 
   expect(store.composerMetrics[0]().isStreaming).toBe(false);
 });

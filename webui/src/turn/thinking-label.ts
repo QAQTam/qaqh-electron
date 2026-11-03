@@ -8,7 +8,7 @@
  * (`summary`)才需要解释「为什么不是原文」。
  *
  * `text`(完整思考)与缺失(后端未标注:本字段引入前的历史,或只收到 delta 还没
- * 等到 `block_opened`)一律按「思考」显示——**不猜**。
+ * 等到对应时间线条目到达)一律按「思考」显示——**不猜**。
  */
 import { STR } from "../lib/strings";
 import { isGptFamilyModel } from "../models/specs";

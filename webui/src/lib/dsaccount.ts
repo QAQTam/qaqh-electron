@@ -6,7 +6,7 @@
  *
  * 命令面是 RingingV2 的 `dsaccount.*` 统一命令。
  */
-import type { DaemonCommand } from "./transport/backend";
+import type { ServiceMethod, ServiceParams, ServiceResult } from "./transport/backend";
 import { isDesktopRuntime } from "./transport/backend";
 import { openExternalUrl, transport } from "./transport";
 import type { DsSignInDeps, DsSignInStart } from "../dsaccount/flow";
@@ -48,38 +48,45 @@ export interface DsBonus {
 
 export type { DsSignInStart };
 
-async function query<T>(command: DaemonCommand): Promise<T> {
+async function query<K extends ServiceMethod>(method: K, params: ServiceParams<K>): Promise<ServiceResult<K>> {
   if (!isDesktopRuntime()) {
     throw new Error("DeepSeek 账号需要桌面壳：浏览器预览下不可用");
   }
-  return transport.query<T>(command);
+  return transport.query(method, params);
 }
 
-export const dsaccountStatus = (): Promise<DsAccountStatus> => query({ type: "dsaccount.status" });
+export const dsaccountStatus = (): Promise<DsAccountStatus> => query("dsaccount.status", {});
 
-export const dsaccountBalance = (): Promise<DsBalance> => query({ type: "dsaccount.balance" });
+export const dsaccountBalance = (): Promise<DsBalance> => query("dsaccount.balance", {});
 
-export const dsaccountBonuses = (): Promise<DsBonus[]> => query({ type: "dsaccount.bonuses" });
+export const dsaccountBonuses = (): Promise<DsBonus[]> => query("dsaccount.bonuses", {});
 
 export const dsaccountSignInStart = (
   options: { locale?: string; port?: number } = {},
 ): Promise<DsSignInStart> =>
-  query({
-    type: "dsaccount.sign_in.start",
-    locale: options.locale ?? null,
-    port: options.port ?? null,
+  query("dsaccount.sign_in.start", {
+    ...(options.locale === undefined ? {} : { locale: options.locale }),
+    ...(options.port === undefined ? {} : { port: options.port }),
   });
 
-export const dsaccountSignInStatus = (): Promise<DsFlowProjection> =>
-  query({ type: "dsaccount.sign_in.status" });
+export const dsaccountSignInStatus = async (): Promise<DsFlowProjection> => {
+  const value = await query("dsaccount.sign_in.status", {});
+  return {
+    attemptId: value.attempt_id,
+    state: value.state,
+    authorizeUrl: value.authorize_url,
+    expiresAtMs: value.expires_at_ms,
+    error: value.error,
+  };
+};
 
 export const dsaccountSignInCancel = (attemptId: string): Promise<null> =>
-  query({ type: "dsaccount.sign_in.cancel", attempt_id: attemptId });
+  query("dsaccount.sign_in.cancel", { attempt_id: attemptId });
 
-export const dsaccountSignOut = (): Promise<null> => query({ type: "dsaccount.sign_out" });
+export const dsaccountSignOut = (): Promise<null> => query("dsaccount.sign_out", {});
 
 export const dsaccountAckBonus = (orderId: string): Promise<null> =>
-  query({ type: "dsaccount.bonus.ack", order_id: orderId });
+  query("dsaccount.bonus.ack", { order_id: orderId });
 
 /**
  * 模型目录条目。与 `SiwcModelEntry` 同形（选择器共用一套渲染），键名映射在下面。
@@ -97,16 +104,8 @@ export interface DsModelEntry {
  * 标准形态，展示名按几个常见写法兜底；取不到展示名就用 slug（**不猜**）。
  */
 export async function dsaccountModels(): Promise<DsModelEntry[]> {
-  const entries = await query<Record<string, unknown>[]>({ type: "dsaccount.models" });
-  const text = (value: unknown): string | null =>
-    typeof value === "string" && value.trim() !== "" ? value : null;
-  return entries.flatMap((entry) => {
-    const slug = text(entry.id);
-    if (slug == null) return [];
-    const displayName =
-      text(entry.display_name) ?? text(entry.displayName) ?? text(entry.name) ?? slug;
-    return [{ slug, displayName }];
-  });
+  const entries = await query("dsaccount.models", {});
+  return entries.map(({ id }) => ({ slug: id, displayName: id }));
 }
 
 /**
@@ -116,7 +115,7 @@ export async function dsaccountModels(): Promise<DsModelEntry[]> {
  * 要把状态与余额都重新读一遍，别让界面停留在"已登录"上。
  */
 export const dsaccountVerify = (): Promise<DsVerifyResult> =>
-  query({ type: "dsaccount.verify" });
+  query("dsaccount.verify", {});
 
 /** 流程驱动本体在 `../dsaccount/flow`（纯逻辑，依赖注入，可脱浏览器单测）。 */
 export { runDeepSeekSignIn } from "../dsaccount/flow";

@@ -76,7 +76,7 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
     };
     await Promise.all([
       attempt("壳版本", loadBuildInfo, setBuild),
-      attempt("daemon 版本", () => transport.query<unknown>({ type: "daemon.version" }), (value) => {
+      attempt("daemon 版本", () => transport.query("daemon.version", {}), (value) => {
         setDaemonVersion(typeof value === "string" && value !== "" ? value : null);
       }),
       attempt("局域网状态", daemonLanStatus, setLan),

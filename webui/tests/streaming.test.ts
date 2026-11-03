@@ -1,18 +1,19 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { turnSegments, workSegmentEnd } from "../src/turn/segments";
 import { splitBlocks } from "../src/markdown/split";
-import { emptySession, applyConversationDelta } from "../src/session/reducer";
+import { emptySession, applySessionEvent } from "../src/session/reducer";
+import { inline } from "./session-fixtures";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 test("work clock follows the slowest completion, never the last listed tool", () => {
   const steps: any[] = [
     { id: "slow", kind: "tool", status: "running", startedAt: 100 },
-    { id: "fast", kind: "tool", status: "success", startedAt: 100, endedAt: 200 },
+    { id: "fast", kind: "tool", status: "finished", startedAt: 100, endedAt: 200 },
   ];
   const group = { key: "g", kind: "work" as const, steps, closed: false };
   expect(workSegmentEnd(group)).toBeUndefined();
-  steps[0].status = "success";
+  steps[0].status = "finished";
   steps[0].endedAt = 900;
   expect(workSegmentEnd(group)).toBe(900);
 });
@@ -34,18 +35,15 @@ test("shorter fence inside longer fence remains code", () => {
 
 test("single stream turn segments: tool followed by answer", () => {
   const state = emptySession();
-  applyConversationDelta(state, {
-    kind: "turn_started",
-    data: { revision: 1, turn_id: "t1", input_id: "in1", mode: "normal" },
-  });
-  applyConversationDelta(state, {
-    kind: "tool_call_declared",
-    data: { revision: 2, turn_id: "t1", call_id: "call1", tool_name: "read", args: { kind: "inline", data: { text: "{}" } }, args_hash: "h" },
-  });
-  applyConversationDelta(state, {
-    kind: "assistant_block_sealed",
-    data: { revision: 3, turn_id: "t1", block_id: "ans1", block_kind: "answer", content: { kind: "inline", data: { text: "done" } }, model: "m", usage: null },
-  });
+  applySessionEvent(state, { seq: 1, type: "turn_started", turn_id: "t1", input_id: "in1", mode: "normal" });
+  applySessionEvent(state, { seq: 2, type: "timeline_appended", entry: {
+    kind: "tool_call", data: { turn_id: "t1", call_id: "call1" },
+  } });
+  applySessionEvent(state, { seq: 3, type: "tool_arguments_delta", turn_id: "t1", call_id: "call1", text: "{}" });
+  applySessionEvent(state, { seq: 4, type: "tool_finished", call_id: "call1", status: "finished", output: inline("ok"), output_truncated: false, error: null, metrics: null });
+  applySessionEvent(state, { seq: 5, type: "timeline_appended", entry: {
+    kind: "assistant_block", data: { turn_id: "t1", block_id: "ans1", block_kind: "answer", content: inline("done"), model: "m", usage: null },
+  } });
 
   const turn = state.turns.t1!;
   expect(turn.steps).toHaveLength(2);

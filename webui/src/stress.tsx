@@ -1,9 +1,9 @@
 /**
  * 合成压力夹具(只给 dev 用:`pnpm exec vite` 起服务后打开 /stress.html)。
  *
- * 目的:在没有 daemon、没有 TUI 的情况下验证 spec §14 的分页与窗口淘汰、快照重对齐
- * 的 churn,以及大文本 + 重 Markdown 下的 DOM 规模。走的是真组件与真 store:只有
- * `transport.timelinePage` 被挂了一个内存假页,不写任何后端、不发任何命令。
+ * 目的:在没有 daemon、没有 TUI 的情况下验证分页与窗口淘汰 churn,以及大文本 +
+ * 重 Markdown 下的 DOM 规模。走真组件与真 store；事件帧交给 v3 reducer,只有
+ * `transport.timelinePage` 使用内存假页,不写后端、不发命令。
  */
 import { render } from "@solidjs/web";
 import { markPlatform } from "./lib/platform";
@@ -32,7 +32,10 @@ import { reload as reloadSettings } from "./settings/store";
 // Session capsule is reserved for Goal, matching the production shell.
 import { setSessionMaterial, type SessionMaterial } from "./lib/visual";
 import { applyTheme, type ResolvedTheme } from "./lib/theme";
-import { transport } from "./lib/transport";
+import { transport, type Ack, type ServiceMethod, type ServiceParams, type ServiceResult } from "./lib/transport";
+import type { SessionBootstrap, SessionEventFrame } from "@qaqh/sdk/protocol";
+import { applySessionEvent, recomputeDerived } from "./session/reducer";
+import type { ToolStep } from "./session/types";
 import { pollSessions } from "./tabs/store";
 import type { ConfigDto } from "./api/qaqh/ConfigDto";
 import type { ApprovalView } from "./lib/transport";
@@ -65,7 +68,11 @@ const [fixtureCols, setFixtureCols] = createSignal<1 | 2 | 3>(3);
 const sidebarDrawerPreview = previewParams.get("sidebarDrawer") === "1";
 const railDrawerPreview = previewParams.get("railDrawer") === "1";
 const TOTAL = isVisualPreview ? 4 : 200;
-let liveSeq = 2001;
+let fixtureIdSeq = 2001;
+let wireSeq = 0;
+type SessionEventPayload = SessionEventFrame extends infer Frame
+  ? Frame extends { seq: number } ? Omit<Frame, "seq"> : never
+  : never;
 /** 翻页请求记录(测分页是否真在跑)。 */
 let pageRequests: Array<{ limit: number; beforeIndex: number | null }> = [];
 
@@ -160,41 +167,58 @@ function ansiLog(rand: () => number, lines: number): string {
 }
 
 // 假挂载点:store 只通过 transport.sessionBootstrap 取权威快照
-(transport as any).sessionBootstrap = async (_seed: string): Promise<unknown> => {
+(transport as any).sessionBootstrap = async (_seed: string): Promise<SessionBootstrap> => {
   await new Promise((resolve) => setTimeout(resolve, 60));
+  const turns = Array.from({ length: TOTAL }, (_, i) => ({
+    turn_id: `t${i + 1}`,
+    input_id: `in${i + 1}`,
+    mode: "normal" as const,
+    outcome: { kind: "finished" as const, data: { terminal: "completed" as const, usage: null, error: null } },
+  }));
+  const timeline = Array.from({ length: TOTAL }, (_, i) => {
+    const turnId = `t${i + 1}`;
+    return [
+      {
+        kind: "input" as const,
+        data: {
+          block_id: `input-${i + 1}`,
+          turn_id: turnId,
+          purpose: "trigger_turn" as const,
+          content: { kind: "inline" as const, data: { text: `Question ${i + 1}` } },
+          attachments: [],
+          actor: { kind: "user" as const, id: "visual-fixture" },
+        },
+      },
+      {
+        kind: "assistant_block" as const,
+        data: {
+          block_id: `answer-${i + 1}`,
+          turn_id: turnId,
+          block_kind: "answer" as const,
+          content: { kind: "inline" as const, data: { text: `Turn ${i + 1} answer` } },
+          model: "claude",
+          usage: null,
+        },
+      },
+    ];
+  }).flat();
   return {
     schema: "qaqh.Ringing",
     version: 2,
+    server_epoch: "visual-fixture",
     session_id: "stress",
-    conversation: {
-      channel: "conversation",
-      state: {
-        session_id: "stress",
-        turns: Array.from({ length: TOTAL }, (_, i) => ({
-          turn_id: `t${i + 1}`,
-          input_id: `in${i + 1}`,
-          mode: "normal",
-          outcome: { kind: "finished", data: { terminal: "completed", usage: null, error: null } },
-        })),
-        context: Array.from({ length: TOTAL }, (_, i) => ({
-          source_fact_seq: i + 1,
-          kind: {
-            kind: "assistant_block",
-            data: {
-              turn_id: `t${i + 1}`,
-              block_id: `b${i + 1}`,
-              block_kind: "answer",
-              content: { kind: "inline", data: { text: `Turn ${i + 1} answer` } },
-              model: "claude",
-              usage: null,
-            },
-          },
-        })),
-        compaction: null,
-        current_turn_id: null,
-        revision: TOTAL,
-        last_fact_seq: TOTAL,
-      },
+    state: {
+      session_id: "stress",
+      seq: TOTAL * 2,
+      activity: "idle",
+      current_turn_id: null,
+      title: "Visual fixture",
+      turns,
+      timeline,
+      tools: [],
+      interactions: [],
+      subagents: [],
+      driver: null,
     },
   };
 };
@@ -256,10 +280,7 @@ if (isVisualPreview) {
     profiles: ["视觉验收", "本地模型"],
     profilesDetail: {
       视觉验收: {
-        id: "视觉验收",
         name: "视觉验收",
-        providerId: "visual-provider",
-        providerName: "Preview",
         model: "qaqh-visual-preview",
         baseUrl: "https://api.example.test/v1",
         wire: "responses",
@@ -270,10 +291,7 @@ if (isVisualPreview) {
         credential: "api_key",
       },
       本地模型: {
-        id: "本地模型",
         name: "本地模型",
-        providerId: "local-provider",
-        providerName: "Local",
         model: "qaqh-local-preview",
         baseUrl: "http://127.0.0.1:11434/v1",
         wire: "chat",
@@ -287,7 +305,6 @@ if (isVisualPreview) {
     sandbox: { enabled: true },
     toolAllowlistEnabled: false,
     toolAllowlist: [],
-    defaultToolMode: "",
     complianceEnabled: true,
     subagent: {
       model: "qaqh-subagent-preview",
@@ -324,185 +341,131 @@ if (isVisualPreview) {
     lsp: { enabled: false, idleShutdownSecs: 300, servers: [] },
     tokenizerPath: null,
   };
-  // tools 视图夹具:skills 分两层,两层的数据面不同,夹具也各给一份——
-  //  - 项目级走 fs.list/fs.read(内存工作区,两个目录:一个带 short-description、
-  //    一个 frontmatter 残缺,另有一个同名 `shadowed-skill` 用来验「被同名覆盖」);
-  //  - 用户级走宿主命令 skills_user_scan(这里直接 mock 宿主回包:两个根,
-  //    `~/.agents/skills` 存在、`~/.qaqh/skills` 不存在,各带一条 skill)。
-  // 卡片的展开正文、诊断条、分组头与 root 存在性因此都能在浏览器里验收。
+  // skills 视觉夹具直接复用 daemon `skills.catalog` 的输出形状；发现、解析和遮蔽
+  // 由 catalog 负责，浏览器夹具只提供可展示的条目元数据。
   const previewWorkspaceRoot = "E:/fixtures/demo-repo";
-  const previewFs: Record<string, unknown> = {
-    [previewWorkspaceRoot]: [
-      { name: "skills", path: `${previewWorkspaceRoot}/skills`, is_dir: true, is_file: false },
-      { name: "src", path: `${previewWorkspaceRoot}/src`, is_dir: true, is_file: false },
-    ],
-    [`${previewWorkspaceRoot}/skills`]: [
-      { name: "skill-creator", path: `${previewWorkspaceRoot}/skills/skill-creator`, is_dir: true, is_file: false },
-      { name: "broken-skill", path: `${previewWorkspaceRoot}/skills/broken-skill`, is_dir: true, is_file: false },
-      { name: "shadowed-skill", path: `${previewWorkspaceRoot}/skills/shadowed-skill`, is_dir: true, is_file: false },
-    ],
-    [`${previewWorkspaceRoot}/skills/skill-creator`]: [
-      { name: "SKILL.md", path: `${previewWorkspaceRoot}/skills/skill-creator/SKILL.md`, is_dir: false, is_file: true },
-    ],
-    [`${previewWorkspaceRoot}/skills/broken-skill`]: [
-      { name: "SKILL.md", path: `${previewWorkspaceRoot}/skills/broken-skill/SKILL.md`, is_dir: false, is_file: true },
-    ],
-    [`${previewWorkspaceRoot}/skills/shadowed-skill`]: [
-      { name: "SKILL.md", path: `${previewWorkspaceRoot}/skills/shadowed-skill/SKILL.md`, is_dir: false, is_file: true },
-    ],
-  };
-  const previewFiles: Record<string, string> = {
-    [`${previewWorkspaceRoot}/skills/skill-creator/SKILL.md`]: [
-      "---",
-      "name: skill-creator",
-      "description: Create or update a skill with appropriately scoped instructions. (visual fixture)",
-      "metadata:",
-      "  short-description: Create or update a skill",
-      "---",
-      "",
-      "# Skill Creator",
-      "",
-      "**Assume the agent is already capable.** Include only information that changes its decisions.",
-      "",
-      "## Anatomy",
-      "",
-      "- SKILL.md: required frontmatter + body",
-      "- references/: read only what the task needs",
-    ].join("\n"),
-    [`${previewWorkspaceRoot}/skills/broken-skill/SKILL.md`]: "# 没有 frontmatter 的文件\n",
-    // 项目级这一条与用户级夹具里的 `shadowed-skill` 同名:展示「被同名覆盖」的降级态。
-    [`${previewWorkspaceRoot}/skills/shadowed-skill/SKILL.md`]: [
-      "---",
-      "name: shadowed-skill",
-      "description: 项目级同名条目——用户级那条会被标成被覆盖。(visual fixture)",
-      "---",
-      "",
-      "# Shadowed",
-      "",
-      "项目级优先于用户级(`qaqh-skills` 的 seen_names)。",
-    ].join("\n"),
-  };
-  // 用户级夹具(宿主 `skills_user_scan` 的回包形状,见 qaqh-electron/src/main/skills-scanner.ts)。
-  const previewUserSkills = {
-    roots: [
-      { path: "C:/Users/fixture/.qaqh/skills", label: "~/.qaqh/skills", exists: false },
-      { path: "C:/Users/fixture/.agents/skills", label: "~/.agents/skills", exists: true },
-    ],
+  const previewSkillsCatalog = {
     skills: [
       {
-        root: "C:/Users/fixture/.agents/skills",
+        name: "skill-creator",
+        description: "Create or update a skill with appropriately scoped instructions. (visual fixture)",
+        scope: "project",
+        origin: "project",
+        path: `${previewWorkspaceRoot}/skills/skill-creator/SKILL.md`,
+      },
+      {
+        name: "mc-bug-audit",
+        description: "独立审计：从源码边界出发复现问题。(visual fixture)",
+        scope: "user",
+        origin: "user",
         path: "C:/Users/fixture/.agents/skills/mc-bug-audit/SKILL.md",
-        content: [
-          "---",
-          "name: mc-bug-audit",
-          "description: 独立审计 / 主动找 bug:从源码本身出发复现,不读社区报告。(visual fixture)",
-          "---",
-          "",
-          "# Independent bug audit",
-          "",
-          "先从边界找:迁移之后的每一条约定(符号、单位、默认值、事件顺序)都值得怀疑。",
-        ].join("\n"),
-        bytes: 512,
-      },
-      {
-        root: "C:/Users/fixture/.agents/skills",
-        path: "C:/Users/fixture/.agents/skills/shadowed-skill/SKILL.md",
-        content: [
-          "---",
-          "name: shadowed-skill",
-          "description: 用户级同名条目,项目级已先占——卡片会标出「被同名覆盖」。(visual fixture)",
-          "---",
-          "",
-          "# Shadowed(用户级)",
-        ].join("\n"),
-        bytes: 256,
-      },
-      {
-        root: "C:/Users/fixture/.agents/skills",
-        path: "C:/Users/fixture/.agents/skills/broken-user/SKILL.md",
-        content: "# 用户级里没有 frontmatter 的文件\n",
-        bytes: 64,
       },
     ],
     diagnostics: [
-      { path: "C:/Users/fixture/.agents/skills/legacy/SKILL.md", message: "skill file exceeds 524288 bytes" },
+      {
+        severity: "warning",
+        path: `${previewWorkspaceRoot}/skills/broken-skill/SKILL.md`,
+        message: "技能目录中的 SKILL.md 缺少有效 frontmatter。",
+      },
     ],
   };
-  const mockQuery = async <T = unknown>(command: { type: string; [key: string]: unknown }): Promise<T> => {
-    // OAuth 截图使用启动脚本注入的宿主夹具，覆盖配置读写以验证真实切换流程。
+  const previewProviderCatalog = {
+    revision: 1,
+    default_model_selection: {
+      provider_id: "visual-provider",
+      model_id: "qaqh-visual-preview",
+      options: { max_output_tokens: 8192, reasoning_effort: "medium" },
+    },
+    providers: {
+      "visual-provider": {
+        name: "Preview",
+        base_url: "https://api.example.test/v1",
+        wire: "responses",
+        credential: "api_key",
+        api_key: "****",
+        headers: {},
+        compat: null,
+        models: {
+          "qaqh-visual-preview": {
+            enabled: true,
+            display_name: "Visual Preview",
+            context_window: 128000,
+            max_output_tokens: 8192,
+            reasoning_levels: ["low", "medium", "high"],
+            capabilities: { tool_calls: true, image_input: true, native_web_search: false, reasoning: true },
+            defaults: { max_output_tokens: 8192, reasoning_effort: "medium", native_web_search: false },
+          },
+        },
+      },
+      "local-provider": {
+        name: "Local",
+        base_url: "http://127.0.0.1:11434/v1",
+        wire: "chat",
+        credential: "api_key",
+        api_key: null,
+        headers: {},
+        compat: null,
+        models: {
+          "qaqh-local-preview": {
+            enabled: true,
+            display_name: "Local Preview",
+            context_window: 32768,
+            max_output_tokens: 4096,
+            reasoning_levels: [],
+            capabilities: { tool_calls: true, image_input: false, native_web_search: false, reasoning: false },
+            defaults: { max_output_tokens: 4096, reasoning_effort: null, native_web_search: false },
+          },
+        },
+      },
+    },
+  };
+  const previewLegacyProfiles = {
+    default_profile: "视觉验收",
+    providers: {
+      "visual-provider": { name: "Preview", base_url: "https://api.example.test/v1", wire: "responses", credential: "api_key", api_key: "****" },
+      "local-provider": { name: "Local", base_url: "http://127.0.0.1:11434/v1", wire: "chat", credential: "api_key", api_key: null },
+    },
+    profiles: {
+      视觉验收: { name: "视觉验收", provider: "visual-provider", model: "qaqh-visual-preview", reasoning_effort: "medium", context_length: 128000, max_tokens: 8192 },
+      本地模型: { name: "本地模型", provider: "local-provider", model: "qaqh-local-preview", reasoning_effort: null, context_length: 32768, max_tokens: 4096 },
+    },
+  };
+  const mockQuery = async <K extends ServiceMethod>(method: K, params?: ServiceParams<K>): Promise<ServiceResult<K>> => {
+    // OAuth 截图使用启动脚本注入的宿主夹具，覆盖服务读取以验证真实切换流程。
     if (previewView === "oauth" && previewParams.has("oauthState") && window.qaqhHost != null) {
-      const ack = await invoke<{ result?: T | null }>("command", { command });
-      return (ack.result ?? null) as T;
+      return await invoke<ServiceResult<K>>("service_query", { method, params: params ?? {} });
     }
-    if (command.type === "config.load") return structuredClone(previewConfig) as T;
-    if (command.type === "profile.list") {
-      const providers: Record<string, unknown> = {};
-      const profiles: Record<string, unknown> = {};
-      for (const item of Object.values(previewConfig.profilesDetail ?? {})) {
-        providers[item.providerId] = {
-          name: item.providerName,
-          base_url: item.baseUrl,
-          wire: item.wire,
-          credential: item.credential,
-          api_key: item.apiKeySet ? "****" : null,
-        };
-        profiles[item.id] = {
-          name: item.name,
-          provider: item.providerId,
-          model: item.model,
-          reasoning_effort: item.effort,
-          context_length: item.contextLength,
-          max_tokens: item.maxTokens,
-        };
-      }
-      return {
-        revision: 1,
-        default_profile: previewConfig.activeProfile ?? null,
-        providers,
-        profiles,
-      } as T;
-    }
-    if (command.type === "provider.upsert" || command.type === "provider.delete"
-        || command.type === "profile.create" || command.type === "profile.update"
-        || command.type === "profile.delete" || command.type === "profile.set_default") {
-      return null as T;
-    }
-    // 开发者控制台夹具:形状与 daemon 的 diagnostics.memory 快照同形且逐秒自走,
-    // 于是表格与环图能在浏览器里验收(见 lib/memwatch-sim.ts)。
-    if (command.type === "diagnostics.memwatch") {
-      return (command.action === "start"
-        ? { enabled: true, started_at_ms: Date.now() }
-        : { enabled: false }) as T;
-    }
-    if (command.type === "diagnostics.dump") return simMemorySnapshot() as T;
-    if (command.type === "daemon.version") return "0.0.0-visual-fixture" as T;
-    if (command.type === "session.list") return [] as T;
-    if (command.type === "session.activity") return [] as T;
-    if (command.type === "session.meta") return null as T;
-    if (command.type === "todo.list") return { items: [] } as T;
-    if (command.type === "workspace.list") return [
-      { id: "w1", title: "演示仓库", path: previewWorkspaceRoot, order: 0 },
-    ] as T;
-    if (command.type === "fs.list") {
-      const entries = previewFs[String(command.path)];
-      if (entries == null) throw new Error(`fs.list ${String(command.path)}: 系统找不到指定的文件。(fixture)`);
-      return entries as T;
-    }
-    if (command.type === "fs.read") {
-      const content = previewFiles[String(command.path)];
-      if (content == null) throw new Error(`fs.read ${String(command.path)}: 系统找不到指定的文件。(fixture)`);
-      return { path: command.path, size: content.length, truncated: false, content } as T;
-    }
-    throw new Error(`visual preview does not mock ${command.type}`);
+    let result: unknown;
+    if (method === "config.load") result = structuredClone(previewConfig);
+    else if (method === "profile.list") result = structuredClone(previewLegacyProfiles);
+    else if (method === "skills.catalog") result = structuredClone(previewSkillsCatalog);
+    else if (method === "diagnostics.memory.snapshot") result = simMemorySnapshot();
+    else if (method === "daemon.version") result = "0.0.0-visual-fixture";
+    else if (method === "session.list" || method === "session.activity") result = [];
+    else if (method === "session.meta") result = null;
+    else if (method === "todo.list") result = { items: [] };
+    else if (method === "workspace.list") result = [
+      { id: "w1", title: "演示仓库", path: previewWorkspaceRoot, order: 0, session_ids: [], missing_dir: false },
+    ];
+    else throw new Error(`visual preview does not mock service ${method}`);
+    return result as ServiceResult<K>;
   };
   transport.query = mockQuery;
-  transport.command = async (command) => {
-    await mockQuery(command);
-    return { status: "completed", command_id: "visual-fixture" } as Awaited<ReturnType<typeof transport.command>>;
+  transport.command = async (command, target, preconditions) => {
+    if (previewView === "oauth" && previewParams.has("oauthState") && window.qaqhHost != null) {
+      return await invoke<Ack>("command", { command, target, preconditions });
+    }
+    if (command.type !== "provider.list") {
+      return { status: "accepted", command_id: "visual-fixture" } as Ack;
+    }
+    return {
+      status: "accepted",
+      command_id: "visual-fixture",
+      operation: "provider.list",
+      result: structuredClone(previewProviderCatalog),
+      revision: previewProviderCatalog.revision,
+    } as Ack;
   };
-  // 用户级 skills 是**宿主命令**(不是 rpc):夹具直接替掉 transport 上那一个方法,
-  // 形状与 qaqh-electron/src/main/skills-scanner.ts 的回包一致。
-  transport.userSkills = async () => structuredClone(previewUserSkills);
 }
 
 if (previewView === "approval") {
@@ -647,90 +610,91 @@ async function sampleFrames(ms: number, work: () => Promise<void>): Promise<Fram
   };
 }
 
-function feed(turnId: string, event: Record<string, any>, _seq?: number): void {
+function feed(event: SessionEventPayload): void {
+  const frame = { ...event, seq: ++wireSeq } as SessionEventFrame;
+  store.state[1]((draft) => { applySessionEvent(draft, frame); });
+}
+
+function startTurn(turnId: string, userText: string): void {
+  feed({ type: "turn_started", turn_id: turnId, input_id: null, mode: "normal" });
+  feed({ type: "timeline_appended", entry: {
+    kind: "input",
+    data: {
+      block_id: `input-${turnId}`,
+      turn_id: turnId,
+      purpose: "trigger_turn",
+      content: { kind: "inline", data: { text: userText } },
+      attachments: [],
+      actor: { kind: "user", id: "stress-fixture" },
+    },
+  } });
+}
+
+/** v3 无 block-open 帧；stress 夹具只为渲染场景初始化活动文本块投影。 */
+function seedAssistantBlock(turnId: string, blockId: string, kind: "reasoning" | "answer"): void {
   store.state[1]((draft) => {
-    let turn = draft.turns[turnId];
-    if (!turn) {
-      turn = {
-        id: turnId,
-        key: turnId,
-        turnIndex: null,
-        user: { text: "" },
-        steps: [],
-        answer: null,
-        answerStepId: null,
-        status: "running",
-        expanded: false,
-      };
-      draft.turns[turnId] = turn;
-      draft.slots.push({ kind: "turn", key: turnId });
+    const turn = draft.turns[turnId];
+    if (!turn) throw new Error(`missing fixture turn ${turnId}`);
+    const startedAt = Date.now();
+    if (kind === "reasoning") {
+      turn.steps.push({ kind: "thinking", id: blockId, seq: turn.steps.length, startedAt, text: "" });
+    } else {
+      turn.steps.push({ kind: "text", id: blockId, seq: turn.steps.length, startedAt, text: "" });
+      turn.answer = { text: "", startedAt };
+      turn.answerStepId = blockId;
     }
-    turn.renderVersion = (turn.renderVersion ?? 0) + 1;
-    switch (event.type) {
-      case "turn_opened":
-        turn.user.text = String(event.user_text ?? "");
-        break;
-      case "block_opened": {
-        const b = event.block;
-        if (b.kind === "text") {
-          turn.steps.push({ kind: "text", id: b.block_id, seq: 0, text: b.text ?? "" });
-          turn.answer = { text: b.text ?? "", startedAt: Date.now() };
-          turn.answerStepId = b.block_id;
-        } else if (b.kind === "reasoning") {
-          turn.steps.push({ kind: "thinking", id: b.block_id, seq: 0, text: b.text ?? "" });
-        } else if (b.kind === "tool") {
-          turn.steps.push({
-            kind: "tool",
-            id: b.block_id,
-            seq: 0,
-            name: b.tool?.name ?? "",
-            status: "running",
-          });
-        }
-        break;
-      }
-      case "text_delta": {
-        const step = turn.steps.find((s) => s.id === event.block_id);
-        if (step && (step.kind === "text" || step.kind === "thinking")) {
-          step.text += String(event.delta ?? "");
-          if (step.kind === "text") {
-            turn.answer = { text: step.text, startedAt: Date.now() };
-            turn.answerStepId = step.id;
-          }
-        }
-        break;
-      }
-      case "tool_progress": {
-        const step = turn.steps.find((s) => s.id === event.block_id);
-        if (step && step.kind === "tool") {
-          step.progressTail = (step.progressTail ?? "") + String(event.chunk ?? "");
-        }
-        break;
-      }
-      case "tool_updated": {
-        let step = turn.steps.find((s) => s.id === event.block_id);
-        if (!step) {
-          step = { kind: "tool", id: event.block_id, seq: 0, name: event.tool?.name ?? "", status: "running" };
-          turn.steps.push(step);
-        }
-        if (step.kind === "tool") {
-          step.status = event.tool?.state === "succeeded" ? "success" : "running";
-          step.display = event.tool?.display;
-          if (event.tool?.display?.body?.kind === "shell") {
-            step.output = { text: event.tool.display.body.output, exitCode: event.tool.display.body.exit_code };
-          }
-          if (event.tool?.diff) {
-            step.output = { ...step.output, diffText: event.tool.diff };
-          }
-        }
-        break;
-      }
-      case "turn_sealed":
-        turn.status = event.state === "completed" ? "done" : "aborted";
-        break;
-    }
-    draft.structureVersion += 1;
+    recomputeDerived(draft);
   });
+}
+
+const streamedText = new Map<string, string>();
+function messageDelta(turnId: string, blockId: string, text: string, replace = false, blockKind: "reasoning" | "answer" = "answer"): void {
+  const key = `${turnId}\0${blockId}`;
+  const fullText = replace ? text : (streamedText.get(key) ?? "") + text;
+  streamedText.set(key, fullText);
+  feed({ type: "message_delta", turn_id: turnId, block_id: blockId, block_kind: blockKind, text: fullText });
+}
+
+function sealBlock(turnId: string, blockId: string): void {
+  store.state[1]((draft) => {
+    const turn = draft.turns[turnId];
+    const step = turn?.steps.find((item) => item.id === blockId);
+    if (step && step.kind !== "tool") step.endedAt = Date.now();
+    recomputeDerived(draft);
+  });
+}
+
+function seedToolCall(turnId: string, callId: string, name: string, args = "{}"): void {
+  store.state[1]((draft) => {
+    const turn = draft.turns[turnId];
+    if (!turn) throw new Error(`missing fixture turn ${turnId}`);
+    const step: ToolStep = { kind: "tool", id: callId, seq: turn.steps.length, name, argsJson: args, status: "declared", startedAt: Date.now() };
+    turn.steps.push(step);
+    recomputeDerived(draft);
+  });
+  feed({ type: "tool_arguments_delta", call_id: callId, turn_id: turnId, tool_name: name, text: args });
+  feed({ type: "tool_started", call_id: callId, tool_name: name });
+}
+
+function toolOutputDelta(callId: string, text: string, stream: "stdout" | "stderr" = "stdout"): void {
+  feed({ type: "tool_output_delta", call_id: callId, stream, text });
+}
+
+function finishTool(callId: string, rawOutput: string, codeDelta?: ToolStep["codeDelta"]): void {
+  feed({
+    type: "tool_finished",
+    call_id: callId,
+    status: "finished",
+    output: { kind: "inline", data: { text: rawOutput } },
+    output_truncated: false,
+    error: null,
+    metrics: null,
+    ...(codeDelta != null ? { code_delta: codeDelta } : {}),
+  });
+}
+
+function finishTurn(turnId: string): void {
+  feed({ type: "turn_ended", turn_id: turnId, outcome: { kind: "finished", data: { terminal: "completed", usage: null, error: null } } });
 }
 
 const report: Array<Record<string, unknown>> = [];
@@ -738,18 +702,18 @@ const report: Array<Record<string, unknown>> = [];
 const scenarios = {
   /** 真 TurnView：assistant 文本边界动画、卸载与回复节点稳定性。 */
   async workCollapse(): Promise<Record<string, unknown>> {
-    const id = `collapse-${liveSeq}`;
-    feed(id, { type: "turn_opened", user_text: "工作段回收动画验收" });
-    feed(id, { type: "block_opened", block: { block_id: "command", kind: "tool", tool: { name: "exec", state: "running" } } });
-    feed(id, { type: "tool_updated", block_id: "command", tool: { name: "exec", state: "succeeded", display: { body: { kind: "shell", output: "检查完成\n结果已就绪", exit_code: 0, truncated: false } } } });
+    const id = `collapse-${fixtureIdSeq++}`;
+    startTurn(id, "工作段回收动画验收");
+    seedToolCall(id, "command", "exec");
+    finishTool("command", JSON.stringify({ output: "检查完成\n结果已就绪", exit_code: 0 }));
     await frames(10);
     const slot = document.querySelector<HTMLElement>(`[data-slot-key="${CSS.escape(id)}"]`)!;
     const group = slot.querySelector<HTMLElement>(".work-group")!;
     const collapse = group.querySelector<HTMLElement>(":scope > .collapse")!;
     const initialHeight = collapse.getBoundingClientRect().height;
     if (initialHeight <= 0) throw new Error("工作段未展开");
-    feed(id, { type: "block_opened", block: { block_id: "reply", kind: "text", state: "open" } });
-    feed(id, { type: "text_delta", block_id: "reply", fragment_seq: 0, delta: "已完成检查，以下是结果。" });
+    seedAssistantBlock(id, "reply", "answer");
+    messageDelta(id, "reply", "已完成检查，以下是结果。");
     const heights: number[] = [];
     for (let i = 0; i < 24; i++) {
       await frames(1);
@@ -762,13 +726,13 @@ const scenarios = {
     if (collapse.getBoundingClientRect().height > 1) throw new Error("工作段未收起");
     const reply = slot.querySelector("[data-text-id='reply'] .md-host");
     if (!reply) throw new Error("回复未挂载");
-    feed(id, { type: "text_delta", block_id: "reply", fragment_seq: 1, delta: " 回复继续流式更新。" });
+    messageDelta(id, "reply", " 回复继续流式更新。");
     await frames(10);
     if (slot.querySelector("[data-text-id='reply'] .md-host") !== reply) throw new Error("流式回复被重挂");
     group.querySelector<HTMLButtonElement>(".collapsed-row")!.click();
     await frames(18);
     if (!collapse.querySelector(".tool-head")) throw new Error("用户无法重新展开工作段");
-    feed(id, { type: "turn_sealed", state: "completed" });
+    finishTurn(id);
     await frames(10);
     if (group.querySelector(".collapsed-row")?.getAttribute("aria-expanded") !== "true") throw new Error("完成事件重置用户展开态");
     return { initialHeight, heights, animated, reduced, unloaded: true, replyStable: true, manualReopen: true, ...metrics() };
@@ -779,11 +743,12 @@ const scenarios = {
     return { theme: mode, owner: "web" };
   },
   async thinking(): Promise<Record<string, unknown>> {
-    const id = `thinking-${liveSeq}`;
-    feed(id, { type: "block_opened", block: { block_id: id, kind: "reasoning", state: "open" } });
+    const id = `thinking-${fixtureIdSeq++}`;
+    startTurn(id, "长思考尾随行为验收");
+    seedAssistantBlock(id, id, "reasoning");
     const cadence = await sampleFrames(120, async () => {
       for (let tick = 0; tick < 300; tick += 1) {
-        feed(id, { type: "text_delta", block_id: id, delta: "思考".repeat(150) });
+        messageDelta(id, id, "思考".repeat(150));
         await wait(10);
       }
     });
@@ -793,17 +758,17 @@ const scenarios = {
     const lineHeight = scroller == null ? 0 : parseFloat(getComputedStyle(scroller).lineHeight);
     const bounded = scroller != null && scroller.clientHeight <= lineHeight * 4 + 1;
     const following = scroller != null && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 2;
-    feed(id, { type: "block_sealed", block_id: id });
-    feed(id, { type: "block_opened", block: { block_id: `${id}-new`, kind: "reasoning", state: "open" } });
+    sealBlock(id, id);
+    seedAssistantBlock(id, `${id}-new`, "reasoning");
     await frames(3);
     const reset = document.querySelector(".thinking-full")?.textContent === "";
-    feed(id, { type: "turn_sealed", state: "completed" });
+    finishTurn(id);
     await frames(3);
     return { textChars, bounded, following, reset, correct: textChars === 90_000 && bounded && following && reset, cadence, m: metrics() };
   },
   /** 合成 token 是 4 个中文字符,每 10ms 到一批;测试真实 store/组件,不模拟响应式。 */
   async highRate(rate = 300, seconds = 6): Promise<Record<string, unknown>> {
-    const id = `rate-${rate}-${liveSeq}`;
+    const id = `rate-${rate}-${fixtureIdSeq++}`;
     const token = "持续输出";
     const expected = new Map<string, string>();
     let block = `${id}-text-0`;
@@ -811,11 +776,11 @@ const scenarios = {
     let textIdentityLost = false;
     let stableText: Element | null = null;
     const tasksBefore = longTasks.length;
-    feed(id, { type: "turn_opened", user_text: `持续 ${rate} 合成 token/s` });
-    feed(id, { type: "block_opened", block: { block_id: `${id}-reason`, kind: "reasoning", state: "open" } });
-    feed(id, { type: "text_delta", block_id: `${id}-reason`, delta: "思考末尾必须保留" });
-    feed(id, { type: "block_sealed", block_id: `${id}-reason` });
-    feed(id, { type: "block_opened", block: { block_id: block, kind: "text", state: "open" } });
+    startTurn(id, `持续 ${rate} 合成 token/s`);
+    seedAssistantBlock(id, `${id}-reason`, "reasoning");
+    messageDelta(id, `${id}-reason`, "思考末尾必须保留");
+    sealBlock(id, `${id}-reason`);
+    seedAssistantBlock(id, block, "answer");
     await frames(2);
     churnReset();
     const plainChurn = { added: 0, removed: 0 };
@@ -832,16 +797,16 @@ const scenarios = {
       for (let tick = 0; tick < ticks; tick += 1) {
         // 每两秒进入下一个工作段,同一任务内混合中途回复与工具。
         if (tick > 0 && tick % 200 === 0) {
-          feed(id, { type: "block_sealed", block_id: block });
+          sealBlock(id, block);
           const tool = `${id}-tool-${tick}`;
-          feed(id, { type: "block_opened", block: { block_id: tool, kind: "tool", tool: { name: "read", state: "running", args_json: "{}" } } });
-          feed(id, { type: "tool_progress", block_id: tool, chunk: "工具末尾必须保留" });
-          feed(id, { type: "tool_updated", block_id: tool, tool: { name: "read", state: "succeeded" } });
+          seedToolCall(id, tool, "exec");
+          toolOutputDelta(tool, "工具末尾必须保留");
+          finishTool(tool, JSON.stringify({ output: "工具末尾必须保留" }));
           block = `${id}-text-${tick}`;
-          feed(id, { type: "block_opened", block: { block_id: block, kind: "text", state: "open" } });
+          seedAssistantBlock(id, block, "answer");
         }
         for (let n = 0; n < rate / 100; n += 1) {
-          feed(id, { type: "text_delta", block_id: block, delta: token });
+          messageDelta(id, block, token);
           expected.set(block, (expected.get(block) ?? "") + token);
           fedTokens += 1;
         }
@@ -849,8 +814,8 @@ const scenarios = {
         else if (messagesEl().querySelector(`[data-text-id="${id}-text-0"]`) !== stableText) textIdentityLost = true;
         await wait(Math.max(0, startedAt + (tick + 1) * 10 - performance.now()));
       }
-      // 最后几个 delta 与 turn_sealed 刻意落在同一帧。
-      feed(id, { type: "turn_sealed", state: "completed" });
+      // 最后几个 message_delta 与 turn_ended 刻意落在同一帧。
+      finishTurn(id);
     });
     await frames(30);
     watch.disconnect();
@@ -865,14 +830,15 @@ const scenarios = {
     return { rate, seconds, fedTokens, elapsedMs: Math.round(performance.now() - startedAt), cadence, lostChars, renderedCorrect, textIdentityLost, remainedCollapsed, plainChurn, streamLongTasks: longTasks.slice(tasksBefore), m: metrics() };
   },
   async checkpoint(): Promise<Record<string, unknown>> {
-    const id = `checkpoint-${liveSeq}`;
-    feed(id, { type: "block_opened", block: { block_id: id, kind: "text", state: "open" } });
-    feed(id, { type: "text_delta", block_id: id, delta: "OLD paragraph\n\nTAIL" });
+    const id = `checkpoint-${fixtureIdSeq++}`;
+    startTurn(id, "message delta checkpoint replacement");
+    seedAssistantBlock(id, id, "answer");
+    messageDelta(id, id, "OLD paragraph\n\nTAIL");
     await frames(30);
-    feed(id, { type: "block_checkpoint", block_id: id, text: "NEW paragraph\n\nTAIL" });
+    messageDelta(id, id, "NEW paragraph\n\nTAIL", true);
     await frames(3);
     const rewritten = messagesEl().querySelector(`[data-text-id="${id}"]`)?.textContent ?? "";
-    feed(id, { type: "block_checkpoint", block_id: id, text: "" });
+    messageDelta(id, id, "", true);
     await frames(3);
     const cleared = messagesEl().querySelector(`[data-text-id="${id}"]`)?.textContent === "";
     return { rewritten, cleared, correct: rewritten.includes("NEW") && !rewritten.includes("OLD") && cleared, m: metrics() };
@@ -884,25 +850,21 @@ const scenarios = {
     const requestsAtStart = pageRequests.length;
     let fedAnswerChars = 0;
     let fedThinkingChars = 0;
-    feed(id, { type: "turn_opened", user_text: "第 200 问：接着刚才的继续说" });
-    feed(id, { type: "block_opened", block: { block_id: "r200", kind: "reasoning", state: "open" } });
+    startTurn(id, "第 200 问：接着刚才的继续说");
+    seedAssistantBlock(id, "r200", "reasoning");
     const cadence = await sampleFrames(120, async () => {
       for (let i = 0; i < 40; i += 1) {
         const delta = prose(mulberry32(i), 60);
         fedThinkingChars += delta.length;
-        feed(id, { type: "text_delta", block_id: "r200", delta });
+        messageDelta(id, "r200", delta);
         await wait(8);
       }
     });
-    feed(id, { type: "block_sealed", block_id: "r200" });
-    feed(id, { type: "block_opened", block: { block_id: "e200", kind: "tool", tool: { name: "exec", state: "running", args_json: "{}" } } });
+    sealBlock(id, "r200");
+    seedToolCall(id, "e200", "exec");
     await wait(60);
-    feed(id, {
-      type: "tool_updated",
-      block_id: "e200",
-      tool: { name: "exec", state: "succeeded", display: { summary: "exec: just now", body: { kind: "text", text: ansiLog(mulberry32(200), 120), truncated: false } }, metrics: { elapsed_ms: 900 } },
-    });
-    feed(id, { type: "block_opened", block: { block_id: "x200", kind: "text", state: "open" } });
+    finishTool("e200", JSON.stringify({ output: ansiLog(mulberry32(200), 120), exit_code: 0 }));
+    seedAssistantBlock(id, "x200", "answer");
     // 视觉更新节奏:尾块(.md-tail)每被写一次 DOM 就是一次「用户看到文字变多」。
     const paintAt: number[] = [];
     let seenRecords = 0;
@@ -915,7 +877,7 @@ const scenarios = {
       const text = markdownOf(mulberry32(700), 200, 9_000);
       for (let i = 0; i < text.length; i += 240) {
         fedAnswerChars += Math.min(240, text.length - i);
-        feed(id, { type: "text_delta", block_id: "x200", delta: text.slice(i, i + 240) });
+        messageDelta(id, "x200", text.slice(i, i + 240));
         await wait(6);
       }
     });
@@ -939,7 +901,7 @@ const scenarios = {
           storedThinkingChars: thinking != null && "text" in thinking ? thinking.text.length : -1,
           storedAnswerChars: answer != null && "text" in answer ? answer.text.length : -1,
           structureVersion: store.state[0].structureVersion,
-          liveSeqUsed: liveSeq,
+          fixtureIdSeqUsed: fixtureIdSeq,
         };
       }),
       p50Ms: sortedGaps[Math.floor(sortedGaps.length * 0.5)] ?? 0,
@@ -952,13 +914,11 @@ const scenarios = {
     return out;
   },
 
-  /** 水位缺口 → 整表快照校正:测重对齐到底重挂多少节点。 */
+  /** 大流之后等待布局与假分页状态稳定,测页面重排 churn。 */
   async realign(): Promise<Record<string, unknown>> {
     churnReset();
     const before = metrics();
-    const jump = liveSeq + 40;
-    feed("t200", { type: "text_delta", block_id: "x200", delta: "" }, jump);
-    liveSeq = jump + 1;
+    messageDelta("t200", "x200", "");
     await wait(400);
     await frames(6);
     const after = metrics();
@@ -1115,19 +1075,19 @@ const scenarios = {
     const watch = new MutationObserver((records) => {
       if (records.some((record) => (record.target.nodeType === Node.ELEMENT_NODE ? record.target as Element : record.target.parentElement)?.closest(".md-tail"))) paintAt.push(performance.now());
     });
-    feed(id, { type: "turn_opened", user_text: "第 201 问：把窗口逐行列出来" });
-    feed(id, { type: "block_opened", block: { block_id: "x201", kind: "text", state: "open" } });
-    feed(id, { type: "text_delta", block_id: "x201", delta: "| item | time | width | policy | result |\n| --- | --- | --- | --- | --- |\n" });
+    startTurn(id, "第 201 问：把窗口逐行列出来");
+    seedAssistantBlock(id, "x201", "answer");
+    messageDelta(id, "x201", "| item | time | width | policy | result |\n| --- | --- | --- | --- | --- |\n");
     await frames(2);
     watch.observe(el, { childList: true, characterData: true, subtree: true });
     const cadence = await sampleFrames(200, async () => {
       for (let row = 0; row < 200; row += 1) {
-        feed(id, { type: "text_delta", block_id: "x201", delta: `| w-${row} | ${(row * 7919) % 977}ms | ${(row * 31) % 260}px | ${row % 2 ? "auto" : "content"} | ok |\n` });
+        messageDelta(id, "x201", `| w-${row} | ${(row * 7919) % 977}ms | ${(row * 31) % 260}px | ${row % 2 ? "auto" : "content"} | ok |\n`);
         await wait(8);
       }
     });
     watch.disconnect();
-    feed(id, { type: "turn_sealed", state: "completed" });
+    finishTurn(id);
     await frames(20);
     const gaps = paintAt.slice(1).map((at, i) => Math.round(at - paintAt[i]!));
     const sorted = [...gaps].sort((a, b) => a - b);
@@ -1180,18 +1140,14 @@ const scenarios = {
     return { name: "animate", target, acted, ...metrics() };
   },
 
-  /**
-   * 高频工具输出 A/B:`merged` 走 store 的按帧归并(现实现);`direct` 逐条直接写
-   * store —— 正是改动前 `onTimelineEntry` 对 `tool_progress` 的行为。两边都在同一
-   * 个构建里跑,不需要回退代码。工具详情展开,让 `.tool-progress` 真的挂在 DOM 上。
-   */
+  /** 高频 v3 tool_output_delta 帧；工具详情展开以便 `.tool-progress` 挂在 DOM 上。 */
   async progressStream(mode: "merged" | "direct" = "merged", linesPerChunk = 3): Promise<Record<string, unknown>> {
     const id = mode === "merged" ? "t202" : "t203";
     const blockId = mode === "merged" ? "p202" : "p203";
     // 先造好数据:排除夹具自己的字符串生成开销。
     const chunks = Array.from({ length: 150 }, (_, i) => ansiLog(mulberry32(i), linesPerChunk));
-    feed(id, { type: "turn_opened", user_text: `第 ${id.slice(1)} 问：跑个长任务` });
-    feed(id, { type: "block_opened", block: { block_id: blockId, kind: "tool", tool: { name: "exec", state: "running" } } });
+    startTurn(id, `第 ${id.slice(1)} 问：跑个长任务`);
+    seedToolCall(id, blockId, "exec");
     await frames(4);
     const progressHead = document.querySelector<HTMLElement>(`[data-slot-key="${CSS.escape(id)}"] .tool-head`);
     if (progressHead?.getAttribute("aria-expanded") !== "true") progressHead?.click();
@@ -1212,11 +1168,7 @@ const scenarios = {
     watch.observe(el, { childList: true, subtree: true, characterData: true });
     const cadence = await sampleFrames(150, async () => {
       for (const chunk of chunks) {
-        if (mode === "merged") {
-          feed(id, { type: "tool_progress", block_id: blockId, chunk });
-        } else {
-          feed(id, { type: "tool_progress", block_id: blockId, chunk });
-        }
+        toolOutputDelta(blockId, chunk);
         await wait(2);
       }
     });
@@ -1226,7 +1178,7 @@ const scenarios = {
       const step = store.state[0].turns[id]?.steps.find((item) => item.id === blockId);
       return step != null && step.kind === "tool" ? step.progressTail?.length ?? 0 : -1;
     });
-    feed(id, { type: "tool_updated", block_id: blockId, tool: { name: "exec", state: "succeeded", display: { summary: "exec done", body: { kind: "text", text: "done\n", truncated: false } } } });
+    finishTool(blockId, JSON.stringify({ output: "done\n", exit_code: 0 }));
     await frames(10);
     const out = { name: `progressStream:${mode}`, mode, linesPerChunk, cadence, elapsedMs, tailChars, fedChunks: chunks.length, progressWrites, churn: { added: churnAdded, removed: churnRemoved }, ...metrics() };
     report.push(out);
@@ -1278,40 +1230,29 @@ const scenarios = {
   },
   /**
    * Diff 审查抽屉:验证「过大只降级、不藏行」这条契约。
-   * 1. 走真 wire 形状(``body:text`` + 顶层 ``display.diff``),顺带守住 reducer 接 diff 槽那条链;
+   * 1. 走 v3 tool_finished 的原始输出与 code_delta,顺带守住 reducer 的原始 diff 解析;
    * 2. 3000 行文件远超富渲染门槛(1200 行),行集必须仍全量可达——中段滚过去要看得见;
    * 3. DOM 只挂可见行 ±overscan,滚动帧间隔不许出现长任务。
    */
   async diffDrawer(): Promise<Record<string, unknown>> {
     const id = "t900";
-    // 单步跑(QAQH_ONLY)时 liveSeq 还停在假页水位之下,onTimelineEntry 会把
-    // 条目当重放丢掉。显式越过水位,让本场景与执行顺序无关。
-    liveSeq = Math.max(liveSeq, 1);
     const total = 3000;
     const line = (index: number): string => `+  const drawerRow${index} = compute(${index}, "diff 抽屉压力夹具");`;
     const bigDiff = `--- a/src/drawer_big.ts\n+++ b/src/drawer_big.ts\n@@ -0,0 +1,${total} @@\n${Array.from({ length: total }, (_, i) => line(i)).join("\n")}\n`;
     const smallDiff = `--- a/src/drawer_small.ts\n+++ b/src/drawer_small.ts\n@@ -0,0 +1,40 @@\n${Array.from({ length: 40 }, (_, i) => `+  const small${i} = ${i};`).join("\n")}\n`;
 
     const feedWrite = (blockId: string, diff: string): void => {
-      feed(id, { type: "block_opened", block: { block_id: blockId, kind: "tool", tool: { name: "write", state: "running" } } });
-      feed(id, {
-        type: "tool_updated", block_id: blockId,
-        tool: {
-          name: "write", state: "succeeded",
-          display: {
-            diff,
-            lines_added: diff.split("\n").length - 3,
-            header: { kind: "path", path: blockId, op: "write" },
-            body: { kind: "text", text: `[OK] ${blockId} — written`, truncated: false },
-          },
-        },
+      seedToolCall(id, blockId, "write", JSON.stringify({ path: blockId }));
+      const linesAdded = blockId === "drawer-big" ? total : 40;
+      finishTool(blockId, JSON.stringify({ output: `[OK] ${blockId} — written`, diff }), {
+        lines_added: linesAdded, lines_removed: 0, files_created: 0, files_deleted: 0, file: null,
       });
     };
 
-    feed(id, { type: "turn_opened", user_text: "第 900 问：把抽屉撑爆试试" });
+    startTurn(id, "第 900 问：把抽屉撑爆试试");
     feedWrite("drawer-small", smallDiff);
     feedWrite("drawer-big", bigDiff);
-    feed(id, { type: "turn_sealed", state: "completed" });
+    finishTurn(id);
     await frames(20);
 
     // 别的夹具也往同一个 store 里塞过带写入的回合,所以整页首个卡片未必是本次的——按槽位取。
@@ -1436,23 +1377,8 @@ if (previewTheme === "light" || previewTheme === "dark") applyTheme(previewTheme
 const previewMaterial = previewParams.get("material");
 if (previewMaterial === "glass" || previewMaterial === "solid") setSessionMaterial(previewMaterial);
 
-/**
- * 上下文面板/压缩卡片的夹具驱动。
- *
- * 生产里这两个 UI 由 usage 流 + 后端镜像的 compact_* 事件驱动;这里用查询参数
- * 给出确定性状态,供视觉评审与截图矩阵复现:`?compact=running|done|failed`。
- * 面板本身只要 `metrics.contextPercent` 非空就会出现(与压缩无关)。
- */
-const previewCompact = previewParams.get("compact");
 /** `?attach=` → 待发附件的确定性夹具态(ready|uploading|failed)。 */
 const previewAttach = previewParams.get("attach");
-const FIXTURE_SUMMARY = [
-  "## 已压缩的早期上下文",
-  "",
-  "- 统一布局与内容对齐:正文列 760px 居中,面板浮层不占列宽。",
-  "- 收拢圆角、字体与表面层级:去掉一套多余的阴影变量。",
-  "- 检查亮暗主题与动效细节:脉冲点仅在 running 态出现。",
-].join("\n");
 const fixtureMetrics = {
   tokensPerSecond: 46.2,
   contextPercent: 34,
@@ -1479,56 +1405,17 @@ const fixtureProfileView = (): import("./session/store").SessionProfileView => {
   };
 };
 
-/** `?compact=` → 夹具的确定性压缩态(idle 时返回 idle,卡片不渲染)。 */
-function fixtureCompactState(): import("./session/store").CompactState {
-  if (previewCompact === "running") {
-    return { phase: "running", compactId: "fixture", turnsTotal: 12, turnsKeeping: 4, summary: FIXTURE_SUMMARY };
-  }
-  if (previewCompact === "done") {
-    return { phase: "done", completedAt: Date.now(), summaryChars: FIXTURE_SUMMARY.length, turnsRemoved: 8 };
-  }
-  if (previewCompact === "failed") {
-    // 线上失败/跳过都带中文 reason(旧 daemon 为 null);夹具按新口径展示原因行。
-    return { phase: "failed", reason: "压缩未发起：端点配置不可用（缺少 api_key）。" };
-  }
-  if (previewCompact === "skipped") {
-    return { phase: "skipped", status: "skipped", reason: "没有可压缩的轮次：历史只剩最近保留区和上一份摘要。" };
-  }
-  return { phase: "idle" };
-}
-
-/**
- * 面板按钮的演示:点一下跑一遍 started → progress… → finished(生产由后端事件
- * 驱动)。进度帧按线上口径发**累积全文快照**——真桥每 256 字符合并一帧,这里为
- * 让动画看得清把步长调小,但"整段替换"的语义必须一致,否则夹具会教坏 reducer。
- */
-function simulateCompact(): void {  const target = previewActiveTab().store;
-  target.compact[1]({ phase: "running", compactId: "fixture", turnsTotal: 12, turnsKeeping: 4, summary: "" });
-  const step = 24;
-  let shown = 0;
-  const timer = setInterval(() => {
-    shown += step;
-    if (shown >= FIXTURE_SUMMARY.length) {
-      clearInterval(timer);
-      target.compact[1]({ phase: "done", completedAt: Date.now(), summaryChars: FIXTURE_SUMMARY.length, turnsRemoved: 8 });
-      return;
-    }
-    const snapshot = FIXTURE_SUMMARY.slice(0, shown);
-    target.compact[1]((current) => current.phase === "running" ? { ...current, summary: snapshot } : current);
-  }, 40);
-}
-
 /** `?attach=` → 夹具的确定性附件态(与生产同一套 chip 类,只是不走真上传)。 */
 function fixtureAttachments(): import("./session/store").PendingAttachment[] {
-  const ref = (id: string, mediaType: string) => ({ content_id: id, media_type: mediaType, sha256: id, truncated: false });
+  const ref = (id: string): string => id;
   if (previewAttach === "ready") {
     return [
-      { id: "E:/shots/approval-dark.png", name: "approval-dark.png", size: 284512, mediaType: "image/png", state: "ready", reference: ref("sha256:9f2c1a", "image/png"), error: null },
-      { id: "E:/qaqh-desktop-app/docs/ui-visual-spec.md", name: "ui-visual-spec.md", size: 18432, mediaType: "text/markdown", state: "ready", reference: ref("sha256:41abe7", "text/markdown"), error: null },
+      { id: "E:/shots/approval-dark.png", name: "approval-dark.png", size: 284512, mediaType: "image/png", state: "ready", reference: ref("sha256:9f2c1a"), error: null },
+      { id: "E:/qaqh-desktop-app/docs/ui-visual-spec.md", name: "ui-visual-spec.md", size: 18432, mediaType: "text/markdown", state: "ready", reference: ref("sha256:41abe7"), error: null },
     ];
   }
   if (previewAttach === "uploading") {
-    return [{ id: "E:/shots/compact-card.png", name: "compact-card.png", size: 0, mediaType: "", state: "uploading", reference: null, error: null }];
+    return [{ id: "E:/shots/uploading.png", name: "uploading.png", size: 0, mediaType: "", state: "uploading", reference: null, error: null }];
   }
   if (previewAttach === "failed") {
     return [{ id: "E:/missing/archive.zip", name: "archive.zip", size: 0, mediaType: "", state: "failed", reference: null, error: "上传失败:413 payload too large" }];
@@ -1547,7 +1434,7 @@ function simulateAttach(): void {
   target.pendingAttachments[1]((current) => [...current, { id, name: "pasted-clipboard.png", size: 0, mediaType: "", state: "uploading", reference: null, error: null }]);
   setTimeout(() => {
     target.pendingAttachments[1]((current) => current.map((item) => item.id === id
-      ? { ...item, size: 155648, mediaType: "image/png", state: "ready", reference: { content_id: "sha256:be71d0", media_type: "image/png", sha256: "sha256:be71d0", truncated: false } }
+      ? { ...item, size: 155648, mediaType: "image/png", state: "ready", reference: "sha256:be71d0" }
       : item));
   }, 600);
 }
@@ -1567,7 +1454,7 @@ function simulateScreenshot(): void {
   target.pendingAttachments[1]((current) => [...current, { id, name: "qaqh-shot-1728000000000.png", size: 0, mediaType: "", state: "uploading", reference: null, error: null }]);
   setTimeout(() => {
     target.pendingAttachments[1]((current) => current.map((item) => item.id === id
-      ? { ...item, size: 98_304, mediaType: "image/png", state: "ready", reference: { content_id: "sha256:c0ffee", media_type: "image/png", sha256: "sha256:c0ffee", truncated: false } }
+      ? { ...item, size: 98_304, mediaType: "image/png", state: "ready", reference: "sha256:c0ffee" }
       : item));
   }, 600);
 }
@@ -1683,8 +1570,6 @@ render(
                 onStop={() => {}}
                 focusToken={0}
                 metrics={() => fixtureMetrics}
-                onCompact={simulateCompact}
-                compactPhase={() => previewActiveTab().store.compact[0]().phase}
                 onPickAttachments={simulateAttach}
                 onScreenshot={simulateScreenshot}
                 attachments={() => previewActiveTab().store.pendingAttachments[0]()}
@@ -1745,8 +1630,6 @@ void (async () => {
   }
   await store.loadBootstrap();
   if (previewView === "approval") store.todos[1]([]);
-  // 确定性压缩态:视觉评审要在同一视图下复现"正在压缩/已压缩/失败"。
-  previewActiveTab().store.compact[1](fixtureCompactState());
   previewActiveTab().store.pendingAttachments[1](fixtureAttachments());
   await frames(2);
   const mountMs = Math.round(performance.now() - bootStart);

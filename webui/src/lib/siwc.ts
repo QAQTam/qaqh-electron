@@ -9,7 +9,7 @@
 import { invoke } from "./host";
 
 import type { SiwcSessionStatus } from "../siwc/brand";
-import type { DaemonCommand } from "./transport/backend";
+import type { ServiceMethod, ServiceParams, ServiceResult } from "./transport/backend";
 import { isDesktopRuntime } from "./transport/backend";
 import { transport } from "./transport";
 
@@ -51,23 +51,34 @@ export interface SiwcSignOutResult {
   usageUrl: string;
 }
 
-async function query<T>(command: DaemonCommand): Promise<T> {
+async function query<K extends ServiceMethod>(method: K, params: ServiceParams<K>): Promise<ServiceResult<K>> {
   if (!isDesktopRuntime()) {
     throw new Error("Sign in with ChatGPT 需要桌面壳：浏览器预览下不可用");
   }
-  return transport.query<T>(command);
+  return transport.query(method, params);
 }
 
-export const siwcStatus = (): Promise<SiwcSessionStatus> => query({ type: "siwc.status" });
+export const siwcStatus = async (): Promise<SiwcSessionStatus> => {
+  const status = await query("siwc.status", {});
+  return {
+    status: status.status,
+    sharing: status.sharing,
+    usageUrl: status.usageUrl,
+    apiBase: status.apiBase,
+    profileId: status.profileId ?? undefined,
+    label: status.label ?? undefined,
+    email: status.email ?? undefined,
+    name: status.name ?? undefined,
+    error: status.error ?? undefined,
+  };
+};
 
-export const siwcProfiles = (): Promise<{
-  active: string | null;
-  profiles: SiwcSessionStatus[];
-  pending: SiwcSessionStatus[];
-}> => query({ type: "siwc.profiles" });
+export const siwcProfiles = () => query("siwc.profiles", {});
 
-export const siwcModels = (profileId?: string): Promise<SiwcModelEntry[]> =>
-  query({ type: "siwc.models", profile_id: profileId ?? null });
+export const siwcModels = async (profileId?: string): Promise<SiwcModelEntry[]> => {
+  const models = await query("siwc.models", profileId === undefined ? {} : { profile_id: profileId });
+  return models.map(({ slug, displayName }) => ({ slug, displayName }));
+};
 
 export const siwcSignInStart = (options: {
   profileId?: string;
@@ -75,25 +86,34 @@ export const siwcSignInStart = (options: {
   label?: string;
   reconsent?: boolean;
 } = {}): Promise<SiwcSignInStart> =>
-  query({
-    type: "siwc.sign_in.start",
-    profile_id: options.profileId ?? null,
-    new_profile: options.newProfile === true ? true : null,
-    label: options.label ?? null,
-    reconsent: options.reconsent === true ? true : null,
+  query("siwc.sign_in.start", {
+    ...(options.profileId === undefined ? {} : { profile_id: options.profileId }),
+    ...(options.newProfile === undefined ? {} : { new_profile: options.newProfile }),
+    ...(options.label === undefined ? {} : { label: options.label }),
+    ...(options.reconsent === undefined ? {} : { reconsent: options.reconsent }),
   });
 
 export const siwcSignInStatus = (flowId: string): Promise<SiwcFlowState> =>
-  query({ type: "siwc.sign_in.status", flow_id: flowId });
+  query("siwc.sign_in.status", { flow_id: flowId });
 
 export const siwcSignInCancel = (flowId: string): Promise<null> =>
-  query({ type: "siwc.sign_in.cancel", flow_id: flowId });
+  query("siwc.sign_in.cancel", { flow_id: flowId });
 
 export const siwcSelectProfile = (profileId: string): Promise<SiwcSessionStatus> =>
-  query({ type: "siwc.profile.select", profile_id: profileId });
+  query("siwc.profile.select", { profile_id: profileId }).then((status) => ({
+    status: status.status,
+    sharing: status.sharing,
+    usageUrl: status.usageUrl,
+    apiBase: status.apiBase,
+    profileId: status.profileId ?? undefined,
+    label: status.label ?? undefined,
+    email: status.email ?? undefined,
+    name: status.name ?? undefined,
+    error: status.error ?? undefined,
+  }));
 
 export const siwcSignOut = (profileId?: string): Promise<SiwcSignOutResult> =>
-  query({ type: "siwc.sign_out", profile_id: profileId ?? null });
+  query("siwc.sign_out", profileId === undefined ? {} : { profile_id: profileId });
 
 /** 用**系统浏览器**打开授权 URL（壳侧只放行 http/https）。 */
 export const openExternal = (url: string): Promise<void> =>

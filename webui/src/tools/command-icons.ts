@@ -3,7 +3,6 @@
  * a missing or ambiguous command should fall back to the regular terminal glyph.
  */
 import { parseJsonish } from "../session/reducer";
-import type { TimelineToolDisplay } from "../api/qaqh/TimelineToolDisplay";
 
 export interface CommandIcon {
   label: string;
@@ -113,12 +112,9 @@ function commandIcon(command: string): CommandIcon | undefined {
 
 export function toolCommandIcon(
   argsJson: string | undefined,
-  display: TimelineToolDisplay | undefined,
 ): CommandIcon | undefined {
   const args = parseJsonish(argsJson);
-  const command = display?.header?.kind === "shell"
-    ? display.header.command
-    : typeof args?.command === "string" ? args.command : Array.isArray(args?.argv) ? args.argv.map(String).join(" ") : "";
+  const command = typeof args?.command === "string" ? args.command : Array.isArray(args?.argv) ? args.argv.map(String).join(" ") : "";
   const executableIcon = command ? commandIcon(command) : undefined;
   if (executableIcon) return executableIcon;
 

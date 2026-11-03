@@ -15,7 +15,7 @@ import { STR } from "../lib/strings";
 import { SessionStore } from "../session/store";
 import { overlayLocalTitles } from "../session/title-override";
 import { toast } from "../ui/toast";
-import type { ContentRef } from "../api/qaqh/ContentRef";
+import type { ModelSelection, SessionContentRef, WorkspaceEntry } from "@qaqh/sdk/protocol";
 
 export interface Tab {
   id: string;
@@ -57,6 +57,9 @@ export type SidebarSession = {
   tool_mode?: string | null;
 };
 export type SidebarWorkspace = { id: string; title: string; path: string; order: number; missing_dir?: boolean };
+function workspaceEntryToSidebar(entry: WorkspaceEntry): SidebarWorkspace {
+  return { id: entry.id, path: entry.path, title: entry.title, order: entry.order, missing_dir: entry.missing_dir };
+}
 const [sessionCatalog, setSessionCatalog] = createSignal<SidebarSession[]>([]);
 const [workspaceCatalog, setWorkspaceCatalog] = createSignal<SidebarWorkspace[]>([]);
 const DRAFT_PREFIX = "qaqh.draft.";
@@ -237,13 +240,19 @@ export function openStartup(): void {
   lastActivatedSeed = null;
   // 回到启动页 = 取消在飞的激活:让排队中的 activation 不再 proceed。
   activationTargetId = null;
+  // VT 回调只做视觉信号写入;store 退订(deactivate)留在外头同步做 —— 回调会被
+  // 排到下一帧,迟到时若还带着退订循环,会把「刚激活的当前 store」的订阅拆掉
+  // (headless/节流下实测发生过,timeline 全空)。旧快照在 startViewTransition 调用
+  // 的当下已同步捕获,随后的退订不会进画面。
   withViewTransition(() => {
+    // 迟到的旧回调:激活目标已被后来者取代,不得再写入任何视觉信号。
+    if (activationTargetId !== null) return;
     setIsStartup(true);
     setActiveId(null);
-    for (const other of tabs()) {
-      other.store.deactivate();
-    }
   });
+  for (const other of tabs()) {
+    other.store.deactivate();
+  }
   setFocusToken(focusToken() + 1);
 }
 
@@ -273,14 +282,18 @@ export async function activateTab(tab: Tab): Promise<void> {
   if (lastActivatedSeed && lastActivatedSeed !== tab.seed) retainRecentBackground(lastActivatedSeed, tab.seed);
   recentBackgroundSeeds = recentBackgroundSeeds.filter((seed) => seed !== tab.seed);
   lastActivatedSeed = tab.seed;
-  // 只包同步的「内容换血」信号写入;attach/RPC 留在外面,别把旧快照冻屏。
+  // 只包同步的「内容换血」视觉信号写入;attach/RPC 留在外面,别把旧快照冻屏。
+  // 其余 store 的退订同样留在外面:VT 回调排到下一帧,节流下旧回调可能迟到,
+  // 在回调里 deactivate 会拆掉刚激活 store 的订阅(见 openStartup 内注释)。
   withViewTransition(() => {
+    // 迟到的旧回调:激活目标已被后来者取代,不得回写旧 activeId。
+    if (activationTargetId !== tab.id) return;
     setIsStartup(false);
     setActiveId(tab.id);
-    for (const other of tabs()) {
-      if (other.id !== tab.id) other.store.deactivate();
-    }
   });
+  for (const other of tabs()) {
+    if (other.id !== tab.id) other.store.deactivate();
+  }
   setFocusToken(focusToken() + 1);
   const activation = (async () => {
     // A rapid later click supersedes queued work before it can attach.
@@ -327,10 +340,8 @@ export async function closeTab(tabId: string): Promise<void> {
 
 export interface CreateSessionOptions {
   cwd?: string | null;
-  profileId?: string | null;
-  model?: string | null;
-  maxTokens?: number | null;
-  contextLength?: number | null;
+  profile?: string | null;
+  modelSelection?: ModelSelection | null;
   effort?: string | null;
   title?: string | null;
 }
@@ -344,17 +355,19 @@ export async function createSessionWithCwd(
       ? { cwd: cwdOrOptions ?? null }
       : cwdOrOptions;
 
-  const res = await transport.query<{ session_id?: string }>({
+  const ack = await transport.command({
     type: "session.create",
     cwd: options.cwd ?? null,
-    profile_id: options.profileId ?? null,
-    model: options.model ?? null,
-    max_tokens: options.maxTokens ?? null,
-    context_length: options.contextLength ?? null,
+    profile: options.profile ?? null,
+    model_selection: options.modelSelection ?? null,
     effort: options.effort ?? null,
     title: options.title ?? null,
   });
-  if (res?.session_id == null || res.session_id === "") {
+  const result = ack.result;
+  const sessionId = result != null && typeof result === "object" && !Array.isArray(result)
+    ? (result as Record<string, unknown>).session_id
+    : undefined;
+  if (typeof sessionId !== "string" || sessionId === "") {
     throw new Error("session.create 未返回 session_id");
   }
   // 会话已经建出来了：侧栏刷新失败不能再走一次创建，否则会多出一个会话。
@@ -364,7 +377,7 @@ export async function createSessionWithCwd(
   } catch (err) {
     console.warn("session.create 已成功，但会话列表刷新失败：", err);
   }
-  return res.session_id;
+  return sessionId;
 }
 
 /**
@@ -385,10 +398,7 @@ export async function createSession(cwd?: string | null): Promise<void> {
 
 export interface StartupSubmitOptions {
   cwd: string | null;
-  profileId?: string | null;
-  model?: string | null;
-  maxTokens?: number | null;
-  contextLength?: number | null;
+  profile?: string | null;
   effort?: string | null;
   text: string;
   attachmentPaths?: string[];
@@ -407,23 +417,15 @@ export async function submitStartupSession(options: StartupSubmitOptions): Promi
   try {
     const fresh = await createSessionWithCwd({
       cwd: options.cwd,
-      profileId: options.profileId,
-      model: options.model,
-      maxTokens: options.maxTokens,
-      contextLength: options.contextLength,
+      profile: options.profile,
       effort: options.effort,
     });
-    const uploadedRefs: ContentRef[] = [];
+      const uploadedRefs: SessionContentRef[] = [];
     if (options.attachmentPaths && options.attachmentPaths.length > 0) {
       for (const path of options.attachmentPaths) {
         try {
           const uploaded = await transport.uploadAttachment(fresh, path);
-          uploadedRefs.push({
-            content_id: uploaded.content_id,
-            media_type: uploaded.media_type,
-            sha256: uploaded.sha256,
-            truncated: uploaded.truncated,
-          });
+          uploadedRefs.push(uploaded.content_ref);
         } catch (err) {
           toast(`附件上传失败: ${path}`, "err");
         }
@@ -450,7 +452,16 @@ export async function submitStartupSession(options: StartupSubmitOptions): Promi
  */
 export async function registerWorkspace(path: string): Promise<SidebarWorkspace | null> {
   try {
-    const created = await transport.query<SidebarWorkspace>({ type: "workspace.create", path });
+    const ack = await transport.command({ type: "workspace.create", path });
+    const value = ack.result;
+    if (value == null || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("workspace.create 未返回工作区信息");
+    }
+    const entry = value as unknown as WorkspaceEntry;
+    if (typeof entry.id !== "string" || typeof entry.path !== "string" || typeof entry.title !== "string") {
+      throw new Error("workspace.create 返回了无效工作区信息");
+    }
+    const created: SidebarWorkspace = { id: entry.id, path: entry.path, title: entry.title, order: entry.order, missing_dir: false };
     await pollSessions();
     return created;
   } catch (error) {
@@ -487,7 +498,7 @@ export async function chooseNewSessionFolder(): Promise<void> {
  */
 export async function moveSessionToWorkspace(seed: string, workspaceId: string): Promise<void> {
   try {
-    await transport.command({ type: "session.set_group", workspace_id: workspaceId }, sessionTarget(seed));
+    await transport.command({ type: "workspace.move_session", workspace_id: workspaceId }, sessionTarget(seed));
     await pollSessions();
   } catch (error) {
     toast(`${STR.moveSessionFailed}：${error instanceof Error ? error.message : String(error)}`, "err");
@@ -497,7 +508,7 @@ export async function moveSessionToWorkspace(seed: string, workspaceId: string):
 /** 把会话移出工作区 → 未分组(`workspace.detach`)。 */
 export async function detachSessionFromWorkspace(seed: string): Promise<void> {
   try {
-    await transport.command({ type: "session.set_group", workspace_id: null }, sessionTarget(seed));
+    await transport.command({ type: "workspace.detach" }, sessionTarget(seed));
     await pollSessions();
   } catch (error) {
     toast(`${STR.detachSessionFailed}：${error instanceof Error ? error.message : String(error)}`, "err");
@@ -521,7 +532,7 @@ async function pullSessions(): Promise<void> {
   try {
     const [list, workspaces] = await Promise.all([
       transport.sessions() as Promise<SidebarSession[]>,
-      transport.query<SidebarWorkspace[]>({ type: "workspace.list" }).catch(() => []),
+      transport.query("workspace.list", {}).then((entries) => entries.map(workspaceEntryToSidebar)).catch(() => []),
     ]);
     applySessionList(list);
     setWorkspaceCatalog(workspaces);
@@ -552,7 +563,7 @@ async function dropSession(seed: string): Promise<void> {
 export async function boot(): Promise<void> {
   const [list, workspaces] = await Promise.all([
     transport.sessions() as Promise<SidebarSession[]>,
-    transport.query<SidebarWorkspace[]>({ type: "workspace.list" }).catch(() => []),
+    transport.query("workspace.list", {}).then((entries) => entries.map(workspaceEntryToSidebar)).catch(() => []),
   ]);
   applySessionList(list);
   setWorkspaceCatalog(workspaces);

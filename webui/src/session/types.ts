@@ -1,18 +1,5 @@
-/**
- * 前端数据模型 (spec §6)，纯血 Ringing v2 单流适配：
- *
- * 结构与顺序事实只来自后端 ConversationSnapshot / ConversationDelta。
- */
-import type { ReasoningKind } from "../api/qaqh/ReasoningKind";
-import type { ConversationSnapshot } from "../api/qaqh/ConversationSnapshot";
-import type { ConversationDelta } from "../api/qaqh/ConversationDelta";
-import type { TimelineToolDisplay } from "../api/qaqh/TimelineToolDisplay";
-import type { TimelineToolPermission } from "../api/qaqh/TimelineToolPermission";
-
-export type { ConversationSnapshot, ConversationDelta };
-
-export type ToolDisplay = TimelineToolDisplay;
-export type ToolPermission = TimelineToolPermission;
+/** 前端会话视图模型；结构与顺序事实只来自 Ringing v3 bootstrap 与事件流。 */
+export type ReasoningKind = "summary" | "text" | "encrypted" | "redacted";
 
 export type Seq = number;
 
@@ -21,6 +8,8 @@ export type TurnStatus = "running" | "done" | "aborted" | "failed";
 export interface Turn {
   /** 后端 turn_id。注意 id 可能复用,稳定去重键见 `key`。 */
   id: string;
+  /** Stable id from the input timeline entry while a turn id is not assigned. */
+  inputId?: string | null;
   /**
    * 稳定键:快照/翻页回合用 `#turn_index`,实时回合(无全局序号)用 id。
    * 权威页一旦把序号对上这个回合,键**保持本地那个**(换键 = 换 DOM 行,
@@ -39,6 +28,7 @@ export interface Turn {
   status: TurnStatus;
   workStartedAt?: number;
   error?: { message: string };
+  usage?: import("@qaqh/sdk/protocol").UsageInfo | null;
   /** 时间线里是否被用户展开。 */
   expanded: boolean;
   /** 仅供贴底触发;避免滚动 effect 订阅每个文本块。 */
@@ -58,8 +48,7 @@ export interface ThinkingStep {
    * 思考类别(wire `TimelineBlock.reasoning_kind`)。订阅套餐路径只有 `summary`
    * ——服务端给的**摘要**,不是模型原文(完整思考在 `encrypted_content` 里,客户端
    * 拿不到)。标签决策见 `../turn/thinking-label`。
-   * 缺失 = 后端未标注(本字段引入前的历史),或本块只收到 delta、还没等到
-   * `block_opened`——两种都按「思考」显示,不猜。
+   * 缺失 = 后端未标注,或本块只收到 delta、还没等到时间线条目——两种都按「思考」显示,不猜。
    */
   reasoningKind?: ReasoningKind;
 }
@@ -74,14 +63,14 @@ export interface TextStep {
   contentRef?: string;
 }
 
-export type ToolStatus = "pending" | "running" | "success" | "error" | "denied" | "aborted" | "backgrounded";
+export type ToolStatus = import("@qaqh/sdk/protocol").ToolCallStatus;
 
 export interface ToolOutput {
   text?: string;
   stderr?: string;
   exitCode?: number;
   truncated?: boolean;
-  /** 后端 unified diff 文本(display.body.diff.unified 或旧字段 diff)。 */
+  /** Unified diff text found in the raw tool output. */
   diffText?: string;
 }
 
@@ -101,26 +90,21 @@ export interface ToolStep {
   error?: string;
   /** 运行中输出尾窗(16KB 有界);stdout 与未知流(`stream` 缺失的历史数据)。 */
   progressTail?: string;
-  /** 运行中 stderr 尾窗(16KB 有界);`tool_progress.stream === "stderr"` 才落这里。 */
+  /** 运行中 stderr 尾窗(16KB 有界);`tool_output_delta.stream === "stderr"` 才落这里。 */
   progressStderrTail?: string;
   progressTruncated?: boolean;
-  /** 后端展示投影(权威,缺省时回退旧字段)。 */
-  display?: ToolDisplay;
-  /** 后端 metrics。 */
+  /** Backend metrics. */
   elapsedMs?: number;
-  permission?: ToolPermission | null;
-  /**
-   * 参数还在流式输出时后端旁路透传的**行数估算**(tool_estimated)。
-   * 口径是"已吐出的参数里能数出多少行",不是实际改动行;瞬态值,
-   * 不进快照/resnapshot 会丢,终态 `tool_updated` 一到即清。
-   */
-  streamEstimate?: { add: number; del: number } | null;
+  /** v3 structured edit accounting; never presented as a unified diff. */
+  codeDelta?: import("@qaqh/sdk/protocol").CodeDelta | null;
+  effects?: import("@qaqh/sdk/protocol").ToolEffectInfo[];
 }
 
 export type Step = ThinkingStep | TextStep | ToolStep;
 
 /** 用户等待区间(授权/AskUser),挂在其发生时正在运行的回合上。 */
 export interface Wait {
+  interactionId?: string;
   turnKey: string | null;
   kind: "approval" | "ask";
   from: number;
@@ -151,6 +135,13 @@ export interface SessionState {
   /** 当前运行中回合的 key;无运行中回合为 null(等待区间归属判定)。 */
   activeTurnKey: string | null;
   waits: Wait[];
+  /** Cumulative text frames that arrived before their timeline entry. */
+  pendingBlocks: Record<string, { turnId: string; text: string }>;
+  /** Cumulative tool argument frames that arrived before their tool call entry. */
+  pendingToolArguments: Record<string, { turnId: string; text: string }>;
+  interactionIds: string[];
+  watermark: number;
+  compactionSummaries: string[];
 }
 
 /**
@@ -200,5 +191,10 @@ export function emptySession(): SessionState {
     failedTurns: 0,
     activeTurnKey: null,
     waits: [],
+    pendingBlocks: {},
+    pendingToolArguments: {},
+    interactionIds: [],
+    watermark: 0,
+    compactionSummaries: [],
   };
 }

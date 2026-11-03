@@ -7,7 +7,7 @@
  *    实测见 PAINT_BUDGET_MS 注释;超预算就退回 THROTTLE_MS,不再一刀切 120ms
  *    把观感钉在 ~8fps。
  *
- * `revision` 变化(block_checkpoint 全量替换/重置)时清空缓存整体重渲染。
+ * `revision` 变化(消息正文被整体替换/重置)时清空缓存整体重渲染。
  */
 import { createEffect, onSettled, type Component } from "solid-js";
 import { splitBlocks } from "./split";

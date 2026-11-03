@@ -81,7 +81,7 @@ function parseListText(text: string): TodoCardItem[] | null {
 
 /** null = 不适合卡片(非成功终态 / 无可展示条目),回退普通工具行。 */
 export function todoCardData(step: ToolStep): TodoCardData | null {
-  if (toolPresentation(step) !== "todo" || step.status !== "success" || step.name === "todo_list") return null;
+  if (toolPresentation(step) !== "todo" || step.status !== "finished" || step.name === "todo_list") return null;
   const args = parseJsonish(step.argsJson);
   if (args == null || typeof args !== "object") return null;
   const record = args as Record<string, unknown>;

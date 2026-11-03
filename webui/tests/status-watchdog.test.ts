@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { SessionStore } from "../src/session/store";
 import { transport, desktopHostSurface, type StreamHandlers } from "../src/lib/transport";
+import { sessionBootstrap } from "./session-fixtures";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -13,24 +14,8 @@ function mockHostStream(seed: string) {
   });
   vi.spyOn(transport, "attach").mockResolvedValue();
   vi.spyOn(transport, "approvals").mockResolvedValue([]);
-  vi.spyOn(transport, "rpc").mockImplementation(async () => ({ items: [] }) as never);
-  vi.spyOn(transport, "sessionBootstrap").mockResolvedValue({
-    schema: "qaqh.Ringing",
-    version: 2,
-    session_id: seed,
-    conversation: {
-      channel: "conversation",
-      state: {
-        session_id: seed,
-        turns: [],
-        context: [],
-        compaction: null,
-        current_turn_id: null,
-        revision: 0,
-        last_fact_seq: 0,
-      },
-    },
-  });
+  vi.spyOn(transport, "query").mockResolvedValue({ items: [] } as never);
+  vi.spyOn(host, "sessionBootstrap").mockResolvedValue(sessionBootstrap(seed));
   return {
     getHandlers: () => handlers,
     streamsRetry: vi.spyOn(host, "streamsRetry").mockResolvedValue(),

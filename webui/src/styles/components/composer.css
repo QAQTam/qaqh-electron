@@ -203,7 +203,7 @@
   .icon-btn:disabled { opacity: .4; }
   .icon-btn svg { width: 16px; height: 16px; }
 
-  /* 历史/压缩/回底 */
+  /* 历史记录/回到底部 */
   .history-note { color: var(--muted); font-size: var(--fs-xs); padding: 4px 0 8px; }
   .history-note.retry { min-height: 28px; }
   .history-note.retry:hover { color: var(--text); }
@@ -215,10 +215,6 @@
     color: var(--muted); font-size: var(--fs-sm);
   }
   .sync-note svg { width: 15px; height: 15px; }
-  /* 只让出块间距:行内方向的 margin-inline: auto 归 timeline.css 的内容列规则,
-     这里写 margin 简写会把左右 margin 清零、分隔线贴左而正文居中。 */
-  .compact-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: var(--fs-xs); margin-block: 8px; }
-  .compact-divider::before, .compact-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
   .back-bottom {
     position: absolute; right: var(--space-4); bottom: 12px;
     display: inline-flex; align-items: center; gap: 6px;

@@ -107,7 +107,7 @@ export function defaultTier(kind: ProviderKind, model: string): ReasoningTier {
 
 export async function refreshConfig(): Promise<void> {
   try {
-    setConfig(await transport.query<ConfigDto>({ type: "config.load" }));
+    setConfig(await transport.query("config.load", {}));
     setError(null);
   } catch (cause) {
     setError(messageOf(cause));

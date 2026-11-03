@@ -1,11 +1,11 @@
 /**
  * Unified diff 解析与词级高亮配对(spec §9)。
  *
- * 单源说明:后端目前交付的是 unified diff 文本(`display.body.diff.unified`,
- * 由 Rust 侧生成,前端绝不重算 diff)。本模块只是把后端产物解析成渲染结构 +
+ * 单源说明:后端原始工具输出中携带 unified diff 文本时,前端只解析并渲染该产物,
+ * 绝不从结构化行数统计重算 diff。本模块将输出解析成渲染结构 +
  * 按 §9.3 规则做「等长 del/add 连续段」的词级配对。
- * 聚合 `+N −M` 已改读后端权威值 `display.lines_added/lines_removed`
- * (见 `tools/StepRow.tsx`);本模块的 `file.stats` 现仅供 diff 视图的**逐文件**计数。
+ * 聚合 `+N −M` 优先读后端权威 `code_delta` (见 `tools/StepRow.tsx`);
+ * 本模块的 `file.stats` 用于 diff 视图的逐文件计数及缺少结构化统计时的总数回退。
  */
 import { diffWordsWithSpace } from "diff";
 

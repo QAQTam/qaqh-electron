@@ -3,15 +3,16 @@
  *
  * 前端只见两类通道:
  *  - `invoke` 请求/响应(与 Electron 主进程的固定命令表一一对应);
- *  - 宿主转发的事件(timeline://*, projection://*, conn://*, payload 与 SSE 帧同形)。
+ *  - 宿主转发的事件(projection://*, conn://*, payload 与 SSE 帧同形)。
  *
  * 连接语义:重连/退避/续传责任在 Electron 宿主/SDK,connection 状态由
- * `timeline://status` 驱动;offline 后由用户动作(重试按钮/窗口聚焦)触发
+ * `projection://status` 驱动;offline 后由用户动作(重试按钮/窗口聚焦)触发
  * `streams_retry`。
  */
 import { isDesktopRuntime, type HostEvent } from "../desktop-host";
 import { invoke, listen, type Event, type UnlistenFn } from "./electron-core";
 import { noteEvent, noteRpc } from "../devlog";
+import type { CommandPrecondition, CommandTarget, SessionBootstrap, SessionEventFrame } from "@qaqh/sdk/protocol";
 import {
   type Ack,
   type ApprovalView,
@@ -22,9 +23,10 @@ import {
   type ProjectionStatusWire,
   type ReconnectStatusWire,
   type TransportBackend,
-  type DaemonCommand,
-  type UnifiedTarget,
-  type UserSkillsWire,
+  type RendererRingingCommand,
+  type ServiceMethod,
+  type ServiceParams,
+  type ServiceResult,
 } from "./backend";
 
 type HostDiagnostics = {
@@ -61,10 +63,14 @@ export class ElectronTransport implements TransportBackend {
     return null;
   }
 
-  async command(command: DaemonCommand, target: UnifiedTarget = { kind: "global" }): Promise<Ack> {
+  async command(
+    command: RendererRingingCommand,
+    target: CommandTarget = { kind: "global" },
+    preconditions: CommandPrecondition[] = [],
+  ): Promise<Ack> {
     const startedAt = Date.now();
     try {
-      const ack = await invoke<Ack>("command", { command, target });
+      const ack = await invoke<Ack>("command", { command, target, preconditions });
       noteRpc(command.type, startedAt, null);
       if (ack.status === "rejected") throw rejectAck(ack);
       return ack;
@@ -74,14 +80,16 @@ export class ElectronTransport implements TransportBackend {
     }
   }
 
-  async query<T = unknown>(command: DaemonCommand, target: UnifiedTarget = { kind: "global" }): Promise<T> {
-    const ack = await this.command(command, target);
-    return (ack.result ?? null) as T;
-  }
-
-  /** 用户级 skills:宿主自己扫 `~/.qaqh/skills` 与 `~/.agents/skills`(不经 daemon)。 */
-  userSkills(): Promise<UserSkillsWire> {
-    return invoke<UserSkillsWire>("skills_user_scan");
+  async query<K extends ServiceMethod>(method: K, params?: ServiceParams<K>): Promise<ServiceResult<K>> {
+    const startedAt = Date.now();
+    try {
+      const result = await invoke<ServiceResult<K>>("service_query", { method, params: params ?? {} });
+      noteRpc(method, startedAt, null);
+      return result;
+    } catch (cause) {
+      noteRpc(method, startedAt, cause);
+      throw cause;
+    }
   }
 
   // ── Electron 宿主专属面(DesktopHostSurface) ────────────────────────────────
@@ -113,13 +121,13 @@ export class ElectronTransport implements TransportBackend {
       }));
     };
     await on<ProjectionStatusWire>("projection://status", (payload) => handlers.onProjectionStatus?.(payload));
-    await on<Record<string, any>>("projection://bootstrap", (payload) => {
+    await on<{ session_id?: string; bootstrap?: SessionBootstrap }>("projection://bootstrap", (payload) => {
       const seed = typeof payload?.session_id === "string" ? payload.session_id : "";
       if (seed && payload?.bootstrap && typeof payload.bootstrap === "object") handlers.onProjectionBootstrap?.(seed, payload.bootstrap);
     });
-    await on<Record<string, any>>("projection://event", (payload) => {
+    await on<{ session_id?: string; event?: SessionEventFrame }>("projection://event", (payload) => {
       const seed = typeof payload?.session_id === "string" ? payload.session_id : "";
-      handlers.onProjectionEvent(seed, payload);
+      if (seed && payload?.event && typeof payload.event === "object") handlers.onProjectionEvent(seed, payload.event);
     });
     await on<Record<string, any>>("projection://reset", (payload) => {
       const seed = typeof payload?.session_id === "string" ? payload.session_id : "";
@@ -133,8 +141,8 @@ export class ElectronTransport implements TransportBackend {
     };
   }
 
-  sessionBootstrap(seed: string): Promise<unknown> {
-    return invoke<unknown>("session_bootstrap", { seed });
+  sessionBootstrap(seed: string): Promise<SessionBootstrap> {
+    return invoke<SessionBootstrap>("session_bootstrap", { seed });
   }
 
   readContentText(contentRef: string, signal?: AbortSignal): Promise<string> {

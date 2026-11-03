@@ -50,7 +50,7 @@ export const MemoryPanel: Component = () => {
 
   const tick = async (): Promise<void> => {
     try {
-      const next = await loadMemorySnapshot();
+      const next = await loadMemorySnapshot(phases().at(-1)?.sequence);
       if (stopped) return;
       setPhases((prev) => mergePhaseSamples(prev, next.phases));
       setSnap(next);

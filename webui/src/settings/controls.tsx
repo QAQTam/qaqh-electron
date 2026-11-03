@@ -28,7 +28,7 @@ export const TextInput: Component<{
   value: string;
   onInput: (value: string) => void;
   placeholder?: string;
-  type?: "text" | "password";
+  type?: "text" | "password" | "number";
   id?: string;
   disabled?: boolean;
   autocomplete?: string;

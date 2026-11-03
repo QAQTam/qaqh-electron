@@ -25,6 +25,12 @@ const WorkStep: Component<{ step: Accessor<Step>; turn: Turn; thinkingRich: () =
   const tool = createMemo(() => { const step = props.step(); return step.kind === "tool" ? step : null; });
   const [thinkingOverride, setThinkingOverride] = createSignal<boolean | null>(null);
   const thinkingOpen = () => thinkingOverride() ?? (thinking() != null && (props.thinkingRich() || thinkingRunning()));
+  createEffect(
+    () => [props.turn.status, thinking()?.endedAt] as const,
+    ([status, endedAt]) => {
+      if (status !== "running" && endedAt != null) setThinkingOverride(null);
+    },
+  );
   let thinkingRow: HTMLDivElement | undefined;
   let following = true;
   let frame: number | null = null;

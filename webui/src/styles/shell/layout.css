@@ -35,6 +35,9 @@
   #app.cols-2 #top { grid-template-columns: var(--sidebar-width, 288px) minmax(0, 1fr) auto; }
   #app.cols-1 { grid-template-columns: minmax(0, 1fr); }
   #app.cols-1 #top { grid-template-columns: 48px minmax(0, 1fr) auto; }
+  /* A menu button plus a back button cannot fit in the narrow 48px rail; the
+     drawer already exposes every section, so use it as the narrow back path. */
+  #app.cols-1 #top .titlebar-back { display: none; }
   #app.cols-2 .workspace { grid-column: 2; }
   #app.cols-1 .workspace { grid-column: 1; }
   /* 抽屉遮罩:盖住 body 行,TopBar 仍可点(关闭入口保持在原位)。
