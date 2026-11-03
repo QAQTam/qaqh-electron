@@ -181,6 +181,9 @@ export const MessageSidebar: Component<{
                           >
                             <IconMessageSquare />
                             <span class="message-session-title">{sessionName(session())}</span>
+                            <Show when={session().tool_mode != null && session().tool_mode !== "standard"}>
+                              <span class="message-session-toolmode" title={`工具模式：${session().tool_mode}`}>{session().tool_mode}</span>
+                            </Show>
                             <Show when={isWorking()}><i class="message-session-running" aria-label={STR.running} /></Show>
                             {/* 常驻挂载,不用 <Show> 包:状态一离开待人,父级若把组件
                                 从树上摘掉,slide-out 就永远没机会播(卡片会瞬间消失,

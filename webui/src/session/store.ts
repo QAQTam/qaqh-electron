@@ -7,10 +7,10 @@
  * - 连接状态来自 projection://status
  */
 import { createSignal, createStore } from "solid-js";
-import { transport, desktopHostSurface, type ApprovalView, type StreamHandlers, type ProjectionStatusWire, type TodoItemWire } from "../lib/transport";
+import { transport, desktopHostSurface, sessionTarget, type ApprovalView, type StreamHandlers, type ProjectionStatusWire, type TodoItemWire } from "../lib/transport";
 import { now } from "../lib/time";
 import { onConfigChanged } from "../lib/config-events";
-import { applyConversationDelta, applyConversationSnapshot, emptySession, forceSealTurn, pendingContentRefs, resolveContentRef } from "./reducer";
+import { applyConversationDelta, applyConversationSnapshot, contentRefsInPayload, emptySession, forceSealTurn, pendingContentRefs, resolveContentRef } from "./reducer";
 import { ContentLoader } from "./content-loader";
 import { evictForWindow, fillGapHeights } from "./pagination";
 import type { SessionState, Wait } from "./types";
@@ -20,6 +20,12 @@ import type { ConfigDto } from "../api/qaqh/ConfigDto";
 import type { ContentRef } from "../api/qaqh/ContentRef";
 import type { UsageInfo } from "../api/qaqh/UsageInfo";
 import type { ConversationDelta } from "../api/qaqh/ConversationDelta";
+import type { ToolsSettingPatch } from "../api/qaqh/ToolsSettingPatch";
+import type { ProfileSummaryDto } from "../api/qaqh/ProfileSummaryDto";
+import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
+
+function pendingContentRefsFromSnapshot(snapshot: unknown): Set<string> { return contentRefsInPayload(snapshot); }
+function contentRefsInDelta(delta: unknown): Set<string> { return contentRefsInPayload(delta); }
 
 export type ConnectionKind = "connected" | "reconnecting" | "offline";
 
@@ -101,31 +107,62 @@ export function estimateTokens(text: string): number {
  * 输入区 profile 选择器的视图(spec §1.5)。
  *
  * 三份来源拼一个数,各自都不能单独当真相:
- *  - `selected` 来自 `session.meta` 的 `profile`(会话级,落 meta.json);
- *  - `catalog`/`activeProfile` 来自全局 `config.load`;
- *  - `model` **只能从全局扁平值推**:`ConfigDto` 只下发活跃 profile 的 model,
- *    名录里别的 profile 不带它。所以选了这个会话专属的 profile 时 `model` 为
- *    null,由 UI 留空而不是拿 `SessionMeta.model`(建会话那一刻的快照,
- *    `reload_config` 不回写它)冒充生效值。
+ *  - `selected` 来自 `session.meta` 的 `profile_id`(会话级,落 meta.json);
+ *  - `catalog`/`activeProfile`/`profilesDetail` 来自全局 `config.load`
+ *    （都是稳定 Profile ID）;
+ *  - `model`/`providerKind` 取**本会话有效 Profile** 的摘要；有效项不在名录
+ *    （配置还没刷新）时才退回全局活跃项。绝不拿 `SessionMeta.model`（建会话
+ *    那一刻的快照，`reload_config` 不回写它）冒充生效值。
  */
 export interface SessionProfileView {
   selected: string | null;
-  /** 全局 `active_profile`:「跟随全局」这一项实际会用到谁。 */
+  /** 全局默认 Profile ID:「跟随全局」这一项实际会用到谁。 */
   activeProfile: string | null;
   effective: string | null;
   model: string | null;
+  /** 本会话有效 Profile 的 provider 类别（模型目录/档位特判按它算）。 */
+  providerKind: ProviderKind;
   catalog: string[];
-  details?: Record<string, import("../api/qaqh/ConfigDto").ProfileSummaryDto>;
+  details?: Record<string, ProfileSummaryDto>;
 }
 
 /** `session.meta` 条目(`SessionListEntry`,`meta` 字段在 wire 上是平铺的)。 */
-type SessionMetaWire = { profile?: string | null; effort?: string | null };
+type SessionMetaWire = {
+  profile_id?: string | null;
+  model?: string | null;
+  model_override?: string | null;
+  max_tokens_override?: number | null;
+  context_length_override?: number | null;
+  effort?: string | null;
+  tool_mode?: string | null;
+  custom_tools?: string[] | null;
+};
+
+/** 会话工具模式视图:composer 选择器的读面。`mode` 空串按 standard 语义归一。 */
+export interface SessionToolModeView {
+  mode: string;
+  /** custom 档的白名单(仅 mode === "custom" 时有意义)。 */
+  customTools: string[];
+}
+
+/** 会话 meta 的工具模式名 → 统一 patch。`preset` 承载 minimal 家族与 `none`。 */
+function toolsSettingPatch(mode: string, customTools: string[]): ToolsSettingPatch {
+  if (mode === "standard" || mode === "all" || mode === "default") return { mode: "default" };
+  if (mode === "none") return { mode: "none" };
+  if (mode === "custom") return { mode: "custom", names: customTools };
+  return { mode: "preset", name: mode };
+}
+
 /** `config.load` 里与 profile 选择器有关的字段。 */
 type ConfigProfileView = {
   activeProfile: string;
   model: string;
+  credential: string;
+  effort: string | null;
+  maxTokens: number | null;
+  contextLength: number | null;
   profiles: string[];
-  details?: Record<string, import("../api/qaqh/ConfigDto").ProfileSummaryDto>;
+  details?: Record<string, ProfileSummaryDto>;
 };
 
 function cacheHitPercent(usage: UsageInfo): number | null {
@@ -151,7 +188,7 @@ function compactDeliveryFailure(error: unknown): string {
     : `压缩请求未能送达 daemon（${detail}），请检查连接后重试。`;
 }
 /**
- * 取消看门狗:`conversation_cancel` 发出后,超过此时长仍未见 `turn_finished` /
+ * 取消看门狗:`conversation.cancel` 发出后,超过此时长仍未见 `turn_finished` /
  * `turn_interrupted`,就本地强制收口(BUG-2026-10-15:后端工具卡死时 turn 状态机
  * 到不了终态,前端三症状——stopping 常亮/无法重发/蓝点常亮——全是它的投影)。
  * 兜底只修界面,后端孤儿工具由 T2 的宽限期收割解决。
@@ -168,12 +205,29 @@ export class SessionStore {
   reconnect = createSignal<ReconnectState | null>(null);
   activity = createSignal<SessionActivity | null>(null);
   composerMetrics = createSignal<ComposerMetrics>({ tokensPerSecond: null, isStreaming: false, contextPercent: null, contextWindow: null, cacheHitPercent: null, extras: {} });
-  composerProfile = createSignal<SessionProfileView>({ selected: null, activeProfile: null, effective: null, model: null, catalog: [] });
+  composerProfile = createSignal<SessionProfileView>({
+    selected: null,
+    activeProfile: null,
+    effective: null,
+    model: null,
+    providerKind: "byok",
+    catalog: [],
+  });
+  /** 会话解析后的模型/参数视图（overrides → profile → global）。 */
+  composerModel = createSignal<string | null>(null);
+  composerModelOverride = createSignal(false);
   composerEffort = createSignal<string | null>(null);
+  composerEffortOverride = createSignal(false);
+  composerMaxTokens = createSignal<number | null>(null);
+  composerContextLength = createSignal<number | null>(null);
+  composerToolMode = createSignal<SessionToolModeView>({ mode: "standard", customTools: [] });
   title = createSignal<string | null>(null);
   pending = createSignal<ApprovalView[]>([]);
   todos = createSignal<TodoItemWire[]>([]);
+  todosSyncPending = createSignal(false);
+  approvalsVerifiedState = createSignal(false);
   loadError = createSignal(false);
+  contentStatus = createSignal<Record<string, "loading" | "ready" | "failed">>({});
   /** 权威快照是否已落地：loadBootstrap 成功落地置 true，SessionView 据此渲染内容或「消息同步中」。 */
   hydrated = createSignal(false);
   hasNewReply = createSignal(false);
@@ -208,13 +262,29 @@ export class SessionStore {
   private waitFrom: { kind: Wait["kind"]; at: number } | null = null;
   private lastTurnCount: number | null = null;
   private disposed = false;
+  private active = false;
   private bootstrapRequestId = 0;
+  private activationGeneration = 0;
   private contentLoader = new ContentLoader(
-    (ref) => transport.readContentText(ref),
+    (ref, signal) => transport.readContentText(ref, signal),
     (ref, text, resolved) => this.mutate((draft) => resolveContentRef(draft, ref, text, resolved)),
+    (ref, status) => this.contentStatus[1]((current) => {
+      const next = { ...current };
+      if (status === "idle") delete next[ref]; else next[ref] = status;
+      return next;
+    }),
   );
   private todoRefresh: Promise<void> | null = null;
   private todoRefreshPending = false;
+  private todoRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private todoFailures = 0;
+  private approvalRefresh: Promise<void> | null = null;
+  private approvalRefreshPending = false;
+  private approvalRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private approvalFailures = 0;
+  private approvalGeneration = 0;
+  private approvalEventRevision = 0;
+  private approvalsVerified = false;
   private activeTurnStartedAt: number | null = null;
   /**
    * 本回合**正在产出模型 token** 的块 id:text(答案)与 reasoning(思考)都算。
@@ -227,10 +297,18 @@ export class SessionStore {
   private contextRefreshId = 0;
   /** 分母:最近一次 `config.load` 读到的窗口。 */
   private contextLength: number | null = null;
-  /** `session.meta.profile`(会话级选择);null = 跟随全局 `active_profile`。 */
+  /** `session.meta.profile_id`(会话级选择);null = 跟随全局默认 Profile。 */
   private metaProfile: string | null = null;
+  /** `session.meta.model_override`(会话级模型);null = 跟随 Profile。 */
+  private metaModel: string | null = null;
+  private metaMaxTokens: number | null = null;
+  private metaContextLength: number | null = null;
   /** `session.meta.effort`(会话级选择);null = 跟随全局或 profile 默认。 */
   private metaEffort: string | null = null;
+  /** `session.meta.tool_mode`;空串按 standard 归一(后端零迁移语义)。 */
+  private metaToolMode = "standard";
+  /** `session.meta.custom_tools`(仅 tool_mode === "custom" 时后端消费)。 */
+  private metaCustomTools: string[] = [];
   /** 最近一次 `config.load` 的 profile 面:名录 + 活跃项 + 活跃项的 model。 */
   private configProfile: ConfigProfileView | null = null;
   private profileRefreshId = 0;
@@ -272,13 +350,23 @@ export class SessionStore {
   /** 成为活动标签:先订阅宿主事件，再 attach + loadBootstrap 取权威快照。 */
   async activate(): Promise<void> {
     if (this.disposed) return;
+    const generation = ++this.activationGeneration;
+    this.active = true;
+    this.approvalGeneration++;
+    this.approvalEventRevision = 0;
+    this.approvalsVerified = false;
+    this.approvalsVerifiedState[1](false);
+    this.markApprovalsUnverified(false);
     this.hasNewReply[1](false);
     this.providerRetry[1](null);
     this.reconnect[1](null);
-    this.hydrated[1](false);
+    if (!this.hydrated[0]()) this.hydrated[1](false);
     await this.connectHost();
+    if (this.disposed || generation !== this.activationGeneration) return;
+    this.active = true;
     await transport.attach(this.seed);
-    await this.loadBootstrap();
+    if (this.disposed || generation !== this.activationGeneration) return;
+    this.active = true;
     void this.refreshApprovals();
     void this.refreshTodos();
     void this.refreshConfigView();
@@ -289,11 +377,30 @@ export class SessionStore {
    * 失去活动资格(别的标签接管):退订宿主事件 + 立即卸载转录。
    */
   deactivate(): void {
+    this.active = false;
+    this.activationGeneration++;
+    this.approvalGeneration++;
+    this.approvalRefreshPending = false;
+    if (this.approvalRetryTimer != null) clearTimeout(this.approvalRetryTimer);
+    this.approvalRetryTimer = null;
+    this.approvalsVerified = false;
+    this.approvalsVerifiedState[1](false);
+    this.markApprovalsUnverified(false);
+    this.todosSyncPending[1](this.todos[0]().length > 0);
     this.closeHost();
     this.providerRetry[1](null);
     this.reconnect[1](null);
     this.setConnection("reconnecting");
     this.unloadForBackground();
+  }
+
+  /** Evict non-recent background transcript data while keeping tab metadata/draft. */
+  evictView(): void {
+    if (this.active) return;
+    this.releaseBuffers(true);
+    this.hydrated[1](false);
+    this.contentStatus[1]({});
+    this.mutate((draft) => Object.assign(draft, emptySession()));
   }
 
   /** 卸载重状态:转录、审批/待办全量列表。轻量信号(title 等)保留。 */
@@ -305,8 +412,6 @@ export class SessionStore {
     this.compact[1]({ phase: "idle" });
     this.compactedCheckpoint = null;
     this.compactedAfter[1](null);
-    this.hydrated[1](false);
-    this.loadError[1](false);
     this.loadingOlder[1](false);
     this.waitFrom = null;
     this.activeTurnStartedAt = null;
@@ -314,21 +419,28 @@ export class SessionStore {
     this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
     this.pending[1]([]);
     this.todos[1]([]);
-    // 顶层键逐个换血(emptySession 覆盖全部顶层键):turns 的嵌套 store 节点整体
-    // 替换,回合文本/工具输出全部可回收。
-    this.mutate((draft) => {
-      Object.assign(draft, emptySession());
-    });
+    this.todosSyncPending[1](false);
+    // Keep the bounded visible window in the session store. Reactivation installs
+    // a new authoritative bootstrap over it, so the old text remains readable.
   }
 
   /** 卸载时丢弃引用缓存与排队任务，旧异步响应不得恢复后台转录。 */
-  private releaseBuffers(): void {
+  private releaseBuffers(evictContentCache = false): void {
     this.bootstrapRequestId++;
-    this.contentLoader.clear();
+    this.contentLoader.clear(evictContentCache);
+    if (this.todoRetryTimer != null) clearTimeout(this.todoRetryTimer);
+    this.todoRetryTimer = null;
+    this.todoRefreshPending = false;
+    if (this.approvalRetryTimer != null) clearTimeout(this.approvalRetryTimer);
+    this.approvalRetryTimer = null;
+    this.approvalRefreshPending = false;
+    this.activationGeneration++;
+    this.approvalGeneration++;
   }
 
-  private hydrateContent(): void {
-    for (const ref of pendingContentRefs(this.stateGet)) this.contentLoader.request(ref);
+  private hydrateContent(refs: Iterable<string> = pendingContentRefs(this.stateGet)): void {
+    for (const ref of refs) this.contentLoader.request(ref);
+    this.hydrated[1](true);
   }
 
   dispose(): void {
@@ -347,14 +459,21 @@ export class SessionStore {
     this.providerRetry[1](null);
     this.reconnect[1](null);
     this.setConnection("reconnecting");
-    this.host()
-      .streamsRetry(this.seed)
-      .catch(() => this.setConnection("offline"));
+    this.host().streamsRetry(this.seed).catch(() => this.setConnection("offline"));
+  }
+
+  retryContent(): void {
+    this.contentLoader.retryFailed();
+    this.hydrateContent();
   }
 
   private setConnection(kind: ConnectionKind): void {
     this.connection[1](kind);
   }
+
+  get synchronization(): ConnectionKind { return this.connection[0](); }
+  get contentLoading(): boolean { return Object.values(this.contentStatus[0]()).includes("loading"); }
+  get contentFailures(): number { return Object.values(this.contentStatus[0]()).filter((status) => status === "failed").length; }
 
   private closeHost(): void {
     this.hostUnlisten?.();
@@ -374,27 +493,33 @@ export class SessionStore {
           const reconnected = this.connection[0]() !== "connected";
           this.setConnection("connected");
           this.reconnect[1](null);
-          if (reconnected) void this.refreshTodos();
-          if (!this.hydrated[0]()) void this.loadBootstrap();
+          if (reconnected) {
+            this.markApprovalsUnverified(false);
+            void this.refreshApprovals();
+            void this.refreshTodos();
+          }
         } else if (status.status === "closed" || status.status === "paused") {
           this.reconnect[1](null);
+          this.markApprovalsUnverified(false);
           this.setConnection("offline");
         } else {
           this.setConnection("reconnecting");
         }
       },
+      onProjectionBootstrap: (seed, bootstrap) => {
+        if (seed !== this.seed || !this.active) return;
+        this.installBootstrap(bootstrap);
+      },
       onProjectionEvent: (seed, envelope) => {
-        if (seed !== this.seed) return;
+        if (seed !== this.seed || !this.active) return;
         this.applyProjection(envelope.stream_key as Record<string, any> | undefined, envelope.payload as Record<string, any> | undefined);
       },
       onProjectionReset: (seed) => {
         if (seed !== this.seed) return;
+        this.approvalGeneration++;
+        this.markApprovalsUnverified(false);
         this.providerRetry[1](null);
         this.onSessionsChanged?.();
-        void this.loadBootstrap();
-        void this.refreshApprovals();
-        void this.refreshTodos();
-        void this.refreshActivity();
       },
       onIncompatible: () => {},
       onHostError: () => {},
@@ -418,39 +543,45 @@ export class SessionStore {
     try {
       const bootstrap = (await transport.sessionBootstrap(this.seed)) as any;
       if (this.disposed || requestId !== this.bootstrapRequestId) return;
-      if (bootstrap?.conversation?.state) {
-        this.mutate((draft) => {
-          applyConversationSnapshot(draft, bootstrap.conversation.state);
-        });
-        this.contentLoader.retryFailed();
-        this.hydrateContent();
-        this.loadError[1](false);
-        this.hydrated[1](true);
-      }
-      if (bootstrap?.control?.state?.activity) {
-        this.activity[1](normalizeActivity(bootstrap.control.state.activity, "projection"));
-      }
+      this.installBootstrap(bootstrap);
     } catch {
       if (!this.disposed && requestId === this.bootstrapRequestId) this.loadError[1](true);
     }
+  }
+
+  private installBootstrap(bootstrap: any): void {
+    if (this.disposed || !this.active || !bootstrap?.conversation?.state) return;
+    const refs = pendingContentRefsFromSnapshot(bootstrap.conversation.state);
+    this.mutate((draft) => { applyConversationSnapshot(draft, bootstrap.conversation.state); });
+    this.contentLoader.retryFailed();
+    this.hydrateContent(refs);
+    this.loadError[1](false);
+    this.hydrated[1](true);
+    if (bootstrap?.control?.state?.activity) this.activity[1](normalizeActivity(bootstrap.control.state.activity, "projection"));
   }
 
   // ── 投影事件 (单流驱动) ─────────────────────────────────────────────────────
 
   private applyProjection(streamKey: unknown, payload: unknown): void {
     const delta = readProjection(streamKey, payload);
+    if (delta.channel === "control" && ["interaction_requested", "interaction_resolved", "interaction_expired"].includes(delta.kind)) {
+      this.approvalGeneration++;
+      this.markApprovalsUnverified(true);
+      void this.refreshApprovals();
+    }
     if (!delta.channel || !delta.kind) return;
     if (delta.channel === "conversation") {
       const outer = (payload != null && typeof payload === "object") ? (payload as Record<string, any>) : {};
       const convDelta = (outer.data != null && typeof outer.data === "object") ? (outer.data as ConversationDelta) : null;
       if (convDelta && typeof convDelta === "object" && convDelta.kind) {
+        const refs = contentRefsInDelta(convDelta);
         this.mutate((draft) => {
           applyConversationDelta(draft, convDelta);
         });
         // 流式帧不带正文引用，扫一遍待补载清单纯属浪费。
         const streaming =
           convDelta.kind === "assistant_block_progress" || convDelta.kind === "tool_input_progress";
-        if (!streaming) this.hydrateContent();
+        if (!streaming) this.hydrateContent(refs);
       }
 
       if (delta.kind === "input_accepted") {
@@ -485,7 +616,9 @@ export class SessionStore {
           this.activity[1](normalizeActivity(delta.body.state, "projection"));
           break;
         case "approvals":
-          void this.refreshApprovals();
+          if (!(delta.channel === "control" && ["interaction_requested", "interaction_resolved", "interaction_expired"].includes(delta.kind))) {
+            void this.refreshApprovals();
+          }
           break;
         case "todos":
           void this.refreshTodos();
@@ -573,13 +706,17 @@ export class SessionStore {
     if (this.disposed) return;
     const refreshId = ++this.contextRefreshId;
     try {
-      const config = await transport.rpc<ConfigDto>("config.load");
+      const config = await transport.query<ConfigDto>({ type: "config.load" });
       if (this.disposed || refreshId !== this.contextRefreshId) return;
       const length = config?.contextLength;
       if (length != null && Number.isFinite(length) && length > 0) this.contextLength = length;
       this.configProfile = {
         activeProfile: config.activeProfile,
         model: config.model,
+        credential: config.credential,
+        effort: config.reasoningEffort === "" ? null : config.reasoningEffort,
+        maxTokens: config.maxTokens,
+        contextLength: config.contextLength,
         profiles: [...config.profiles],
         details: config.profilesDetail,
       };
@@ -597,11 +734,31 @@ export class SessionStore {
     const effective = selected ?? config?.activeProfile ?? null;
     const effectiveDetail = effective != null ? config?.details?.[effective] : undefined;
     const model = effectiveDetail?.model ?? (selected == null || selected === config?.activeProfile ? config?.model ?? null : null);
+    const maxTokens =
+      this.metaMaxTokens ?? effectiveDetail?.maxTokens ?? config?.maxTokens ?? null;
+    const contextLength =
+      this.metaContextLength ?? effectiveDetail?.contextLength ?? config?.contextLength ?? null;
+    const providerKind = providerKindOfCredential(
+      effectiveDetail?.credential ?? config?.credential,
+    );
+    // 解析优先级与后端 `qaqh_profile::resolve_effective` 同构：
+    // 会话覆写 → 所选 Profile → 全局默认。这里只用于显示，写入仍走 session.settings.patch。
+    this.composerModelOverride[1](this.metaModel != null);
+    this.composerModel[1](this.metaModel ?? model);
+    this.composerEffortOverride[1](this.metaEffort != null);
+    this.composerEffort[1](this.metaEffort ?? effectiveDetail?.effort ?? config?.effort ?? null);
+    this.composerMaxTokens[1](maxTokens);
+    this.composerContextLength[1](contextLength);
+    if (contextLength != null && contextLength > 0) {
+      this.contextLength = contextLength;
+      this.publishContextPercent();
+    }
     this.composerProfile[1]({
       selected,
       activeProfile: config?.activeProfile ?? null,
       effective,
       model,
+      providerKind,
       catalog: config?.profiles ?? [],
       details: config?.details,
     });
@@ -615,33 +772,128 @@ export class SessionStore {
     if (this.disposed) return;
     const refreshId = ++this.profileRefreshId;
     try {
-      const meta = await transport.rpc<SessionMetaWire>("session.meta", {}, this.seed);
+      const meta = await transport.query<SessionMetaWire>({ type: "session.meta" }, sessionTarget(this.seed));
       if (this.disposed || refreshId !== this.profileRefreshId) return;
-      this.metaProfile = typeof meta?.profile === "string" && meta.profile !== "" ? meta.profile : null;
+      this.metaProfile = typeof meta?.profile_id === "string" && meta.profile_id !== "" ? meta.profile_id : null;
+      this.metaModel =
+        typeof meta?.model_override === "string" && meta.model_override !== "" ? meta.model_override : null;
+      this.metaMaxTokens =
+        typeof meta?.max_tokens_override === "number" && meta.max_tokens_override > 0
+          ? meta.max_tokens_override
+          : null;
+      this.metaContextLength =
+        typeof meta?.context_length_override === "number" && meta.context_length_override > 0
+          ? meta.context_length_override
+          : null;
       this.metaEffort = typeof meta?.effort === "string" && meta.effort !== "" ? meta.effort : null;
-      this.composerEffort[1](this.metaEffort);
+      // 同一次 RPC 顺带取工具模式:后端 meta 空串 = standard(零迁移),前端
+      // 不认识的模式名原样显示(与 effort 的 offLadder 同一取舍),不冒充。
+      this.metaToolMode =
+        typeof meta?.tool_mode === "string" && meta.tool_mode !== "" ? meta.tool_mode : "standard";
+      this.metaCustomTools = Array.isArray(meta?.custom_tools)
+        ? meta.custom_tools.filter((name): name is string => typeof name === "string")
+        : [];
+      this.composerToolMode[1]({ mode: this.metaToolMode, customTools: this.metaCustomTools });
     } catch {
       // best-effort:选择器退回「跟随全局」,下一次 turn 结束再取。
     }
     this.publishProfileView();
   }
 
-  /** 会话级换 profile;`null` = 清除选择、回到跟随全局 `active_profile`。 */
-  async setSessionProfile(name: string | null): Promise<void> {
-    await transport.rpc("session.set_profile", { name: name ?? "" }, this.seed);
+  /** 会话级换 profile;`null` = 清除选择、回到跟随全局默认 Profile。 */
+  async setSessionProfile(profileId: string | null): Promise<void> {
+    await transport.command(
+      {
+        type: "session.settings.patch",
+        patch: { profile_id: profileId == null ? { kind: "inherit" } : { kind: "use", value: profileId } },
+      },
+      sessionTarget(this.seed),
+    );
     await this.refreshProfile();
   }
 
   /** 会话级换思考强度 effort;`null` = 清除选择、回到跟随 profile 默认。 */
   async setSessionEffort(effort: string | null): Promise<void> {
-    await transport.rpc("session.set_effort", { effort: effort ?? "" }, this.seed);
-    this.metaEffort = effort;
-    this.composerEffort[1](effort);
+    await transport.command(
+      {
+        type: "session.settings.patch",
+        patch: { effort: effort == null ? { kind: "inherit" } : { kind: "use", value: effort } },
+      },
+      sessionTarget(this.seed),
+    );
+    await this.refreshProfile();
+  }
+
+  /** 会话级模型覆写;`null` = 清除覆写、跟随所选 Profile。 */
+  async setSessionModel(model: string | null): Promise<void> {
+    await transport.command(
+      {
+        type: "session.settings.patch",
+        patch: { model: model == null ? { kind: "inherit" } : { kind: "use", value: model } },
+      },
+      sessionTarget(this.seed),
+    );
+    await this.refreshProfile();
+  }
+
+  /** 会话级单回合输出上限;`null` = 跟随 Profile。 */
+  async setSessionMaxTokens(maxTokens: number | null): Promise<void> {
+    await transport.command(
+      {
+        type: "session.settings.patch",
+        patch: {
+          max_tokens: maxTokens == null ? { kind: "inherit" } : { kind: "use", value: maxTokens },
+        },
+      },
+      sessionTarget(this.seed),
+    );
+    await this.refreshProfile();
+  }
+
+  /** 会话级上下文窗口;`null` = 跟随 Profile。 */
+  async setSessionContextLength(contextLength: number | null): Promise<void> {
+    await transport.command(
+      {
+        type: "session.settings.patch",
+        patch: {
+          context_length:
+            contextLength == null ? { kind: "inherit" } : { kind: "use", value: contextLength },
+        },
+      },
+      sessionTarget(this.seed),
+    );
+    await this.refreshProfile();
+  }
+
+  /**
+   * 会话级换工具模式(`session.settings.patch.tools`)。
+   *
+   * 与 effort 不同,这里**先乐观落信号再发命令**:切档是低频显式操作,
+   * 弹卡已经关了,回滚靠 `refreshProfile()` 重读 meta(后端持久化失败
+   * 返回 400,meta 未动,重读即恢复真值)。失败把异常抛给调用方出 toast。
+   */
+  async setSessionToolMode(mode: string, customTools: string[]): Promise<void> {
+    this.metaToolMode = mode === "" ? "standard" : mode;
+    this.metaCustomTools = customTools;
+    this.composerToolMode[1]({ mode: this.metaToolMode, customTools: this.metaCustomTools });
+    try {
+      await transport.command(
+        {
+          type: "session.settings.patch",
+          patch: { tools: toolsSettingPatch(this.metaToolMode, customTools) },
+        },
+        sessionTarget(this.seed),
+      );
+    } finally {
+      // 成功:重读对账(daemon ack ≠ 已应用);失败:重读即回滚。
+      await this.refreshProfile();
+    }
   }
 
   async refreshActivity(): Promise<void> {
     try {
       const bootstrap = (await this.host().sessionBootstrap(this.seed)) as any;
+      if (this.disposed || !this.active) return;
       const control = bootstrap?.control?.state ?? {};
       // bootstrap 的 `control.activity` 是 canonical 投影枚举
       // (`SessionActivityState`: idle|running|interrupted)，不是旧 domain 枚举
@@ -660,6 +912,10 @@ export class SessionStore {
    * arrives during an in-flight request. Never commit a superseded response. */
   refreshTodos(): Promise<void> {
     if (this.disposed) return Promise.resolve();
+    if (this.todoRetryTimer != null) {
+      clearTimeout(this.todoRetryTimer);
+      this.todoRetryTimer = null;
+    }
     this.todoRefreshPending = true;
     if (this.todoRefresh != null) return this.todoRefresh;
     this.todoRefresh = this.drainTodoRefresh().finally(() => {
@@ -671,36 +927,127 @@ export class SessionStore {
   }
 
   private async drainTodoRefresh(): Promise<void> {
-    while (this.todoRefreshPending && !this.disposed) {
+    const activation = this.activationGeneration;
+    while (this.todoRefreshPending && !this.disposed && activation === this.activationGeneration) {
       this.todoRefreshPending = false;
       try {
-        const result = await transport.rpc<Record<string, unknown>>("todo.list", {}, this.seed);
-        if (this.disposed || this.todoRefreshPending) continue;
+        const result = await transport.query<Record<string, unknown>>({ type: "todo.list" }, sessionTarget(this.seed));
+        if (this.disposed || activation !== this.activationGeneration || this.todoRefreshPending) continue;
         if (!Array.isArray(result?.items)) throw new Error("todo.list response is missing items");
         writeStable(this.todos, result.items as TodoItemWire[]);
+        this.todosSyncPending[1](false);
+        this.todoFailures = 0;
+        if (this.todoRetryTimer != null) clearTimeout(this.todoRetryTimer);
+        this.todoRetryTimer = null;
       } catch (error) {
-        // Preserve the last successful list; make failures visible in diagnostics.
-        if (!this.disposed) console.warn("[qaqh-webui] todo.list refresh failed", error);
+        // Preserve the last successful list, expose stale state and retry without
+        // waiting for another tool or user action.
+        if (!this.disposed && activation === this.activationGeneration) {
+          this.todosSyncPending[1](true);
+          console.warn("[qaqh-webui] todo.list refresh failed", error);
+          this.scheduleTodoRetry();
+        }
       }
     }
   }
 
   // ── 审批(单源:approvals RPC) ───────────────────────────────────────────────
 
-  async refreshApprovals(): Promise<void> {
-    let list: ApprovalView[];
-    try {
-      list = await transport.approvals(this.seed);
-    } catch {
-      return; // best-effort:下一轮信号再取
+  private scheduleTodoRetry(): void {
+    if (!this.active || this.disposed || this.todoRetryTimer != null) return;
+    this.todoFailures++;
+    const delay = Math.min(30_000, 500 * 2 ** Math.min(this.todoFailures - 1, 6));
+    this.todoRetryTimer = setTimeout(() => {
+      this.todoRetryTimer = null;
+      void this.refreshTodos();
+    }, delay);
+  }
+
+  private scheduleApprovalRetry(): void {
+    this.scheduleApprovalRevalidation();
+  }
+
+  private markApprovalsUnverified(revokeChallenges = true): void {
+    this.approvalsVerified = false;
+    this.approvalsVerifiedState[1](false);
+    const current = this.pending[0]();
+    if (current.length > 0) {
+      for (const view of current) void transport.invalidateApprovals(this.seed, view.challenge_id, revokeChallenges ? "revoke" : false).catch(() => {});
+      writeStable(this.pending, current.map((view) => ({ ...view, verified: false })));
     }
-    const previous = this.pending[0]();
-    const next = Array.isArray(list) ? list : [];
-    // 内容未变不写信号:每次刷新都灌新数组会让授权卡整棵子树按身份重建
-    // (反复重挂 = 焦点被抢 + 图形与内存持续增长),而 UI 看上去毫无变化。
-    writeStable(this.pending, next);
-    this.recordWaitTransition(previous, next);
-    this.activity[1](next.length > 0 ? "waiting_user" : this.activityIsWorking() ? "working" : "idle");
+  }
+
+  private scheduleApprovalRevalidation(): void {
+    if (!this.active || this.disposed || this.approvalRetryTimer != null) return;
+    this.approvalFailures++;
+    const delay = Math.min(15_000, 300 * 2 ** Math.min(this.approvalFailures - 1, 6));
+    this.approvalRetryTimer = setTimeout(() => {
+      this.approvalRetryTimer = null;
+      void this.refreshApprovals();
+    }, delay);
+  }
+
+  refreshApprovals(): Promise<void> {
+    if (this.disposed || !this.active) return Promise.resolve();
+    this.markApprovalsUnverified(false);
+    if (this.approvalRetryTimer != null) {
+      clearTimeout(this.approvalRetryTimer);
+      this.approvalRetryTimer = null;
+    }
+    this.approvalRefreshPending = true;
+    if (this.approvalRefresh != null) return this.approvalRefresh;
+    const activation = this.activationGeneration;
+    const run = async (): Promise<void> => {
+      while (this.approvalRefreshPending && this.active && !this.disposed && activation === this.activationGeneration) {
+        this.approvalRefreshPending = false;
+        const generation = this.approvalGeneration;
+        const eventRevision = this.approvalEventRevision;
+        try {
+          const response = await transport.approvals(this.seed) as ApprovalView[] & { control_revision?: number };
+          if (this.disposed || !this.active || activation !== this.activationGeneration) return;
+          if (generation !== this.approvalGeneration || eventRevision !== this.approvalEventRevision) {
+            this.approvalRefreshPending = true;
+            continue;
+          }
+          const raw = Array.isArray(response) ? response : [];
+          const observedChallenges = new Set(raw.map((view) => view.challenge_id));
+          for (const old of this.pending[0]()) {
+            if (observedChallenges.has(old.challenge_id)) {
+              void transport.invalidateApprovals(this.seed, old.challenge_id, raw.find((view) => view.challenge_id === old.challenge_id)?.verified === true).catch(() => {});
+            } else void transport.invalidateApprovals(this.seed, old.challenge_id, "revoke").catch(() => {});
+          }
+      const next = raw.map((view) => ({ ...view, verified: view.verified === true }));
+          const previous = this.pending[0]();
+          writeStable(this.pending, next);
+          this.recordWaitTransition(previous, next);
+          this.approvalsVerified = next.every((view) => view.verified === true);
+          this.approvalsVerifiedState[1](this.approvalsVerified);
+          if (this.approvalsVerified) this.approvalFailures = 0;
+          if (!this.approvalsVerified) {
+            this.markApprovalsUnverified(false);
+            this.scheduleApprovalRetry();
+          }
+          if (this.approvalsVerified && this.approvalRetryTimer != null) {
+            clearTimeout(this.approvalRetryTimer);
+            this.approvalRetryTimer = null;
+          }
+          if (next.some((view) => view.details_unavailable === true || view.details?.details_unavailable === true)) {
+            this.scheduleApprovalRetry();
+          }
+          this.activity[1](next.length > 0 ? "waiting_user" : this.activityIsWorking() ? "working" : "idle");
+        } catch (error) {
+          if (this.disposed || !this.active || activation !== this.activationGeneration) return;
+          console.warn("[qaqh-webui] approvals refresh failed", error);
+          this.markApprovalsUnverified(false);
+          this.scheduleApprovalRetry();
+        }
+      }
+    };
+    this.approvalRefresh = run().finally(() => {
+      this.approvalRefresh = null;
+      if (this.approvalRefreshPending && this.active && !this.disposed) void this.refreshApprovals();
+    });
+    return this.approvalRefresh;
   }
 
   private activityIsWorking(): boolean {
@@ -722,6 +1069,16 @@ export class SessionStore {
   }
 
   async respondApproval(challengeId: string, decision: string, payload: Record<string, unknown> = {}): Promise<void> {
+    const view = this.pending[0]().find((item) => item.challenge_id === challengeId);
+    const approvalDecision = decision === "approve" || decision === "trust" || decision === "submit";
+    if (approvalDecision && (!this.approvalsVerified || view?.verified !== true || view.details_unavailable === true || view.details?.details_unavailable === true)) {
+      this.scheduleApprovalRevalidation();
+      throw new Error("approval_not_verified_or_details_unavailable");
+    }
+    if (this.connection[0]() !== "connected" && decision !== "reject" && decision !== "dismiss") {
+      throw new Error("approval_connection_unverified");
+    }
+    this.markApprovalsUnverified(false);
     try {
       await transport.respondApproval(this.seed, challengeId, decision, payload);
     } finally {
@@ -738,14 +1095,10 @@ export class SessionStore {
     this.compact[1]((current) => current.phase === "done" || current.phase === "skipped" ? { phase: "idle" } : current);
     this.isSending[1](true);
     try {
-      await transport.command("conversation", {
-        channel: "conversation",
-        type: "conversation_send_message",
-        text,
-        images: [],
-        as_system: false,
-        attachments,
-      }, this.seed);
+      await transport.command(
+        { type: "conversation.send", text, attachments, input_purpose: "trigger_turn" },
+        sessionTarget(this.seed),
+      );
     } catch (error) {
       this.isSending[1](false);
       throw error;
@@ -842,7 +1195,7 @@ export class SessionStore {
    */
   async cancelTurn(options: { turnId?: string | null } = {}): Promise<void> {
     const turnId = options.turnId ?? null;
-    await transport.command("conversation", { channel: "conversation", type: "conversation_cancel", turn_id: turnId }, this.seed);
+    await transport.command({ type: "conversation.cancel", turn_id: turnId }, sessionTarget(this.seed));
     // 命令已入队才布防:投递失败走异常,Composer 的 catch 会复位 stopping,
     // 不需要看门狗代劳。真实终态 delta 到达时撤防(见 applyProjection)。
     this.armCancelWatchdog(turnId);
@@ -908,7 +1261,7 @@ export class SessionStore {
   async compactContext(): Promise<void> {
     this.setCompact({ phase: "running", compactId: null, turnsTotal: null, turnsKeeping: null, summary: "" });
     try {
-      await transport.command("conversation", { channel: "conversation", type: "conversation_compact" }, this.seed);
+      await transport.command({ type: "conversation.compact" }, sessionTarget(this.seed));
     } catch (error) {
       console.warn("[compact] 压缩命令投递失败", error);
       this.setCompact({ phase: "failed", reason: compactDeliveryFailure(error) });
@@ -916,7 +1269,7 @@ export class SessionStore {
   }
 
   async createSession(): Promise<void> {
-    await transport.command("control", { channel: "control", type: "session_create", close_current: false });
+    await transport.command({ type: "session.create" });
   }
 
   /** 向上翻页：单流由 bootstrap 提供全量快照，无 timeline 分页。 */

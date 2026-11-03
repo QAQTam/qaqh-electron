@@ -36,68 +36,20 @@
     gap: var(--space-2);
   }
 
-  .oauth-pill {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: 72px;
+  /* 当前默认存档的只读状态块（旧开关已拆，保留卡片观感）。 */
+  .oauth-mode > .oauth-pill__text {
+    min-height: 64px;
+    justify-content: center;
     padding: var(--space-3) var(--space-4);
     border: 1px solid var(--border);
     border-radius: var(--radius-control);
     background: var(--surface);
-    cursor: pointer;
-  }
-
-  .oauth-pill:has(input:disabled) { cursor: default; }
-  .oauth-pill:has(input:disabled) .oauth-pill__track { opacity: .55; }
-
-  /* 真 checkbox 留在 DOM 里（键盘/无障碍），视觉用 track+thumb 表达。 */
-  .oauth-pill input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-  }
-
-  .oauth-pill__track {
-    position: relative;
-    flex: 0 0 auto;
-    width: 44px;
-    height: 24px;
-    border-radius: var(--radius-pill);
-    background: var(--border-strong);
-    transition: background 120ms ease;
-  }
-
-  .oauth-pill input:checked + .oauth-pill__track {
-    background: var(--accent);
-  }
-
-  .oauth-pill__thumb {
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: var(--surface);
-    transition: transform 140ms ease;
-  }
-
-  .oauth-pill input:checked + .oauth-pill__track .oauth-pill__thumb {
-    transform: translateX(20px);
-  }
-
-  .oauth-pill input:focus-visible + .oauth-pill__track {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
   }
 
   .oauth-pill__text {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    order: -1;
     flex: 1; min-width: 0;
   }
 
@@ -174,10 +126,6 @@
       background: ButtonFace; color: ButtonText; border-color: ButtonText;
     }
     .oauth-provider__actions .siwc-signin span { background: transparent; color: inherit; }
-    .oauth-pill__track { forced-color-adjust: none; background: ButtonFace; border: 1px solid ButtonText; }
-    .oauth-pill__thumb { background: ButtonText; }
-    .oauth-pill input:checked + .oauth-pill__track { background: Highlight; }
-    .oauth-pill input:checked + .oauth-pill__track .oauth-pill__thumb { background: HighlightText; }
   }
 
   /* ── 额度区（登录后）─────────────────────────────────────────── */

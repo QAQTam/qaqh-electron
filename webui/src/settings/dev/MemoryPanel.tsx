@@ -45,16 +45,13 @@ export const MemoryPanel: Component = () => {
   const [denied, setDenied] = createSignal(false);
   const [running, setRunning] = createSignal(false);
   const [paused, setPaused] = createSignal(false);
-  /** 已消费到的 phase 游标;`null` = 还没取过,下一次拿全量有界环。 */
-  let cursor: number | null = null;
   let stopped = false;
   let timer = 0;
 
   const tick = async (): Promise<void> => {
     try {
-      const next = await loadMemorySnapshot(cursor);
+      const next = await loadMemorySnapshot();
       if (stopped) return;
-      cursor = next.latest_phase_sequence ?? cursor;
       setPhases((prev) => mergePhaseSamples(prev, next.phases));
       setSnap(next);
       setError(null);

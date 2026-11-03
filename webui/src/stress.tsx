@@ -254,6 +254,40 @@ if (isVisualPreview) {
   sessionIdleUnloadSecs: 1800,
   activeProfile: "视觉验收",
     profiles: ["视觉验收", "本地模型"],
+    profilesDetail: {
+      视觉验收: {
+        id: "视觉验收",
+        name: "视觉验收",
+        providerId: "visual-provider",
+        providerName: "Preview",
+        model: "qaqh-visual-preview",
+        baseUrl: "https://api.example.test/v1",
+        wire: "responses",
+        effort: "medium",
+        contextLength: 128000,
+        maxTokens: 8192,
+        apiKeySet: true,
+        credential: "api_key",
+      },
+      本地模型: {
+        id: "本地模型",
+        name: "本地模型",
+        providerId: "local-provider",
+        providerName: "Local",
+        model: "qaqh-local-preview",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        wire: "chat",
+        effort: null,
+        contextLength: 32768,
+        maxTokens: 4096,
+        apiKeySet: false,
+        credential: "api_key",
+      },
+    },
+    sandbox: { enabled: true },
+    toolAllowlistEnabled: false,
+    toolAllowlist: [],
+    defaultToolMode: "",
     complianceEnabled: true,
     subagent: {
       model: "qaqh-subagent-preview",
@@ -394,36 +428,77 @@ if (isVisualPreview) {
       { path: "C:/Users/fixture/.agents/skills/legacy/SKILL.md", message: "skill file exceeds 524288 bytes" },
     ],
   };
-  transport.rpc = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
+  const mockQuery = async <T = unknown>(command: { type: string; [key: string]: unknown }): Promise<T> => {
     // OAuth 截图使用启动脚本注入的宿主夹具，覆盖配置读写以验证真实切换流程。
     if (previewView === "oauth" && previewParams.has("oauthState") && window.qaqhHost != null) {
-      return invoke<T>("service_rpc", { method, params });
+      const ack = await invoke<{ result?: T | null }>("command", { command });
+      return (ack.result ?? null) as T;
     }
-    if (method === "config.load") return structuredClone(previewConfig) as T;
+    if (command.type === "config.load") return structuredClone(previewConfig) as T;
+    if (command.type === "profile.list") {
+      const providers: Record<string, unknown> = {};
+      const profiles: Record<string, unknown> = {};
+      for (const item of Object.values(previewConfig.profilesDetail ?? {})) {
+        providers[item.providerId] = {
+          name: item.providerName,
+          base_url: item.baseUrl,
+          wire: item.wire,
+          credential: item.credential,
+          api_key: item.apiKeySet ? "****" : null,
+        };
+        profiles[item.id] = {
+          name: item.name,
+          provider: item.providerId,
+          model: item.model,
+          reasoning_effort: item.effort,
+          context_length: item.contextLength,
+          max_tokens: item.maxTokens,
+        };
+      }
+      return {
+        revision: 1,
+        default_profile: previewConfig.activeProfile ?? null,
+        providers,
+        profiles,
+      } as T;
+    }
+    if (command.type === "provider.upsert" || command.type === "provider.delete"
+        || command.type === "profile.create" || command.type === "profile.update"
+        || command.type === "profile.delete" || command.type === "profile.set_default") {
+      return null as T;
+    }
     // 开发者控制台夹具:形状与 daemon 的 diagnostics.memory 快照同形且逐秒自走,
     // 于是表格与环图能在浏览器里验收(见 lib/memwatch-sim.ts)。
-    if (method === "diagnostics.memory.start") return { enabled: true, started_at_ms: Date.now() } as T;
-    if (method === "diagnostics.memory.stop") return { enabled: false } as T;
-    if (method === "diagnostics.memory.snapshot") {
-      const after = typeof params.after_sequence === "number" ? params.after_sequence : null;
-      return simMemorySnapshot(after) as T;
+    if (command.type === "diagnostics.memwatch") {
+      return (command.action === "start"
+        ? { enabled: true, started_at_ms: Date.now() }
+        : { enabled: false }) as T;
     }
-    if (method === "daemon.version") return "0.0.0-visual-fixture" as T;
-    if (method === "session.list") return [] as T;
-    if (method === "workspace.list") return [
+    if (command.type === "diagnostics.dump") return simMemorySnapshot() as T;
+    if (command.type === "daemon.version") return "0.0.0-visual-fixture" as T;
+    if (command.type === "session.list") return [] as T;
+    if (command.type === "session.activity") return [] as T;
+    if (command.type === "session.meta") return null as T;
+    if (command.type === "todo.list") return { items: [] } as T;
+    if (command.type === "workspace.list") return [
       { id: "w1", title: "演示仓库", path: previewWorkspaceRoot, order: 0 },
     ] as T;
-    if (method === "fs.list") {
-      const entries = previewFs[String(params.path)];
-      if (entries == null) throw new Error(`fs.list ${String(params.path)}: 系统找不到指定的文件。(fixture)`);
+    if (command.type === "fs.list") {
+      const entries = previewFs[String(command.path)];
+      if (entries == null) throw new Error(`fs.list ${String(command.path)}: 系统找不到指定的文件。(fixture)`);
       return entries as T;
     }
-    if (method === "fs.read") {
-      const content = previewFiles[String(params.path)];
-      if (content == null) throw new Error(`fs.read ${String(params.path)}: 系统找不到指定的文件。(fixture)`);
-      return { path: params.path, size: content.length, truncated: false, content } as T;
+    if (command.type === "fs.read") {
+      const content = previewFiles[String(command.path)];
+      if (content == null) throw new Error(`fs.read ${String(command.path)}: 系统找不到指定的文件。(fixture)`);
+      return { path: command.path, size: content.length, truncated: false, content } as T;
     }
-    throw new Error(`visual preview does not mock ${method}`);
+    throw new Error(`visual preview does not mock ${command.type}`);
+  };
+  transport.query = mockQuery;
+  transport.command = async (command) => {
+    await mockQuery(command);
+    return { status: "completed", command_id: "visual-fixture" } as Awaited<ReturnType<typeof transport.command>>;
   };
   // 用户级 skills 是**宿主命令**(不是 rpc):夹具直接替掉 transport 上那一个方法,
   // 形状与 qaqh-electron/src/main/skills-scanner.ts 的回包一致。
@@ -1399,6 +1474,7 @@ const fixtureProfileView = (): import("./session/store").SessionProfileView => {
     activeProfile: "视觉验收",
     effective: selected ?? "视觉验收",
     model: selected == null ? "qaqh-visual-preview" : null,
+    providerKind: "byok",
     catalog: ["视觉验收", "本地模型"],
   };
 };

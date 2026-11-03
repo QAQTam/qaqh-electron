@@ -15,6 +15,7 @@ import IconFlask from "~icons/lucide/flask-conical";
 import { transport } from "../lib/transport";
 import { STR } from "../lib/strings";
 import { tailName } from "../composer/identity";
+import type { ProfileSummaryDto } from "../api/qaqh/ProfileSummaryDto";
 import { WorkspaceMenu } from "../workspace/WorkspaceMenu";
 import {
   workspaceCatalog,
@@ -71,12 +72,12 @@ export const StartupView: Component<{
     activeProfile: string;
     model: string;
     profiles: string[];
-    details?: Record<string, import("../api/qaqh/ConfigDto").ProfileSummaryDto>;
+    details?: Record<string, ProfileSummaryDto>;
   } | null>(null);
 
   void (async () => {
     try {
-      const config = await transport.rpc<ConfigDto>("config.load");
+      const config = await transport.query<ConfigDto>({ type: "config.load" });
       if (config) {
         setConfigProfiles({
           activeProfile: config.activeProfile,
@@ -99,9 +100,11 @@ export const StartupView: Component<{
 
   const profileLabel = (): string => {
     const sel = selectedProfile();
-    if (sel) return sel;
+    if (sel) return configProfiles()?.details?.[sel]?.name ?? sel;
     const conf = configProfiles();
-    return conf?.activeProfile ? `跟随全局 (${conf.activeProfile})` : "跟随全局";
+    if (!conf?.activeProfile) return "跟随默认存档";
+    const name = conf.details?.[conf.activeProfile]?.name ?? conf.activeProfile;
+    return `跟随默认存档 (${name})`;
   };
 
   const autoGrow = (): void => {
@@ -136,7 +139,7 @@ export const StartupView: Component<{
     if (!text || creating()) return;
     const ok = await submitStartupSession({
       cwd: newSessionCwd(),
-      profile: selectedProfile(),
+      profileId: selectedProfile(),
       text,
       attachmentPaths: startupAttachments(),
     });
@@ -184,14 +187,14 @@ export const StartupView: Component<{
           </Show>
         </div>
 
-        {/* 模型/Profile 选择 */}
+        {/* 会话存档选择 */}
         <div class="composer-control-wrap composer-profile-wrap">
           <button
             type="button"
             class="composer-tool-button composer-profile-button"
             aria-expanded={openMenu() === "profile" ? "true" : "false"}
             onClick={() => setOpenMenu(openMenu() === "profile" ? null : "profile")}
-            title="选择会话生效的模型档案"
+            title="选择会话生效的存档"
           >
             <IconSparkles />
             <span>{profileLabel()}</span>
@@ -212,23 +215,29 @@ export const StartupView: Component<{
                   setOpenMenu(null);
                 }}
               >
-                <span>跟随全局</span>
-                <small>{configProfiles()?.activeProfile ?? ""}</small>
+                <span>跟随默认存档</span>
+                <small>
+                  {configProfiles()?.details?.[configProfiles()?.activeProfile ?? ""]?.name ??
+                    configProfiles()?.activeProfile ??
+                    ""}
+                </small>
               </button>
               <For each={configProfiles()?.profiles ?? []}>
-                {(name) => {
-                  const modelName = () => configProfiles()?.details?.[name]?.model ?? (name === configProfiles()?.activeProfile ? configProfiles()?.model : null);
+                {(id) => {
+                  const modelName = () =>
+                    configProfiles()?.details?.[id]?.model ??
+                    (id === configProfiles()?.activeProfile ? configProfiles()?.model : null);
                   return (
                     <button
                       type="button"
                       role="menuitemradio"
-                      class={selectedProfile() === name ? "selected" : undefined}
+                      class={selectedProfile() === id ? "selected" : undefined}
                       onClick={() => {
-                        setSelectedProfile(name);
+                        setSelectedProfile(id);
                         setOpenMenu(null);
                       }}
                     >
-                      <span>{name}</span>
+                      <span>{configProfiles()?.details?.[id]?.name ?? id}</span>
                       <Show when={modelName()}>
                         {(m) => <small>{m()}</small>}
                       </Show>
@@ -261,7 +270,7 @@ export const StartupView: Component<{
                   }}
                 >
                   <span style={{ "font-weight": "bold" }}>+</span>
-                  <span>管理 / 添加更多模型预设…</span>
+                  <span>管理 / 添加存档…</span>
                 </button>
               </Show>
             </div>

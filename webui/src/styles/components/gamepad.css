@@ -1,0 +1,25 @@
+/* Optional gamepad navigation HUD. */
+@layer components {
+  .gamepad-mode-button.active { color: var(--accent); background: var(--surface-2); }
+  .gamepad-mode-status {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 70;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: min(680px, calc(100vw - 32px));
+    min-height: 38px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-lg);
+    color: var(--text);
+    background: var(--surface);
+    box-shadow: var(--shadow-panel);
+    font-size: var(--fs-xs);
+  }
+  .gamepad-mode-status > svg { flex: none; width: 16px; height: 16px; color: var(--accent); }
+  .gamepad-mode-hints { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+  .gamepad-mode-status button { flex: none; color: var(--accent); }
+}

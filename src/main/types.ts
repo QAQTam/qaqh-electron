@@ -1,15 +1,12 @@
 // 协议契约类型直接复用 @qaqh/sdk 的生成产物，避免两份定义漂移
-import type { DaemonDiscovery as SdkDaemonDiscovery } from "@qaqh/sdk/protocol";
+import type {
+  DaemonDiscovery as SdkDaemonDiscovery,
+  RingingV2CommandAck,
+} from "@qaqh/sdk/protocol";
 
 export type DaemonDiscovery = SdkDaemonDiscovery;
 
-export interface RingingCommandAck {
-  status: "accepted" | "rejected";
-  command_id?: string;
-  code?: string;
-  message?: string;
-  retry_after_ms?: number;
-}
+export type RingingCommandAck = RingingV2CommandAck;
 
 export type ApprovalKind = "tool_permission" | "ask" | "plan";
 
@@ -18,6 +15,9 @@ export interface ApprovalView {
   kind: ApprovalKind;
   expires_in: number;
   details: Record<string, any>;
+  /** True when the canonical interaction request body could not be loaded. */
+  details_unavailable?: boolean;
+  verified?: boolean;
 }
 
 export interface ProjectionStatusWire {

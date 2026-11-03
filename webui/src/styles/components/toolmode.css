@@ -1,0 +1,129 @@
+/* 工具模式卡(composer 会话级选择器):与 effort-card 同一份 `.composer-menu`
+   容器样式,这里只补档位行与 custom 编辑面的自身样式。 */
+@layer components {
+  .toolmode-card {
+    min-width: 320px;
+    max-width: 400px;
+  }
+
+  .toolmode-card__head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 2px 10px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .toolmode-card__head strong {
+    font-size: var(--fs-sm);
+  }
+
+  .toolmode-card__head small {
+    color: var(--muted);
+    font-size: var(--fs-xs);
+  }
+
+  .toolmode-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    border: none;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .toolmode-row:hover:not(:disabled) {
+    background: var(--hover, rgb(127 127 127 / 12%));
+  }
+
+  .toolmode-row:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  .toolmode-row.is-unavailable {
+    cursor: default;
+    opacity: 0.45;
+  }
+
+  .toolmode-row.selected {
+    background: var(--accent-soft, rgb(120 120 255 / 16%));
+  }
+
+  .toolmode-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid var(--muted);
+  }
+
+  .toolmode-row.selected .toolmode-dot {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  .toolmode-name {
+    flex: none;
+    font-size: var(--fs-sm);
+    font-weight: 500;
+  }
+
+  .toolmode-hint {
+    flex: 1;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .toolmode-count {
+    flex: none;
+    color: var(--muted);
+    font-size: var(--fs-xs);
+  }
+
+  .toolmode-custom {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 4px 10px 8px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+  }
+
+  .toolmode-custom small {
+    color: var(--muted);
+    font-size: var(--fs-xs);
+  }
+
+  .toolmode-custom textarea {
+    width: 100%;
+    resize: vertical;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+  }
+
+  .toolmode-apply {
+    align-self: flex-end;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: var(--fs-xs);
+  }
+
+  .toolmode-apply:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+}

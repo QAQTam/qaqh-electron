@@ -59,6 +59,19 @@
     height: 15px;
   }
 
+  .effort-card__model-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .effort-card__model-row .effort-card__model {
+    flex: 1;
+    min-width: 0;
+  }
+  .effort-card__inherit {
+    align-self: center;
+  }
+
   .effort-card__model {
     display: flex;
     align-items: center;
@@ -121,6 +134,25 @@
   .effort-card__custom .field-input {
     flex: 1;
     min-width: 0;
+  }
+
+  /* ── 会话级参数（最大输出 / 上下文窗口） ──────────────────────── */
+  .effort-card__params {
+    display: grid;
+    gap: 6px;
+  }
+  .effort-card__params label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+  .effort-card__params .field-input {
+    width: 112px;
+    min-width: 0;
+    text-align: right;
   }
 
   /* ── 轨道 ─────────────────────────────────────────────────────── */

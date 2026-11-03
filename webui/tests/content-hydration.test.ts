@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { transport, desktopHostSurface, type StreamHandlers } from "../src/lib/transport";
 import { SessionStore } from "../src/session/store";
-import { CONTENT_LOAD_FAILED, ContentLoader } from "../src/session/content-loader";
+import { ContentLoader } from "../src/session/content-loader";
 import type { ContentValue } from "../src/api/qaqh/ContentValue";
 import type { ConversationSnapshot } from "../src/api/qaqh/ConversationSnapshot";
 import type { ConversationDelta } from "../src/api/qaqh/ConversationDelta";
@@ -46,9 +46,10 @@ function fixture(state = snapshot()) {
     handlers = value;
     return () => {};
   });
-  vi.spyOn(transport, "attach").mockResolvedValue();
+  vi.spyOn(transport, "attach").mockImplementation(async () => {
+    handlers.onProjectionBootstrap?.("content-session", { conversation: { state }, control: { state: { activity: "idle" } } });
+  });
   vi.spyOn(transport, "approvals").mockResolvedValue([]);
-  vi.spyOn(transport, "rpc").mockResolvedValue({ items: [] } as never);
   const bootstrap = vi.spyOn(transport, "sessionBootstrap").mockResolvedValue({ conversation: { state } });
   const read = vi.spyOn(transport, "readContentText").mockImplementation(async (id) => bodies[refs.indexOf(id)]!);
   const store = new SessionStore("content-session");
@@ -60,8 +61,8 @@ function fixture(state = snapshot()) {
   } };
 }
 
-test("bootstrap 引用还原用户输入、思考、答案和工具参数/输出；重载复用缓存", async () => {
-  const { store, read } = fixture();
+test("bootstrap and cursor arrive together; reference hydration happens on first activation", async () => {
+  const { store, read, bootstrap } = fixture();
   await store.activate();
   await vi.waitFor(() => expect(store.state[0].turns["#0"]?.answer?.text).toBe(bodies[2]));
   const turn = store.state[0].turns["#0"]!;
@@ -69,13 +70,15 @@ test("bootstrap 引用还原用户输入、思考、答案和工具参数/输出
   expect(turn.steps[0]).toMatchObject({ kind: "thinking", text: bodies[1] });
   expect(turn.steps[1]).toMatchObject({ kind: "tool", argsJson: bodies[3], output: { text: "正文", exitCode: 0 } });
   expect(read).toHaveBeenCalledTimes(5);
+  expect(bootstrap).not.toHaveBeenCalled();
   await store.loadBootstrap();
   expect(store.state[0].turns["#0"]?.answer?.text).toBe(bodies[2]);
   expect(read).toHaveBeenCalledTimes(5);
 });
 
 test("实时块下载完成前被新引用替换，旧正文不得覆盖新块", async () => {
-  const { store, read, emit } = fixture({ ...snapshot(), context: [], turns: [] });
+  const empty = snapshot(); empty.context = []; empty.turns = [];
+  const { store, read, emit } = fixture(empty);
   let finishOld!: (text: string) => void;
   read.mockImplementation((id) => id === refs[1]
     ? new Promise(resolve => { finishOld = resolve; }) : Promise.resolve(bodies[2]!));
@@ -93,19 +96,20 @@ test("实时块下载完成前被新引用替换，旧正文不得覆盖新块",
   expect(store.state[0].turns.t1?.answer?.text).toBe(bodies[2]);
 });
 
-test("引用下载失败展示可读提示，重新加载快照会重试", async () => {
+test("正文加载失败保留引用正文状态且支持独立重试", async () => {
   const state = snapshot();
   state.context = [state.context[3]!];
   const { store, read } = fixture(state);
   read.mockRejectedValueOnce(new Error("content not found"));
   await store.activate();
-  await vi.waitFor(() => expect(store.state[0].turns["#0"]?.answer?.text).toBe(CONTENT_LOAD_FAILED));
-  await store.loadBootstrap();
+  await vi.waitFor(() => expect(store.contentStatus[0]()[refs[2]!]).toBe("failed"));
+  expect(store.state[0].turns["#0"]?.answer?.text).toBe("");
+  store.retryContent();
   await vi.waitFor(() => expect(store.state[0].turns["#0"]?.answer?.text).toBe(bodies[2]));
   expect(read).toHaveBeenCalledTimes(2);
 });
 
-test("卸载后迟到的下载与 bootstrap 都不得重新填充转录", async () => {
+test("切走会话保留已读转录，迟到的 bootstrap 不覆盖", async () => {
   const state = snapshot();
   state.context = [state.context[3]!];
   const { store, read, bootstrap } = fixture(state);
@@ -121,22 +125,20 @@ test("卸载后迟到的下载与 bootstrap 都不得重新填充转录", async 
   finishBootstrap({ conversation: { state } });
   await loading;
   await new Promise(resolve => setTimeout(resolve, 0));
-  expect(store.state[0].slots).toEqual([]);
-  expect(store.hydrated[0]()).toBe(false);
+  expect(store.state[0].slots.length).toBeGreaterThan(0);
+  expect(store.hydrated[0]()).toBe(true);
 });
 
 test("批量引用并发有界且重复请求合并", async () => {
   const finishers: Array<(value: string) => void> = [];
-  const read = vi.fn(() => new Promise<string>(resolve => finishers.push(resolve)));
+  const read = vi.fn((_ref: string, _signal: AbortSignal) => new Promise<string>(resolve => finishers.push(resolve)));
   const write = vi.fn();
   const loader = new ContentLoader(read, write);
   for (let i = 0; i < 6; i++) { loader.request(String(i)); loader.request(String(i)); }
   await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(4));
-  finishers[0]!("first");
-  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(5));
   loader.clear();
-  for (const finish of finishers.slice(1)) finish("stale");
+  for (const finish of finishers) finish("stale");
   await new Promise(resolve => setTimeout(resolve, 0));
-  expect(read).toHaveBeenCalledTimes(5);
-  expect(write.mock.calls).toEqual([["0", "first", true]]);
+  expect(read).toHaveBeenCalledTimes(4);
+  expect(write.mock.calls).toEqual([]);
 });

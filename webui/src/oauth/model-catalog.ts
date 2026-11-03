@@ -16,7 +16,7 @@
 import { dsaccountModels } from "../lib/dsaccount";
 import { siwcModels, type SiwcModelEntry } from "../lib/siwc";
 import { modelSpec, type SpecBucket } from "../models/specs";
-import type { ProviderKind } from "./providers";
+import type { ProviderKind } from "./mode";
 
 /** 与 `SiwcModelEntry` / `DsModelEntry` 同形：两家共用一套选择器渲染。 */
 export type ModelEntry = SiwcModelEntry;

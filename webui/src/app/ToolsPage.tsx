@@ -126,7 +126,7 @@ export const ToolsPage: Component = () => {
   const [configError, setConfigError] = createSignal<string | null>(null);
 
   const loadConfig = (): void => {
-    transport.rpc<ConfigDto>("config.load")
+    transport.query<ConfigDto>({ type: "config.load" })
       .then((dto) => { setConfig(dto); setConfigError(null); })
       .catch((cause) => { setConfigError(cause instanceof Error ? cause.message : String(cause)); });
   };

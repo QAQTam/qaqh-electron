@@ -14,6 +14,7 @@
 import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js";
 import type { ApprovalView } from "../lib/transport";
 import { STR } from "../lib/strings";
+import { GAMEPAD_ACTION_EVENT, type GamepadAction } from "../lib/gamepad";
 import { toast } from "../ui/toast";
 import {
   buildAnswers,
@@ -68,7 +69,7 @@ function useApprovalSend(respond: (challengeId: string, decision: string, payloa
 }
 
 /** 卡片键盘:焦点在卡片内 Enter=主操作、Esc=拒绝;high risk 禁用 Enter。 */
-function useCardKeys(highRisk: () => boolean, onPrimary: () => void, onReject: () => void, rootRef: () => HTMLElement | undefined): void {
+function useCardKeys(highRisk: () => boolean, onPrimary: () => void, onReject: () => void, rootRef: () => HTMLElement | undefined, canReject: () => boolean = () => true): void {
   createEffect(
     rootRef,
     (root) => {
@@ -80,7 +81,7 @@ function useCardKeys(highRisk: () => boolean, onPrimary: () => void, onReject: (
           onPrimary();
         } else if (event.key === "Escape") {
           event.preventDefault();
-          onReject();
+          if (canReject()) onReject();
         }
       };
       root.addEventListener("keydown", onKey);
@@ -91,8 +92,25 @@ function useCardKeys(highRisk: () => boolean, onPrimary: () => void, onReject: (
 
 export const ApprovalCard: Component<{ view: ApprovalView; pendingCount: number; busy: () => boolean; error: () => string | null; respond: (decision: string) => void }> = (props) => {
   let root: HTMLDivElement | undefined;
+  const onGamepadAction = (event: Event): void => {
+    const action = (event as CustomEvent<GamepadAction>).detail;
+    if (action.kind === "confirm") {
+      if (isHighRisk(props.view) || !canApprove() || props.busy()) return;
+      props.respond("approve");
+    } else if (action.kind === "cancel" && canReject()) {
+      props.respond("reject");
+    }
+  };
+  const canReject = (): boolean => props.view.verified !== false && !props.busy();
+  createEffect(() => root, () => {
+    window.addEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
+    return () => window.removeEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
+  });
   const details = () => props.view.details ?? {};
-  useCardKeys(() => isHighRisk(props.view), () => props.respond("approve"), () => props.respond("reject"), () => root);
+  const unavailable = () => props.view.details_unavailable === true || details().details_unavailable === true;
+  const verified = () => props.view.verified !== false;
+  const canApprove = () => verified() && !unavailable();
+  useCardKeys(() => isHighRisk(props.view) || !canApprove() || props.busy(), () => props.respond("approve"), () => props.respond("reject"), () => root, () => verified() && !props.busy());
   return (
     <div class={{ card: true, perm: true, high: isHighRisk(props.view) }} tabindex={-1} ref={root}>
       <div class="card-head">
@@ -105,6 +123,8 @@ export const ApprovalCard: Component<{ view: ApprovalView; pendingCount: number;
         </Show>
       </div>
       <div class="card-body">
+        <Show when={!verified()}><p class="card-error" role="status">{STR.approvalUnverified}</p></Show>
+        <Show when={unavailable()}><p class="card-error" role="status">{STR.approvalDetailsUnavailable}</p></Show>
         <div class="card-tool"><b>{details().tool_name ?? "unknown"}</b><Show when={details().action_summary}>{` · ${details().action_summary}`}</Show></div>
         <Show when={details().reason}>
           <div class="card-line"><span class="card-key">{STR.reason}</span>{details().reason}</div>
@@ -122,9 +142,9 @@ export const ApprovalCard: Component<{ view: ApprovalView; pendingCount: number;
         <Show when={props.error() != null}><p class="card-error" role="alert">{props.error()}</p></Show>
       </div>
       <div class="card-actions" aria-busy={props.busy() ? "true" : "false"}>
-        <button type="button" class="primary button-primary" disabled={props.busy()} onClick={() => props.respond("approve")}>{STR.allowOnce}</button>
-        <button type="button" class="button-secondary" disabled={props.busy()} onClick={() => props.respond("reject")}>{STR.reject}</button>
-        <button type="button" class="button-secondary" disabled={props.busy()} onClick={() => props.respond("trust")}>{STR.allowTrust}</button>
+        <button type="button" class="primary button-primary" disabled={props.busy() || !canApprove()} onClick={() => props.respond("approve")}>{STR.allowOnce}</button>
+        <button type="button" class="button-secondary" disabled={props.busy() || !verified()} onClick={() => props.respond("reject")}>{STR.reject}</button>
+        <button type="button" class="button-secondary" disabled={props.busy() || !canApprove()} onClick={() => props.respond("trust")}>{STR.allowTrust}</button>
       </div>
     </div>
   );
@@ -157,6 +177,8 @@ export const AskCard: Component<{
   // TTL 从这一刻起算:卡片是 keyed 的,一次挂载对应一个 challenge。
   // expires_in 缺失(旧宿主/预览夹具)就当没有 TTL,不拿 0 把卡判死。
   const hasTtl = () => props.view.expires_in > 0;
+  const unavailable = () => props.view.details_unavailable === true || props.view.details?.details_unavailable === true;
+  const verified = () => props.view.verified !== false;
   const expiresAtMs = Date.now() + Math.max(0, props.view.expires_in) * 1000;
   const [now, setNow] = createSignal(Date.now());
   createEffect(hasTtl, (live) => {
@@ -169,6 +191,7 @@ export const AskCard: Component<{
   const expired = () => hasTtl() && remaining() <= 0;
 
   const current = createMemo(() => questions()[Math.min(index(), questions().length - 1)] ?? null);
+  const canSubmit = () => verified() && !unavailable() && !expired();
   // 行对象必须稳定:<For each={optionRows(q)}> 每次新建数组会让「其它」的输入框在
   // 每次按键后被重建,光标与焦点全丢。
   const list = createMemo(() => {
@@ -230,6 +253,23 @@ export const AskCard: Component<{
     if (next != null) pick(question, next);
   };
 
+  const onGamepadAction = (event: Event): void => {
+    const action = (event as CustomEvent<GamepadAction>).detail;
+    if (props.busy()) return;
+    if (action.kind === "move" && canSubmit()) {
+      if (action.direction === "up") moveWithinQuestion(-1);
+      else if (action.direction === "down") moveWithinQuestion(1);
+    } else if (action.kind === "confirm" && canSubmit()) {
+      advance();
+    } else if (action.kind === "cancel" && verified() && !expired()) {
+      props.skip();
+    }
+  };
+  createEffect(() => root, () => {
+    window.addEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
+    return () => window.removeEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
+  });
+
   // 换问会整块重挂载卡身(Show keyed),焦点掉回 body;不接回来,数字键与方向键
   // 就找不到监听的宿主了——只在没人持有焦点时补,不抢用户正在输入的框。
   createEffect(current, () => {
@@ -245,15 +285,15 @@ export const AskCard: Component<{
     if (event.isComposing) return;
     if (event.key === "Escape") {
       event.preventDefault();
-      if (!expired()) props.skip();
+      if (verified() && !expired() && !props.busy()) props.skip();
       return;
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (!expired()) advance();
+      if (canSubmit()) advance();
       return;
     }
-    if (expired() || event.target instanceof HTMLInputElement) return;
+    if (!canSubmit() || props.busy() || event.target instanceof HTMLInputElement) return;
     if (/^[1-9]$/.test(event.key)) {
       const question = current();
       const row = list()[Number(event.key) - 1];
@@ -309,8 +349,8 @@ export const AskCard: Component<{
         </nav>
       </Show>
       <div class="card-body">
-        <Show when={questions().length === 0}>
-          <div class="card-line">(缺少问题详情)</div>
+        <Show when={unavailable() || questions().length === 0}>
+          <div class="card-line" role="status">{unavailable() ? STR.askDetailsUnavailable : "(缺少问题详情)"}</div>
         </Show>
         <Show when={current()} keyed>
           {(question) => (
@@ -326,7 +366,7 @@ export const AskCard: Component<{
                           name={`ask-${props.view.challenge_id}-${question.id}`}
                           value={row.kind === "option" ? row.value : STR.askOther}
                           checked={isPicked(question, row)}
-                          disabled={expired()}
+                          disabled={!canSubmit()}
                           onInput={() => pick(question, row)}
                         />
                         <span class="ask-opt-n" aria-hidden="true">{position() + 1}</span>
@@ -339,7 +379,7 @@ export const AskCard: Component<{
                           data-custom
                           placeholder={STR.customAnswer}
                           value={customValue(question)}
-                          disabled={expired()}
+                          disabled={!canSubmit()}
                           onInput={(event) => {
                             props.onDraft({ ...props.draft(), [question.id]: { kind: "custom", value: event.currentTarget.value } });
                             setValidationError(false);
@@ -359,23 +399,26 @@ export const AskCard: Component<{
       </div>
       <div class="card-actions" aria-busy={props.busy() ? "true" : "false"}>
         <Show
-          when={!expired()}
+          when={verified() && !expired() && !unavailable()}
           fallback={
             <>
               <p class="card-line ask-expired-line" role="status">
-                <b class="card-key">{STR.askExpired}</b>
-                {STR.askExpiredHint}
+                <b class="card-key">{!verified() ? STR.approvalUnverified : STR.askExpired}</b>
+                {unavailable() ? STR.askDetailsUnavailable : !verified() ? "等待连接恢复并重新核实后才能继续。" : STR.askExpiredHint}
               </p>
-              <button type="button" class="primary button-primary" onClick={props.refresh}>{STR.askRefresh}</button>
+              <Show when={verified() && unavailable()}>
+                <button type="button" class="button-secondary" disabled={props.busy()} onClick={props.skip}>{STR.skip}</button>
+              </Show>
+              <Show when={expired()}><button type="button" class="primary button-primary" onClick={props.refresh}>{STR.askRefresh}</button></Show>
             </>
           }
         >
-          <button type="button" class="button-secondary" disabled={props.busy()} onClick={props.skip}>{STR.skip}</button>
+          <button type="button" class="button-secondary" disabled={props.busy() || !verified()} onClick={props.skip}>{STR.skip}</button>
           <Show when={index() > 0}>
             <button type="button" class="button-secondary" onClick={() => setIndex(index() - 1)}>{STR.askPrev}</button>
           </Show>
           <span class="ask-gap" aria-hidden="true" />
-          <button type="button" class="primary button-primary" disabled={props.busy()} onClick={advance}>
+          <button type="button" class="primary button-primary" disabled={props.busy() || unavailable() || !verified()} onClick={advance}>
             {atLast() ? STR.submit : STR.askNext}
           </button>
         </Show>
@@ -384,26 +427,35 @@ export const AskCard: Component<{
   );
 };
 
-export const PlanCard: Component<{ view: ApprovalView; pendingCount: number; busy: () => boolean; error: () => string | null; respond: (approved: boolean, message: string, autonomous: boolean) => void }> = (props) => {
+export const PlanCard: Component<{ view: ApprovalView; pendingCount: number; busy: () => boolean; error: () => string | null; respond: (approved: boolean, message: string) => void }> = (props) => {
   let root: HTMLDivElement | undefined;
   const [message, setMessage] = createSignal("");
-  const [autonomous, setAutonomous] = createSignal(false);
-  useCardKeys(() => false, () => props.respond(true, message(), autonomous()), () => props.respond(false, message(), autonomous()), () => root);
+  const onGamepadAction = (event: Event): void => {
+    const action = (event as CustomEvent<GamepadAction>).detail;
+    if (props.busy() || props.view.verified === false) return;
+    if (action.kind === "confirm" && !unavailable()) props.respond(true, message());
+    else if (action.kind === "cancel") props.respond(false, message());
+  };
+  createEffect(() => root, () => {
+    window.addEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
+    return () => window.removeEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
+  });
+  const unavailable = () => props.view.details_unavailable === true || props.view.details?.details_unavailable === true;
+  const verified = () => props.view.verified !== false;
+  useCardKeys(() => unavailable() || !verified(), () => props.respond(true, message()), () => props.respond(false, message()), () => root, () => verified() && !props.busy());
   return (
     <div class="card plan" tabindex={-1} ref={root}>
       <div class="card-head"><span id="approval-dialog-title">{STR.planTitle}</span><Show when={props.pendingCount > 1}><span class="card-more">{STR.morePending(props.pendingCount - 1)}</span></Show></div>
       <div class="card-body">
+        <Show when={!verified()}><p class="card-error" role="status">{STR.approvalUnverified}</p></Show>
+        <Show when={unavailable()}><p class="card-error" role="status">{STR.planDetailsUnavailable}</p></Show>
         <pre class="card-plan">{props.view.details?.plan_content ?? "(缺少计划内容)"}</pre>
-        <input class="card-message" type="text" placeholder={STR.planPlaceholder} value={message()} onInput={(e) => setMessage(e.currentTarget.value)} />
-        <label class="card-opt">
-          <input type="checkbox" checked={autonomous()} onInput={(e) => setAutonomous(e.currentTarget.checked)} />
-          <span>{STR.autonomous}</span>
-        </label>
+        <input class="card-message" type="text" placeholder={STR.planPlaceholder} disabled={!verified() || unavailable()} value={message()} onInput={(e) => setMessage(e.currentTarget.value)} />
         <Show when={props.error() != null}><p class="card-error" role="alert">{props.error()}</p></Show>
       </div>
       <div class="card-actions" aria-busy={props.busy() ? "true" : "false"}>
-        <button type="button" class="primary button-primary" disabled={props.busy()} onClick={() => props.respond(true, message(), autonomous())}>{STR.allowOnce}</button>
-        <button type="button" class="button-secondary" disabled={props.busy()} onClick={() => props.respond(false, message(), autonomous())}>{STR.reject}</button>
+        <button type="button" class="primary button-primary" disabled={props.busy() || unavailable() || !verified()} onClick={() => props.respond(true, message())}>{STR.allowOnce}</button>
+        <button type="button" class="button-secondary" disabled={props.busy() || !verified()} onClick={() => props.respond(false, message())}>{STR.reject}</button>
       </div>
     </div>
   );
@@ -468,7 +520,7 @@ export const ApprovalStack: Component<{
             {view.kind === "tool_permission" ? (
               <ApprovalCard view={view} pendingCount={props.pending.length} busy={() => busy(view.challenge_id)} error={() => errorFor(view.challenge_id)} respond={(decision) => void send(view, decision)} />
             ) : view.kind === "plan" ? (
-              <PlanCard view={view} pendingCount={props.pending.length} busy={() => busy(view.challenge_id)} error={() => errorFor(view.challenge_id)} respond={(approved, message, autonomous) => void send(view, approved ? "approve" : "reject", { message: message || null, autonomous })} />
+              <PlanCard view={view} pendingCount={props.pending.length} busy={() => busy(view.challenge_id)} error={() => errorFor(view.challenge_id)} respond={(approved, message) => void send(view, approved ? "approve" : "reject", { message: message || null })} />
             ) : (
               <AskCard
                 view={view}

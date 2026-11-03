@@ -2,12 +2,10 @@
 
 /**
  * 思考内容（[`ContentBlock::Reasoning`]）的类别。
- *
  * 与传输 SDK 的 `mutil_ai::ReasoningKind` 同名同形，但**故意不复用**：本类型
  * 是落盘/回放契约（会长期躺在会话历史里），而 `qaqh-types` 刻意不依赖传输 SDK
  * （见 `Cargo.toml`）。两者只在 `qaqh-gate` 一处做**穷尽 match** 映射——SDK 将来
  * 新增变体会在那里编译失败，不会静默漂移。
- *
  * 显示规则：只有 `Summary` / `Text` 可展示；`Encrypted` 是必须逐字回放的协议
  * 状态（`response_output_item` 那块），`Redacted` 不可展示。
  */

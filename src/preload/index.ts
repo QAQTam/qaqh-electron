@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 const events = new Set([
-  "projection://status", "projection://event", "projection://reset", "conn://incompatible",
+  "projection://status", "projection://event", "projection://bootstrap", "projection://reset", "conn://incompatible",
   "conn://error", "conn://liveness", "conn://reconnect",
   "model-picker:changed", "app://window-state", "app://quit-requested",
 ]);

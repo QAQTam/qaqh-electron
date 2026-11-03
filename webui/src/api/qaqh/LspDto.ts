@@ -2,7 +2,7 @@
 import type { LspServerDto } from "./LspServerDto";
 
 /**
- * LSP 客户端配置读模型（docs/current/architecture.md）。
+ * LSP 客户端配置读模型。
  */
 export type LspDto = { enabled: boolean, idleShutdownSecs: number, 
 /**

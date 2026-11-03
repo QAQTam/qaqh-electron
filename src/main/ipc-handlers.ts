@@ -2,7 +2,9 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { readDiscovery, DaemonManager } from "./daemon.js";
+import { globalTarget } from "@qaqh/sdk";
 import { isAlive } from "@qaqh/sdk/node";
+import type { RingingCommand, UnifiedCommand, UnifiedTarget } from "@qaqh/sdk/protocol";
 import { isIP } from "node:net";
 import { spawn } from "node:child_process";
 import { resolveDaemonExecutable } from "./daemon.js";
@@ -23,36 +25,31 @@ import {
   applyForDaemon, checkForUpdates, spawnApplyOnQuit, stageUpdate, stagedStatus,
 } from "./updater.js";
 
-const SERVICE_METHODS = new Set([
-  "daemon.version", "session.list", "session.meta", "session.activity", "session.rename", "session.dashboard", "session.get_activity",
-  "workspace.get", "workspace.list", "workspace.create", "workspace.move_session", "workspace.detach",
-  "fs.list", "fs.read", "todo.list", "todo.status", "plan.read",
-  "git.diff", "git.branch", "git.branches", "git.file_diff",
-  "config.load", "config.save", "profile.apply", "profile.save_current", "profile.delete",
-  "profile.create", "profile.set_default", "profile.list", "provider.upsert", "provider.delete",
-  "session.set_profile", "session.set_effort", "session.create",
-  "diagnostics.memory.start", "diagnostics.memory.stop", "diagnostics.memory.snapshot",
-  "siwc.status", "siwc.profiles", "siwc.models", "siwc.sign_in.start", "siwc.sign_in.status", "siwc.sign_in.cancel", "siwc.profile.select", "siwc.sign_out",
-  "dsaccount.status", "dsaccount.balance", "dsaccount.bonuses", "dsaccount.sign_in.start", "dsaccount.sign_in.status", "dsaccount.sign_in.cancel", "dsaccount.sign_out", "dsaccount.bonus.ack", "dsaccount.models", "dsaccount.verify",
-]);
-const SESSION_EXEMPT_METHODS = new Set([
-  "daemon.version", "session.list", "session.activity", "session.create",
-  "fs.list", "fs.read",
-  "workspace.list", "workspace.create", "workspace.move_session", "workspace.detach",
-  "config.load", "config.save", "profile.apply", "profile.save_current", "profile.delete",
-  "profile.create", "profile.set_default", "profile.list", "provider.upsert", "provider.delete",
-  "diagnostics.memory.start", "diagnostics.memory.stop", "diagnostics.memory.snapshot",
-  "siwc.status", "siwc.profiles", "siwc.models", "siwc.sign_in.start", "siwc.sign_in.status",
-  "siwc.sign_in.cancel", "siwc.profile.select", "siwc.sign_out",
-  "dsaccount.status", "dsaccount.balance", "dsaccount.bonuses", "dsaccount.sign_in.start",
-  "dsaccount.sign_in.status", "dsaccount.sign_in.cancel", "dsaccount.sign_out",
-  "dsaccount.bonus.ack", "dsaccount.models", "dsaccount.verify",
-]);
-
 const DEFAULT_LAN_PORT = 64413;
 const RESTART_TIMEOUT_MS = 20_000;
 const restartLock = { held: false };
+
+/** 统一目录操作（§8.1）走统一信封；其余 command IPC 一律转 service 面。 */
+const UNIFIED_COMMAND_TYPES = new Set([
+  "session.create",
+  "session.settings.patch",
+  "provider.list",
+  "provider.upsert",
+  "provider.delete",
+  "provider.model.upsert",
+  "provider.model.delete",
+  "provider.models.discover",
+  "model.selection.set_default",
+]);
+
+/** webui 旧名 → conversation 频道 wire 名（ConversationCommand snake_case）。 */
+const CONVERSATION_WIRE_TYPES: Record<string, string> = {
+  "conversation.send": "conversation_send_message",
+  "conversation.cancel": "conversation_cancel",
+  "conversation.compact": "conversation_compact",
+};
 const approvedAttachmentPaths = new Set<string>();
+const contentReadControllers = new Map<string, AbortController>();
 
 export function registerQuitIpcHandler(getClient: () => RingingClient | null): void {
   ipcMain.handle("qaqh:request-quit", async (event, args: { stopDaemon?: boolean; stopActiveWork?: boolean } = {}) => {
@@ -199,7 +196,7 @@ async function handleCommand(
 ): Promise<any> {
   switch (cmd) {
     case "session_list": {
-      const raw = await client.serviceRpc<any[]>("session.list", {});
+      const raw = await client.serviceCall<any[]>("session.list");
       const list = Array.isArray(raw) ? raw : [];
       return list.map((entry: any) => {
         const meta = entry.meta || {};
@@ -211,6 +208,7 @@ async function handleCommand(
         const status = entry.status || "idle";
         const archived = Boolean(entry.archived !== undefined ? entry.archived : meta.archived);
         const workspaceId = entry.workspace_id !== undefined ? entry.workspace_id : (meta.workspace_id || null);
+        const toolMode = entry.tool_mode !== undefined ? entry.tool_mode : (meta.tool_mode || null);
 
         return {
           session_id: sessionId,
@@ -222,6 +220,7 @@ async function handleCommand(
           busy: sessionIsBusy(status),
           archived,
           workspace_id: workspaceId,
+          tool_mode: toolMode,
         };
       });
     }
@@ -238,7 +237,40 @@ async function handleCommand(
       try {
         const view = await client.approvals(seed);
         if (view.kind !== "admin") throw new Error("Electron host requires admin approvals, not device challenges");
-        return challenges.issueViews(seed, flattenAdminApprovals(view.pending));
+        const bootstrap = await client.approvalsSnapshot(seed);
+        const controlState = (bootstrap as any)?.control?.state;
+        const controlRevision = Number(controlState?.revision);
+        const pending = flattenAdminApprovals(view.pending);
+        const pendingInteractions = Array.isArray(controlState?.interactions) ? controlState.interactions : [];
+        const activeInteractions = pendingInteractions.filter((item: any) => item?.resolution == null && item?.expired_reason == null);
+        for (const approval of pending) {
+          if (approval.kind !== "tool_permission") continue;
+          const interaction = activeInteractions.find((item: any) => item?.kind === "permission" && item?.call_id === approval.internalId);
+          if (typeof interaction?.interaction_id === "string") approval.snapshotId = interaction.interaction_id;
+        }
+        const matchesSnapshot = pending.length === activeInteractions.length && pending.every((approval) => {
+          const kind = approval.kind === "tool_permission" ? "permission" : approval.kind === "plan" ? "plan_review" : "ask";
+          return activeInteractions.some((item: any) => item?.kind === kind
+            && item.interaction_id === approval.snapshotId);
+        });
+        const views = challenges.issueViews(seed, pending);
+        if (!matchesSnapshot || !Number.isFinite(controlRevision)) {
+          for (const approval of views) challenges.markChallengeUnverified(seed, approval.challenge_id);
+        }
+        return views.map((approval, index) => {
+          const source = pending[index];
+          const matches = source != null && pendingInteractions.some((item: any) => item?.resolution == null && item?.expired_reason == null
+            && item?.kind === (source.kind === "tool_permission" ? "permission" : source.kind === "plan" ? "plan_review" : "ask")
+            && item?.interaction_id === source.snapshotId);
+          if (matches && matchesSnapshot && Number.isFinite(controlRevision)) {
+            challenges.confirmChallenge(seed, approval.challenge_id);
+            approval.verified = true;
+          } else {
+            challenges.markChallengeUnverified(seed, approval.challenge_id);
+            approval.verified = false;
+          }
+          return { ...approval, verified: matches && matchesSnapshot && Number.isFinite(controlRevision) };
+        });
       } catch (error) {
         console.warn(`[approvals] Failed to read pending interactions for ${seed}:`, error);
         BrowserWindow.getAllWindows().forEach(window => {
@@ -248,6 +280,14 @@ async function handleCommand(
         });
         throw error;
       }
+    }
+
+    case "invalidate_approvals": {
+      const seed = requireId(args.seed, "session_id");
+      if (typeof args.challengeId === "string" && args.verified === true) challenges.confirmChallenge(seed, args.challengeId);
+      else if (typeof args.challengeId === "string" && args.verified === "revoke") challenges.invalidateChallenge(seed, args.challengeId);
+      else if (typeof args.challengeId === "string") challenges.markChallengeUnverified(seed, args.challengeId);
+      return null;
     }
 
     case "respond_approval": {
@@ -261,85 +301,78 @@ async function handleCommand(
         throw new Error(`Invalid or expired challenge: ${challengeId}`);
       }
 
+      if (stored.detailsUnavailable && (decision === "approve" || decision === "trust" || decision === "submit")) {
+        challenges.markChallengeUnverified(seed, challengeId);
+        throw new Error("approval_details_unavailable");
+      }
+
+      const approvalDecision = decision === "approve" || decision === "trust" || decision === "submit";
+      if (approvalDecision && !stored.verified) {
+        challenges.markChallengeUnverified(seed, challengeId);
+        throw new Error("approval_state_unverified");
+      }
+
       const command = approvalCommand(stored, decision, payload);
-      requireAccepted(await client.command(command.channel, command, stored.sessionId));
+      try {
+        requireAccepted(await client.submitChannel(command, stored.sessionId));
+      } catch (error) {
+        const commandId = error != null && typeof error === "object" && "commandId" in error
+          ? String((error as { commandId?: unknown }).commandId ?? "") : "";
+        if (!commandId) throw error;
+        // Never manufacture a second approval command after an unknown outcome.
+        // Poll only the exact id attached to the original submission.
+        const deadline = Date.now() + 30_000;
+        let lastError: unknown = error;
+        while (Date.now() < deadline) {
+          let status: Awaited<ReturnType<RingingClient["commandStatus"]>> | null = null;
+          try {
+            status = await client.commandStatus(commandId);
+          } catch (pollError) {
+            lastError = pollError;
+          }
+          if (status?.state === "succeeded") return null;
+          if (status?.state === "rejected" || status?.state === "failed") {
+            throw new Error(`approval_command_${status.state}:${status.error_code ?? "unknown"}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 400));
+        }
+        throw new Error(`approval_command_outcome_unknown:${commandId}:${lastError instanceof Error ? lastError.message : String(lastError)}`);
+      }
       return null;
     }
 
-    case "send_message": {
-      const seed = String(args.seed || client.getActiveSeed() || "");
-      const text = String(args.text || "");
-      const attachments = Array.isArray(args.attachments) ? args.attachments : [];
-
-      const ack = await client.command("conversation", {
-        type: "conversation_send_message",
-        text,
-        images: [],
-        attachments,
-        as_system: false,
-        input_purpose: "trigger_turn",
-      }, seed);
-
-      if (ack.status === "rejected") {
-        throw new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
+    case "command": {
+      const command = args.command;
+      if (command == null || typeof command !== "object" || Array.isArray(command)
+        || typeof (command as { type?: unknown }).type !== "string") {
+        throw new Error("invalid_command");
       }
-      return ack;
-    }
-
-    case "cancel_turn": {
-      const seed = String(args.seed || client.getActiveSeed() || "");
-      const turnId = args.turnId ?? null;
-      const ack = await client.command("conversation", {
-        type: "conversation_cancel",
-        turn_id: turnId,
-      }, seed);
-      if (ack.status === "rejected") {
-        throw new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
+      const { type, ...params } = command as { type: string } & Record<string, unknown>;
+      if (UNIFIED_COMMAND_TYPES.has(type)) {
+        return client.command(command as UnifiedCommand, (args.target ?? globalTarget()) as UnifiedTarget);
       }
-      return ack;
-    }
-
-    case "compact_context": {
-      const seed = String(args.seed || client.getActiveSeed() || "");
-      const ack = await client.command("conversation", {
-        type: "conversation_compact",
-      }, seed);
-      if (ack.status === "rejected") {
-        throw new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
+      // 会话输入命令走 conversation 频道（必须携带 session target）。
+      const conversationType = CONVERSATION_WIRE_TYPES[type];
+      if (conversationType) {
+        const target = (args.target ?? globalTarget()) as UnifiedTarget;
+        if (target.kind !== "session") throw new Error("session_target_required");
+        return client.submitChannel({ channel: "conversation", type: conversationType, ...params } as RingingCommand, target.session_id);
       }
-      return ack;
-    }
-
-    case "create_session": {
-      const before = new Set((await client.serviceRpc<any[]>("session.list", {})).map((item) => String(item.session_id)));
-      const cwd = typeof args.cwd === "string" && args.cwd.trim() !== "" ? args.cwd.trim() : null;
-      const ack = await client.command("control", {
-        type: "session_create",
-        close_current: false,
-        cwd,
-      }, null);
-      if (ack.status === "rejected") {
-        throw new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
-      }
-      return ack;
-    }
-
-    case "service_rpc": {
-      const method = String(args.method || "");
-      const params = (args.params && typeof args.params === "object") ? { ...args.params } : {};
-      if (!SERVICE_METHODS.has(method)) throw new Error(`service method not allowed: ${method}`);
-      const targetSeed = client.getActiveSeed();
-      if (method.startsWith("fs.") && !("scope_session_id" in params) && targetSeed) {
-        params.scope_session_id = targetSeed;
-      }
-      if (!SESSION_EXEMPT_METHODS.has(method)) {
-        if (typeof params.session_id !== "string" || !params.session_id) {
-          if (!targetSeed) throw new Error("no_active_seed");
-          params.session_id = targetSeed;
+      // 旧 set_group 语义 = workspace 归属：显式 workspace_id → move，null → detach。
+      if (type === "session.set_group") {
+        const target = (args.target ?? globalTarget()) as UnifiedTarget;
+        const sessionId = target.kind === "session" ? target.session_id : String(params.session_id ?? "");
+        if (!sessionId) throw new Error("session_target_required");
+        const workspaceId = params.workspace_id;
+        if (workspaceId == null || workspaceId === "") {
+          return client.serviceCall("workspace.detach", { session_id: sessionId });
         }
+        return client.serviceCall("workspace.move_session", { session_id: sessionId, workspace_id: workspaceId });
       }
-
-      return client.serviceRpc(method, params);
+      // 其余都是 service 查询/配置面方法（config.load、workspace.*、siwc.*…）：
+      // 回包包成 accepted ack 形状，渲染层 query() 继续从 result 取值。
+      const result = await client.serviceCall(type, params);
+      return { status: "accepted" as const, result };
     }
 
     case "exit_app": {
@@ -512,13 +545,24 @@ async function handleCommand(
       if (typeof contentRef !== "string" || !/^sha256:[a-f0-9]{64}$/.test(contentRef)) {
         throw new Error("invalid content_ref");
       }
-      return client.readContentText(contentRef);
+      const requestId = typeof args.requestId === "string" ? args.requestId : randomBytes(16).toString("hex");
+      if (!/^[a-f0-9-]{32,36}$/i.test(requestId)) throw new Error("invalid content request id");
+      const controller = new AbortController();
+      contentReadControllers.set(requestId, controller);
+      try { return await client.readContentText(contentRef, controller.signal); }
+      finally { contentReadControllers.delete(requestId); }
+    }
+
+    case "content_read_cancel": {
+      const requestId = typeof args.requestId === "string" ? args.requestId : "";
+      contentReadControllers.get(requestId)?.abort();
+      return null;
     }
 
     case "streams_retry": {
       const seed = String(args.seed || client.getActiveSeed() || "");
       if (seed) {
-        await client.attach(seed);
+        await client.retryActive(seed);
       }
       return null;
     }

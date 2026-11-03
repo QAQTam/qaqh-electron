@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createClient } from "@qaqh/sdk";
 import { loadHost } from "./test-host.mjs";
 
-test("config allowlist passes through Electron and SDK without session injection or field loss", async t => {
+test("config.patch crosses Electron and SDK as a global unified command", async t => {
   const requests = [];
   const sdk = createClient({
     credentials: { endpoint: "http://mock.invalid", token: "synthetic" },
@@ -13,7 +13,7 @@ test("config allowlist passes through Electron and SDK without session injection
       requests.push({ path, body });
       const value = path.endsWith("/clients/open")
         ? { schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease", server_epoch: "epoch", renew_interval_ms: 3600000 }
-        : path.endsWith("/service/config.load") ? { toolAllowlistEnabled: false, toolAllowlist: ["read"] } : null;
+        : path.endsWith("/commands") ? { status: "accepted", command_id: body.command_id } : null;
       return new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
     },
   });
@@ -21,8 +21,10 @@ test("config allowlist passes through Electron and SDK without session injection
   const host = await loadHost({ sdk });
   const client = new host.RingingClient({}, () => {});
   host.registerIpcHandlers(client, {}, new host.ChallengeManager());
-  assert.deepEqual(await host.invoke("service_rpc", { method: "config.load", params: {} }), { toolAllowlistEnabled: false, toolAllowlist: ["read"] });
   const patch = { toolAllowlistEnabled: true, toolAllowlist: ["read", "glob", "grep"] };
-  await host.invoke("service_rpc", { method: "config.save", params: patch });
-  assert.deepEqual(requests.at(-1), { path: "/ringing/v2/service/config.save", body: patch });
+  await host.invoke("command", { command: { type: "config.patch", patch } });
+  const body = requests.at(-1).body;
+  assert.equal(requests.at(-1).path, "/ringing/v2/commands");
+  assert.deepEqual(body.target, { kind: "global" });
+  assert.deepEqual(body.command, { type: "config.patch", patch });
 });

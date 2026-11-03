@@ -5,13 +5,12 @@
  * 待处理授权(后端常驻,D2:本阶段无法重新打开已关闭标签)。
  * 非活动标签卸载 DOM,仅保留 store 数据(§5.3)。
  *
- * 会话创建(spec §5.1「+」):经控制通道 SessionCreate,轮询 sessions 列表
- * 找出新 seed。宿主模式下 SessionCreate 不要求 active seed,空会话也可创建。
+ * 会话创建(spec §5.1「+」):`session.create` 原子返回新 seed。
  */
 import { createSignal, createStore } from "solid-js";
 import type { SessionRunStatus } from "../api/qaqh/SessionRunStatus";
 import { withViewTransition } from "../ui/viewTransition";
-import { transport } from "../lib/transport";
+import { sessionTarget, transport } from "../lib/transport";
 import { STR } from "../lib/strings";
 import { SessionStore } from "../session/store";
 import { overlayLocalTitles } from "../session/title-override";
@@ -54,6 +53,8 @@ export type SidebarSession = {
   /** 会话轮次数:后台标签状态点用它判断「跑过东西但没在跑」(§5.2)。 */
   turn_count?: number;
   workspace_id?: string | null;
+  /** 会话工具模式(standard、minimal 家族、custom);空串/缺省 = standard,侧栏不显示 badge。 */
+  tool_mode?: string | null;
 };
 export type SidebarWorkspace = { id: string; title: string; path: string; order: number; missing_dir?: boolean };
 const [sessionCatalog, setSessionCatalog] = createSignal<SidebarSession[]>([]);
@@ -185,8 +186,6 @@ function applySessionList(list: SidebarSession[]): void {
 }
 /** 焦点令牌:切标签/新建时 +1,Composer 响应后聚焦。 */
 const [focusToken, setFocusToken] = createSignal(0);
-/** Serialize singleton-host attach calls; rapid tab changes must settle on the latest tab. */
-let activationQueue: Promise<void> = Promise.resolve();
 /**
  * 最近一次请求激活的标签 id,`null` = 回到启动页。
  *
@@ -196,6 +195,15 @@ let activationQueue: Promise<void> = Promise.resolve();
  * 点击取代」而整段 return —— 结果标签高亮但 store 从不 activate(不 attach、不订阅)。
  */
 let activationTargetId: string | null = null;
+let lastActivatedSeed: string | null = null;
+let recentBackgroundSeeds: string[] = [];
+
+function retainRecentBackground(seed: string, preserveSeed: string | null = null): void {
+  recentBackgroundSeeds = [seed, ...recentBackgroundSeeds.filter((item) => item !== seed)].slice(0, 2);
+  for (const tab of tabs()) {
+    if (tab.seed !== seed && tab.seed !== preserveSeed && !recentBackgroundSeeds.includes(tab.seed) && tab.seed !== lastActivatedSeed) tab.store.evictView();
+  }
+}
 
 export {
   tabs,
@@ -225,6 +233,8 @@ export const setDraftOf = (seed: string, value: string): void => {
 };
 
 export function openStartup(): void {
+  if (lastActivatedSeed) retainRecentBackground(lastActivatedSeed);
+  lastActivatedSeed = null;
   // 回到启动页 = 取消在飞的激活:让排队中的 activation 不再 proceed。
   activationTargetId = null;
   withViewTransition(() => {
@@ -260,6 +270,9 @@ function addTab(seed: string): Tab {
 export async function activateTab(tab: Tab): Promise<void> {
   // 先同步记下「要激活谁」——见 activationTargetId 的说明,不能读被 VT 推迟的 activeId。
   activationTargetId = tab.id;
+  if (lastActivatedSeed && lastActivatedSeed !== tab.seed) retainRecentBackground(lastActivatedSeed, tab.seed);
+  recentBackgroundSeeds = recentBackgroundSeeds.filter((seed) => seed !== tab.seed);
+  lastActivatedSeed = tab.seed;
   // 只包同步的「内容换血」信号写入;attach/RPC 留在外面,别把旧快照冻屏。
   withViewTransition(() => {
     setIsStartup(false);
@@ -269,7 +282,7 @@ export async function activateTab(tab: Tab): Promise<void> {
     }
   });
   setFocusToken(focusToken() + 1);
-  const activation = activationQueue.catch(() => {}).then(async () => {
+  const activation = (async () => {
     // A rapid later click supersedes queued work before it can attach.
     if (activationTargetId !== tab.id) return;
     try {
@@ -282,8 +295,7 @@ export async function activateTab(tab: Tab): Promise<void> {
     } catch (error) {
       if (activationTargetId === tab.id) setBootError(String(error instanceof Error ? error.message : error));
     }
-  });
-  activationQueue = activation;
+  })();
   await activation;
 }
 
@@ -301,6 +313,8 @@ export async function closeTab(tabId: string): Promise<void> {
   if (index < 0) return;
   const tab = list[index]!;
   const wasActive = activeId() === tabId;
+  recentBackgroundSeeds = recentBackgroundSeeds.filter((seed) => seed !== tab.seed);
+  if (lastActivatedSeed === tab.seed) lastActivatedSeed = null;
   setTabs(list.filter((item) => item.id !== tabId));
   setDrafts((draft) => { delete draft[tab.seed]; });
   tab.store.dispose();
@@ -313,28 +327,15 @@ export async function closeTab(tabId: string): Promise<void> {
 
 export interface CreateSessionOptions {
   cwd?: string | null;
-  profile?: string | null;
+  profileId?: string | null;
+  model?: string | null;
+  maxTokens?: number | null;
+  contextLength?: number | null;
   effort?: string | null;
   title?: string | null;
 }
 
-/**
- * daemon / 宿主不认识 `session.create` 时才允许降级。
- *
- * 只有"方法不存在"值得走旧通道；业务拒绝（例如工作目录不存在）必须原样
- * 抛出——否则用户要等完 20 次轮询才看到一句"会话创建超时"，真实原因被吞掉。
- */
-function isMissingCreateRpc(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /unknown[ _]?(service )?method|unknown_method|method not (found|allowed|implemented)|not implemented|unsupported method/i.test(
-    message,
-  );
-}
-
-/**
- * 依据指定选项原子创建新会话并返回新分配的 session_id。
- * 优先调用原子 RPC `session.create`；毫秒级完成，杜绝轮询比对与竞态。
- */
+/** 依据指定选项原子创建新会话并返回新分配的 session_id。 */
 export async function createSessionWithCwd(
   cwdOrOptions?: string | null | CreateSessionOptions,
 ): Promise<string> {
@@ -343,53 +344,27 @@ export async function createSessionWithCwd(
       ? { cwd: cwdOrOptions ?? null }
       : cwdOrOptions;
 
-  let rpcFailure: unknown = null;
-  try {
-    const res = await transport.rpc<{ session_id: string }>("session.create", {
-      cwd: options.cwd ?? null,
-      profile: options.profile ?? null,
-      effort: options.effort ?? null,
-      title: options.title ?? null,
-    });
-    if (res?.session_id) {
-      // 会话已经建出来了：侧栏刷新失败不能再走一次创建，否则会多出一个会话。
-      try {
-        const list = await transport.sessions();
-        applySessionList(list as SidebarSession[]);
-      } catch (err) {
-        console.warn("session.create 已成功，但会话列表刷新失败：", err);
-      }
-      return String(res.session_id);
-    }
-    rpcFailure = new Error("session.create 未返回 session_id");
-  } catch (err) {
-    if (!isMissingCreateRpc(err)) throw err;
-    rpcFailure = err;
-  }
-  console.warn("session.create RPC 不可用，降级至旧通道：", rpcFailure);
-
-  // 兜底回退：旧通道 control session_create + 轮询
-  const before = new Set((await transport.sessions()).map((item) => String(item.session_id)));
-  const ack = await transport.command("control", {
-    channel: "control",
-    type: "session_create",
-    close_current: false,
+  const res = await transport.query<{ session_id?: string }>({
+    type: "session.create",
     cwd: options.cwd ?? null,
+    profile_id: options.profileId ?? null,
+    model: options.model ?? null,
+    max_tokens: options.maxTokens ?? null,
+    context_length: options.contextLength ?? null,
+    effort: options.effort ?? null,
+    title: options.title ?? null,
   });
-  // 现有 transport 对 rejected 直接抛出；这里兜住不上抛的后端实现。
-  if (ack?.status === "rejected") {
-    throw new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
+  if (res?.session_id == null || res.session_id === "") {
+    throw new Error("session.create 未返回 session_id");
   }
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 300));
+  // 会话已经建出来了：侧栏刷新失败不能再走一次创建，否则会多出一个会话。
+  try {
     const list = await transport.sessions();
     applySessionList(list as SidebarSession[]);
-    const fresh = list.map((item) => String(item.session_id)).find((id) => !before.has(id));
-    if (fresh != null) {
-      return fresh;
-    }
+  } catch (err) {
+    console.warn("session.create 已成功，但会话列表刷新失败：", err);
   }
-  throw new Error("会话创建超时（控制通道已受理，但新会话未出现在列表中）");
+  return res.session_id;
 }
 
 /**
@@ -410,7 +385,10 @@ export async function createSession(cwd?: string | null): Promise<void> {
 
 export interface StartupSubmitOptions {
   cwd: string | null;
-  profile?: string | null;
+  profileId?: string | null;
+  model?: string | null;
+  maxTokens?: number | null;
+  contextLength?: number | null;
   effort?: string | null;
   text: string;
   attachmentPaths?: string[];
@@ -429,16 +407,12 @@ export async function submitStartupSession(options: StartupSubmitOptions): Promi
   try {
     const fresh = await createSessionWithCwd({
       cwd: options.cwd,
-      profile: options.profile,
+      profileId: options.profileId,
+      model: options.model,
+      maxTokens: options.maxTokens,
+      contextLength: options.contextLength,
       effort: options.effort,
     });
-    if (options.profile) {
-      try {
-        await transport.rpc("session.set_profile", { name: options.profile }, fresh);
-      } catch (err) {
-        console.warn("set_profile failed on new session", err);
-      }
-    }
     const uploadedRefs: ContentRef[] = [];
     if (options.attachmentPaths && options.attachmentPaths.length > 0) {
       for (const path of options.attachmentPaths) {
@@ -476,7 +450,7 @@ export async function submitStartupSession(options: StartupSubmitOptions): Promi
  */
 export async function registerWorkspace(path: string): Promise<SidebarWorkspace | null> {
   try {
-    const created = await transport.rpc<SidebarWorkspace>("workspace.create", { path });
+    const created = await transport.query<SidebarWorkspace>({ type: "workspace.create", path });
     await pollSessions();
     return created;
   } catch (error) {
@@ -513,7 +487,7 @@ export async function chooseNewSessionFolder(): Promise<void> {
  */
 export async function moveSessionToWorkspace(seed: string, workspaceId: string): Promise<void> {
   try {
-    await transport.rpc("workspace.move_session", { session_id: seed, workspace_id: workspaceId });
+    await transport.command({ type: "session.set_group", workspace_id: workspaceId }, sessionTarget(seed));
     await pollSessions();
   } catch (error) {
     toast(`${STR.moveSessionFailed}：${error instanceof Error ? error.message : String(error)}`, "err");
@@ -523,7 +497,7 @@ export async function moveSessionToWorkspace(seed: string, workspaceId: string):
 /** 把会话移出工作区 → 未分组(`workspace.detach`)。 */
 export async function detachSessionFromWorkspace(seed: string): Promise<void> {
   try {
-    await transport.rpc("workspace.detach", { session_id: seed });
+    await transport.command({ type: "session.set_group", workspace_id: null }, sessionTarget(seed));
     await pollSessions();
   } catch (error) {
     toast(`${STR.detachSessionFailed}：${error instanceof Error ? error.message : String(error)}`, "err");
@@ -547,7 +521,7 @@ async function pullSessions(): Promise<void> {
   try {
     const [list, workspaces] = await Promise.all([
       transport.sessions() as Promise<SidebarSession[]>,
-      transport.rpc<SidebarWorkspace[]>("workspace.list").catch(() => []),
+      transport.query<SidebarWorkspace[]>({ type: "workspace.list" }).catch(() => []),
     ]);
     applySessionList(list);
     setWorkspaceCatalog(workspaces);
@@ -578,7 +552,7 @@ async function dropSession(seed: string): Promise<void> {
 export async function boot(): Promise<void> {
   const [list, workspaces] = await Promise.all([
     transport.sessions() as Promise<SidebarSession[]>,
-    transport.rpc<SidebarWorkspace[]>("workspace.list").catch(() => []),
+    transport.query<SidebarWorkspace[]>({ type: "workspace.list" }).catch(() => []),
   ]);
   applySessionList(list);
   setWorkspaceCatalog(workspaces);

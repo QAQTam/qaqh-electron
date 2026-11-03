@@ -1,11 +1,14 @@
-import type { AskAnswer, RingingCommand, RingingV2PendingApprovals } from "@qaqh/sdk/protocol";
+import type { RingingCommand, RingingV2PendingApprovals } from "@qaqh/sdk/protocol";
 import type { ApprovalKind, RingingCommandAck } from "./types.js";
 
 /** Canonical ids stay in the host; only details enter the approval view. */
 export interface PendingApproval {
   kind: ApprovalKind;
   internalId: string;
+  snapshotId: string;
   details: Record<string, unknown>;
+  /** The canonical request body could not be loaded; never present approval actions. */
+  detailsUnavailable?: boolean;
 }
 
 export function requireId(value: unknown, label: string): string {
@@ -30,7 +33,14 @@ export function flattenAdminApprovals(pending: RingingV2PendingApprovals): Pendi
     for (const key of ["tool_name", "action_summary", "reason", "paths", "category", "level", "risk", "consequence"]) {
       details[key] = permission[key] ?? (key === "paths" ? [] : null);
     }
-    items.push({ kind: "tool_permission", internalId: requireId(permission.tool_call_id, "tool_call_id"), details });
+    details.details_unavailable = permission.details_unavailable === true;
+    items.push({
+      kind: "tool_permission",
+      internalId: requireId(permission.tool_call_id, "tool_call_id"),
+      snapshotId: requireId(permission.tool_call_id, "tool_call_id"),
+      details,
+      detailsUnavailable: permission.details_unavailable === true,
+    });
   }
   if (slots.pending_interaction !== null) {
     const interaction = record(slots.pending_interaction, "pending_interaction");
@@ -40,13 +50,16 @@ export function flattenAdminApprovals(pending: RingingV2PendingApprovals): Pendi
     items.push({
       kind: interaction.kind,
       internalId: requireId(interaction.id, "interaction_id"),
+      snapshotId: requireId(interaction.id, "interaction_id"),
       details: interaction.details === null ? {} : record(interaction.details, "interaction_details"),
+      detailsUnavailable: interaction.details === null,
     });
   }
   return items;
 }
 
-/** Closed decision vocabulary; never forward arbitrary renderer payload keys. */
+/** Closed decision vocabulary; never forward arbitrary renderer payload keys.
+ *  交互应答走 control 频道命令（ControlCommand wire 名），不是统一目录操作。 */
 export function approvalCommand(
   approval: Pick<PendingApproval, "kind" | "internalId">,
   decision: string,
@@ -57,29 +70,31 @@ export function approvalCommand(
   switch (approval.kind) {
     case "tool_permission":
       if (!["approve", "reject", "trust"].includes(decision)) throw new Error("invalid_decision");
+      // 权限应答是 ToolCommand（tool 频道），ask/plan 才是 control 频道。
       return { channel: "tool", type: "tool_permission_respond", tool_call_id: id, approved: decision !== "reject", trust_folder: decision === "trust" };
     case "ask": {
       if (decision === "dismiss") return { channel: "control", type: "interaction_ask_dismiss", interaction_id: id };
       if (decision !== "submit") throw new Error("invalid_decision");
       if (!Array.isArray(body.answers) || body.answers.length === 0) throw new Error("invalid_answers");
       const seen = new Set<string>();
-      const answers: AskAnswer[] = body.answers.map((value: unknown) => {
+      const answers: { question_id: string; answer: string }[] = [];
+      for (const value of body.answers as unknown[]) {
         const answer = record(value, "answer");
         const questionId = requireId(answer.question_id, "question_id");
         if (seen.has(questionId) || typeof answer.answer !== "string" || !answer.answer.trim()) throw new Error("invalid_answers");
         seen.add(questionId);
-        return { question_id: questionId, answer: answer.answer };
-      });
+        answers.push({ question_id: questionId, answer: answer.answer });
+      }
       return { channel: "control", type: "interaction_ask_respond", interaction_id: id, answers };
     }
     case "plan":
       if (decision !== "approve" && decision !== "reject") throw new Error("invalid_decision");
       if (body.message != null && typeof body.message !== "string") throw new Error("invalid_plan_message");
-      if (body.autonomous !== undefined && typeof body.autonomous !== "boolean") throw new Error("invalid_plan_autonomous");
       return {
         channel: "control", type: "plan_review_respond", interaction_id: id,
-        approved: decision === "approve", message: body.message as string | null | undefined,
-        autonomous: body.autonomous === true,
+        approved: decision === "approve",
+        message: typeof body.message === "string" ? body.message : null,
+        autonomous: false,
       };
     default:
       throw new Error("invalid_approval_kind");
@@ -87,6 +102,7 @@ export function approvalCommand(
 }
 
 export function requireAccepted(ack: RingingCommandAck): RingingCommandAck {
+  // 新 ack 状态面只有 accepted|rejected（目录操作同步完成，result 直接回带）。
   if (ack.status !== "accepted") throw new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
   return ack;
 }

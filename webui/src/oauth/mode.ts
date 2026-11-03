@@ -1,16 +1,14 @@
 /**
- * OAuth（套餐）模式的**判定与常量**——页面与设置页共用。
+ * 账号额度的**判定与常量**——接入页、设置页与输入区共用。
  *
- * 开关本身就是配置契约里的 `credential`：`chatgpt_plan` = 用本机 ChatGPT 套餐，
- * `api_key` = BYOK。也就是说「OAuth 打开」不是一个独立的开关位，而**就是配置本身**
- * ——换个端（TUI、手改 `config.toml`）看也一致，不会出现「UI 说开着、daemon 说没开」。
- *
- * **切换时要写哪些字段**不在这里，而在 `./provider-state`：那是"多 provider 各自
- * 记着自己的模型与端点"的事，涉及快照与还原，单独放一处免得两边各写一套。
- *
- * 本模块不碰 DOM 也不碰 store，纯函数，脱浏览器可测。
+ * 凭据来源本身就是配置契约里的 `credential`：`chatgpt_plan` = 本机 ChatGPT 套餐，
+ * `deepseek_account` = 本机 DeepSeek 账号余额，`api_key` = BYOK。这里只做归类与
+ * 常量，不碰 DOM、store 或写路径。
  */
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
+
+/** provider 类别：模型目录与档位特判按它归口。 */
+export type ProviderKind = "byok" | "plan" | "account";
 
 /**
  * 凭据来源的三个取值（与 `qaqh_types::CredentialSource` 的 serde 表示同源）：
@@ -18,6 +16,22 @@ import type { ConfigDto } from "../api/qaqh/ConfigDto";
  * 本机 DeepSeek 账号余额。
  */
 export type CredentialSource = "api_key" | "chatgpt_plan" | "deepseek_account";
+
+/**
+ * 凭据来源字符串 → 前端 provider 类别。
+ *
+ * Profile 摘要（`ProfileSummaryDto.credential`）与会话 meta 只带凭据来源，
+ * 而模型目录/档位特判按 provider 类别归口（`./model-catalog`）。会话选了
+ * 别的 Profile 时，用户看到的能力必须按**那个 Profile 的 provider** 算，
+ * 不能拿全局活跃项的凭据冒充。
+ */
+export function providerKindOfCredential(
+  credential: string | null | undefined,
+): ProviderKind {
+  if (credential === "chatgpt_plan") return "plan";
+  if (credential === "deepseek_account") return "account";
+  return "byok";
+}
 
 /** 是否是**套餐**模式（本函数的老名字叫 `isOauthMode`：它只回答"是不是套餐"）。 */
 export function isPlanMode(
@@ -41,37 +55,6 @@ export function isAccountCredential(
   config: Pick<ConfigDto, "credential"> | null | undefined,
 ): boolean {
   return isPlanMode(config) || isDeepseekAccountMode(config);
-}
-
-/**
- * @deprecated 名字来自只有两档的年代，语义 **= [`isPlanMode`]**。
- * 新代码请直接写明是套餐还是账号，别再用这个含混的名字。
- */
-export const isOauthMode = isPlanMode;
-
-/** 关掉时那一行的文案（开着的时候要说清是**哪一家**在接管，见 [`oauthPillView`]）。 */
-const OAUTH_PILL_OFF_HINT = "关闭时回到设置页里那套自带 key 的配置";
-
-/**
- * 胶囊开关那一行的**判据与文案**（纯函数；接入页只管渲染，口径在这里钉住）。
- *
- * `on` 读的是「有没有在用账号额度」，不是「是不是套餐」：设置页那批 BYOK 字段的
- * 置灰判据也是这个（`../settings/byok/Sections.tsx`）。两边不同判据时，切到
- * DeepSeek 账号会让开关自己弹回"关" —— 界面在否认正在发生的事，用户读到的就是
- * "我一登录 DeepSeek，OAuth 就被关了"。
- *
- * `activeName` 是当前生效那一家的展示名（`null` = 名录里没有 / 配置还没读到），
- * 说出来才有地方交代"开着的是哪家"，否则开着 DeepSeek 时那句文案像是在说套餐。
- */
-export function oauthPillView(
-  config: Pick<ConfigDto, "credential"> | null | undefined,
-  activeName: string | null,
-): { on: boolean; hint: string } {
-  if (!isAccountCredential(config)) return { on: false, hint: OAUTH_PILL_OFF_HINT };
-  return {
-    on: true,
-    hint: `已开启（${activeName ?? "账号额度"}）：模型与端点(BYOK) 由本模式接管（那几个字段在设置页置灰）`,
-  };
 }
 
 /**

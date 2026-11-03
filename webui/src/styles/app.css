@@ -28,6 +28,7 @@
 @import "./components/composer.css";
 @import "./components/context-menu.css";
 @import "./components/approval.css";
+@import "./components/gamepad.css";
 @import "./components/genui.css";
 @import "./components/settings.css";
 @import "./components/controls.css";
@@ -38,6 +39,7 @@
 @import "./components/dsaccount.css";
 @import "./components/oauth.css";
 @import "./components/effort.css";
+@import "./components/toolmode.css";
 
 /* Windows 11 / Fluent 2 覆盖层（仅 data-platform="windows" 生效） */
 @import "./components/fluent.css";

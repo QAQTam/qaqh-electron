@@ -16,6 +16,7 @@ import IconArrowLeft from "~icons/lucide/arrow-left";
 import IconMenu from "~icons/lucide/menu";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import IconListTodo from "~icons/lucide/list-todo";
+import IconGamepad2 from "~icons/lucide/gamepad-2";
 import { observeShellCols, type ShellCols } from "../lib/shell-cols";
 import { restoreSidebarWidth, shouldCollapseSidebar } from "../lib/sidebar-resize";
 import IconX from "~icons/lucide/x";
@@ -60,6 +61,8 @@ import { bootModelConfig, refreshConfig } from "../composer/model-config";
 import { lanActive, refreshLanStatus, sessionWorkspaceName } from "../composer/identity";
 import { ApprovalStack } from "../approval/ApprovalCards";
 import { SettingsView } from "../settings/SettingsView";
+import { OnboardingView } from "../onboarding/OnboardingView";
+import { onboardingVisible, refreshOnboarding } from "../onboarding/state";
 import { closeDevConsole, devConsoleOpen } from "../lib/devmode";
 import {
   cancelReload,
@@ -86,7 +89,15 @@ import {
 } from "../lib/host-status";
 import { applyTheme, storedTheme } from "../lib/theme";
 import { applyGpuPerfHint } from "../lib/visual";
-import { notifyConfigChanged } from "../lib/config-events";
+import {
+  dispatchGamepadAction,
+  GamepadController,
+  gamepadPrompts,
+  supportsGamepadActions,
+  type GamepadAction,
+  type GamepadDeviceState,
+} from "../lib/gamepad";
+import { notifyConfigChanged, onConfigChanged } from "../lib/config-events";
 import { toast, ToastHost } from "../ui/toast";
 import { buildContextMenu, ContextMenuHost, openContextMenu, type ContextMenuItem } from "../ui/contextMenu";
 import { DiffReviewDrawer } from "../diff/DiffReviewDrawer";
@@ -193,6 +204,10 @@ const App: Component = () => {
   const [quitConfirmStop, setQuitConfirmStop] = createSignal(false);
   const [quitBusy, setQuitBusy] = createSignal(false);
   const [quitError, setQuitError] = createSignal<string | null>(null);
+  /** 打开设置时要落的导航分区；`undefined` = 用设置页自己的默认分区。 */
+  const [settingsSection, setSettingsSection] = createSignal<string | undefined>(undefined);
+  /** 同一个分区再次被请求时也要能切回去（设置页已打开、用户手动导航过）。 */
+  const [settingsSectionNonce, setSettingsSectionNonce] = createSignal(0);
   /** 重连倒计时的每秒心跳:仅在活动标签 reconnecting 期间运转(见 connectionNotice)。 */
   const [reconnectTick, setReconnectTick] = createSignal(0);
   let reconnectTickTimer: number | null = null;
@@ -200,6 +215,13 @@ const App: Component = () => {
 
   /** 系统准星占着屏幕:一次只允许一个截图动作在飞。 */
   const [shotBusy, setShotBusy] = createSignal(false);
+  const [gamepadMode, setGamepadMode] = createSignal(false);
+  const [gamepadDevice, setGamepadDevice] = createSignal<GamepadDeviceState>({
+    connected: false, id: "", mapping: "", family: "generic",
+  });
+  const gamepadHints = () => gamepadPrompts(gamepadDevice().family);
+  const toggleGamepadMode = (): void => { setGamepadMode((value) => !value); };
+  const approvalOpen = (): boolean => (activeTab()?.store.pending[0]().length ?? 0) > 0;
 
   /**
    * 截一张图,落到**当前正在用的那个输入区**:
@@ -246,7 +268,71 @@ const App: Component = () => {
     }
   };
 
+  const moveGamepadFocus = (direction: "up" | "down" | "left" | "right"): void => {
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
+    const area = document.getElementById("messages");
+    if (area == null) return;
+    const items = Array.from(area.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), a[href], [role="button"], [tabindex]:not([tabindex="-1"])',
+    )).filter((item) =>
+      item.getClientRects().length > 0 &&
+      item.getAttribute("aria-hidden") !== "true" &&
+      item.closest("[inert]") == null,
+    );
+    if (items.length === 0) return;
+    const current = items.indexOf(active as HTMLElement);
+    const delta = direction === "up" || direction === "left" ? -1 : 1;
+    const nextIndex = current < 0 ? (delta > 0 ? 0 : items.length - 1) : current + delta;
+    items[Math.min(items.length - 1, Math.max(0, nextIndex))]?.focus();
+  };
+
+  const handleGamepadAction = (action: GamepadAction): void => {
+    if (action.kind === "toggle-mode") {
+      toggleGamepadMode();
+      return;
+    }
+    if (!gamepadMode()) return;
+    if (action.kind === "move") {
+      if (approvalOpen()) {
+        dispatchGamepadAction(action); // AskCard owns option navigation while the modal is open.
+        return;
+      }
+      moveGamepadFocus(action.direction);
+      return;
+    }
+    if (approvalOpen()) {
+      if (action.kind === "confirm" || action.kind === "cancel") {
+        dispatchGamepadAction(action); // Modal card gives A/B their scoped semantics.
+      }
+      return; // Never send/focus/toggle the underlying composer or panel under a modal.
+    }
+    if (settingsOpen() || onboardingVisible() || quitPrompt() !== undefined) return;
+    if (action.kind === "toggle-panel") {
+      if (section() === "messages" && !isStartup()) {
+        if (appCols() < 3) setRailDrawerOpen((value) => !value);
+        else toggleRail();
+      }
+    } else if (action.kind === "focus-composer") {
+      dispatchGamepadAction(action);
+    } else if (action.kind === "send") {
+      dispatchGamepadAction(action); // Composer only sends while its text area owns focus.
+    } else if (action.kind === "confirm") {
+      const target = document.activeElement;
+      if (target instanceof HTMLButtonElement && !target.disabled) target.click();
+    } else if (action.kind === "cancel") {
+      if (railDrawerOpen() || sidebarDrawerOpen()) closeDrawers();
+      else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    }
+  };
+
   onSettled(() => {
+    const gamepad = new GamepadController(
+      () => gamepadMode() && !settingsOpen() && !onboardingVisible() && quitPrompt() === undefined,
+      (action) => handleGamepadAction(action),
+      setGamepadDevice,
+    );
+    const stopGamepad = gamepad.start();
     void bootTabs().catch((error: unknown) => {
       // boot() 只对「没有可用会话」写 bootError;bootstrap/网络异常在此兜底,
       // 给出可执行的下一步(§16 错误文案),而不是静默空屏。
@@ -261,6 +347,13 @@ const App: Component = () => {
     // "档位表第一档"画——把"还没读到"冒充成「轻度」。旧行为是等用户点开卡片才读,
     // 于是"默认轻度、点进去才变真值"。配置是 daemon 全局态,读它不该等一次点击。
     void bootModelConfig();
+    // 首次引导读的是同一份 profiles.toml：没有可用默认存档就弹全屏引导。
+    void refreshOnboarding();
+    // 设置页 / 接入页 / 引导自身的写成功后都会广播；配置一落地，引导门自己消失。
+    const unlistenConfig = onConfigChanged(() => {
+      void refreshConfig();
+      void refreshOnboarding();
+    });
     const onFocus = (): void => {
       void pollSessions();
       // 窗口重新聚焦时重读一次配置:别的端(TUI / 手改 config.toml / 设置页另一台)
@@ -284,7 +377,7 @@ const App: Component = () => {
       applyTheme(stored, false);
     } else {
       void transport
-        .rpc<{ theme: string | null }>("config.load")
+        .query<{ theme: string | null }>({ type: "config.load" })
         .then((config) => applyTheme(config.theme, false))
         .catch(() => {});
     }
@@ -325,6 +418,8 @@ const App: Component = () => {
 
     // 全局快捷键(§5.3)。
     const onKey = (event: KeyboardEvent): void => {
+      // 首次引导遮罩在最高层：应用快捷键全部让路（不 preventDefault，输入框照常打字）。
+      if (onboardingVisible()) return;
       if (quitPrompt() !== undefined && event.key === "Escape") {
         event.preventDefault();
         setQuitPrompt(undefined);
@@ -385,6 +480,7 @@ const App: Component = () => {
       const mod = event.ctrlKey || event.metaKey;
       if (mod && event.key === ",") {
         event.preventDefault();
+        setSettingsSection(undefined);
         toggleSettings();
         return;
       }
@@ -441,8 +537,10 @@ const App: Component = () => {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("contextmenu", onContextMenu);
       window.removeEventListener("keydown", onKey);
+      stopGamepad();
       stopCols?.();
       onClickCleanup?.();
+      unlistenConfig();
       unlistenHost?.();
       unlistenQuit?.();
     };
@@ -538,18 +636,21 @@ const App: Component = () => {
     });
   };
 
-  const openProfilesSettings = (): void => {
+  const openSettingsAt = (sectionId: string): void => {
+    setSettingsSection(sectionId);
+    setSettingsSectionNonce((value) => value + 1);
     if (!settingsOpen()) toggleSettings();
-    requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>('.settings-nav-item[data-section-id="section-profiles"]')?.click();
-    });
+  };
+
+  const openProfilesSettings = (): void => {
+    openSettingsAt("section-profiles");
   };
 
   /** 退出确认对话框:⋯菜单、Ctrl+Q、主进程 quit-requested 三条入口共用这一份。 */
   const openQuitDialog = (): void => {
     setQuitConfirmStop(false);
     setQuitError(null);
-    void transport.rpc<Array<{ state?: string }>>("session.activity")
+    void transport.query<Array<{ state?: string }>>({ type: "session.activity" })
       .then((activities) => {
         const activeCount = activities.filter((item) =>
           item.state === "starting" || item.state === "working" || item.state === "waiting_user",
@@ -570,23 +671,18 @@ const App: Component = () => {
   const openShellMenu = (anchor: HTMLElement): void => {
     const rect = anchor.getBoundingClientRect();
     const items: ContextMenuItem[] = [
-      { kind: "action", label: "管理模型档案预设…", hint: "Ctrl+Shift+M", onSelect: () => openProfilesSettings() },
+      { kind: "action", label: "管理存档…", hint: "Ctrl+Shift+M", onSelect: () => openProfilesSettings() },
       { kind: "separator" },
       {
         kind: "action",
         label: "设置…",
         hint: "Ctrl+,",
-        onSelect: () => { if (!settingsOpen()) toggleSettings(); },
+        onSelect: () => { setSettingsSection(undefined); if (!settingsOpen()) toggleSettings(); },
       },
       {
         kind: "action",
         label: "关于 QAQ-Harness",
-        onSelect: () => {
-          if (!settingsOpen()) toggleSettings();
-          requestAnimationFrame(() => {
-            document.querySelector<HTMLElement>('.settings-nav-item[data-section-id="section-about"]')?.click();
-          });
-        },
+        onSelect: () => openSettingsAt("section-about"),
       },
       { kind: "separator" },
       { kind: "action", label: "退出…", hint: "Ctrl+Q", onSelect: () => openQuitDialog() },
@@ -637,6 +733,7 @@ const App: Component = () => {
 
   const navigateSection = (next: GlobalSection): void => {
     if (next === "settings") {
+      setSettingsSection(undefined);
       if (settingsOpen()) requestSettingsClose();
       else toggleSettings();
       return;
@@ -672,6 +769,39 @@ const App: Component = () => {
       await tab.store.setSessionEffort(effort);
     } catch (error) {
       toast(`切换思考强度失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    }
+  };
+
+  const switchModel = async (tab: Tab, model: string | null): Promise<void> => {
+    try {
+      await tab.store.setSessionModel(model);
+    } catch (error) {
+      toast(`切换模型失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    }
+  };
+
+  const switchMaxTokens = async (tab: Tab, maxTokens: number | null): Promise<void> => {
+    try {
+      await tab.store.setSessionMaxTokens(maxTokens);
+    } catch (error) {
+      toast(`切换最大输出失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    }
+  };
+
+  const switchContextLength = async (tab: Tab, contextLength: number | null): Promise<void> => {
+    try {
+      await tab.store.setSessionContextLength(contextLength);
+    } catch (error) {
+      toast(`切换上下文窗口失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    }
+  };
+
+  /** 会话级换工具模式;失败时 store 已重读 meta 回滚,这里只负责出声。 */
+  const switchToolMode = async (tab: Tab, mode: string, customTools: string[]): Promise<void> => {
+    try {
+      await tab.store.setSessionToolMode(mode, customTools);
+    } catch (error) {
+      toast(`切换工具模式失败：${String(error instanceof Error ? error.message : error)}`, "err");
     }
   };
 
@@ -735,6 +865,16 @@ const App: Component = () => {
               </Show>
             </button>
           </Show>
+          <button
+            type="button"
+            class={`titlebar-menu gamepad-mode-button${gamepadMode() ? " active" : ""}`}
+            aria-label={gamepadMode() ? "退出手柄模式" : "启用手柄模式"}
+            aria-pressed={gamepadMode() ? "true" : "false"}
+            title={gamepadMode() ? "退出手柄模式" : "手柄模式"}
+            onClick={toggleGamepadMode}
+          >
+            <IconGamepad2 />
+          </button>
           <button
             type="button"
             class="titlebar-menu titlebar-more"
@@ -862,8 +1002,19 @@ const App: Component = () => {
                         profileView={() => tab.store.composerProfile[0]()}
                         onProfile={(name) => void switchProfile(tab, name)}
                         onManageProfiles={openProfilesSettings}
+                        modelView={() => tab.store.composerModel[0]()}
+                        modelOverridden={() => tab.store.composerModelOverride[0]()}
+                        onModel={(model) => switchModel(tab, model)}
+                        providerKind={() => tab.store.composerProfile[0]().providerKind}
                         effortView={() => tab.store.composerEffort[0]()}
-                        onEffort={(effort) => void switchEffort(tab, effort)}
+                        effortOverridden={() => tab.store.composerEffortOverride[0]()}
+                        onEffort={(effort) => switchEffort(tab, effort)}
+                        maxTokensView={() => tab.store.composerMaxTokens[0]()}
+                        onMaxTokens={(maxTokens) => switchMaxTokens(tab, maxTokens)}
+                        contextLengthView={() => tab.store.composerContextLength[0]()}
+                        onContextLength={(contextLength) => switchContextLength(tab, contextLength)}
+                        toolModeView={() => tab.store.composerToolMode[0]()}
+                        onToolMode={(mode, customTools) => void switchToolMode(tab, mode, customTools)}
                         /* 新建会话的目标工作区(§1.5):只改「下一条会话落在哪」,
                            当前会话的 cwd 钉在 SessionMeta 上,不在这里动——
                            身份行(下面那行只读文字)说的才是本会话的工作区。 */
@@ -886,7 +1037,11 @@ const App: Component = () => {
         </div>
           </>
         }>
-          <SettingsView />
+          <SettingsView
+            initialSection={settingsSection()}
+            sectionNonce={settingsSectionNonce()}
+            onOpenOAuth={() => navigateSection("oauth")}
+          />
         </Show>
       </div>
       {/* 任务右栏(spec §6.3):≥1280 第三列(dock);<1280 常驻挂载为覆盖层抽屉。 */}
@@ -965,9 +1120,22 @@ const App: Component = () => {
           </section>
         </div>
       </Show>
+      <Show when={gamepadMode()}>
+        <div class="gamepad-mode-status" role="status" aria-live="polite">
+          <IconGamepad2 />
+          <span>{!gamepadDevice().connected ? "等待连接手柄" : supportsGamepadActions(gamepadDevice()) ? "手柄模式" : "手柄已连接 · 控制布局不受支持"}</span>
+          <span class="gamepad-mode-hints">
+            ↑↓ 导航 · {gamepadHints().confirm} 确认 · {gamepadHints().cancel} 取消 · {gamepadHints().send} 发送 · {gamepadHints().panel} 任务 · {gamepadHints().focus} 输入
+          </span>
+          <button type="button" aria-label="退出手柄模式" onClick={toggleGamepadMode}>退出</button>
+        </div>
+      </Show>
       <DiffReviewDrawer />
       <ContextMenuHost />
       <ToastHost />
+      <Show when={onboardingVisible()}>
+        <OnboardingView onOpenSettings={() => openSettingsAt("section-profiles")} />
+      </Show>
     </div>
   );
 };

@@ -120,7 +120,7 @@ window.__t = {
   nav: (id) => document.querySelector('.settings-nav-item[data-section-id="' + id + '"]')?.click(),
   text: (sel) => document.querySelector(sel)?.innerText ?? "",
   key: (key, opts = {}) => window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...opts })),
-  calls: (method) => window.__qaqhProbe.calls.filter((item) => item.method === method),
+  calls: (method) => window.__qaqhProbe.calls.filter((item) => item.command?.type === method),
   saves: () => window.__qaqhProbe.saves,
   lastSave: () => window.__qaqhProbe.saves[window.__qaqhProbe.saves.length - 1] ?? null,
   foot: () => document.querySelector(".settings-foot-state")?.innerText ?? "",
@@ -144,153 +144,157 @@ const steps = [
     `,
   },
   {
-    name: "全量字段落位(逐 pane 遍历:读模型逐字段进表单)",
+    name: "服务商/存档从 profile.list 渲染",
     code: `
-      // 2026-10-16 起设置页是切换式单页:一次只渲染一个分区,冒烟改为逐 pane 点击遍历。
-      const NAV = ["section-byok","section-profiles","section-pairing","section-permission",
-                   "section-context","section-runtime","section-subagent","section-mcp",
-                   "section-appearance","section-about"];
-      let sections = 0, inputs = 0, readonlyTables = 0;
-      for (const id of NAV) {
-        __t.nav(id);
-        await __t.wait(120);
-        sections += document.querySelectorAll(".settings-section").length;
-        inputs += document.querySelectorAll(".settings-body input, .settings-body select").length;
-        readonlyTables += document.querySelectorAll(".readonly-table").length;
-      }
-      __t.nav("section-byok");
-      await __t.wait(150);
-      // 新增或删除分区要同步 NAV——计数是「每个 pane 真的渲染出来了」的冒烟,不是契约。
-      return { ok: sections === 10 && inputs >= 26 && readonlyTables === 3
-                 && __t.value("模型") === "ox-alpha-free" && __t.value("最大输出令牌") === "96000",
-               detail: { sections, inputs, readonlyTables, model: __t.value("模型"), maxTokens: __t.value("最大输出令牌") } };
+      const lists = __t.calls("profile.list").length;
+      __t.nav("section-providers");
+      await __t.wait(350);
+      const providers = document.querySelectorAll(".provider-row").length;
+      const referenced = __t.text(".provider-row");
+      __t.nav("section-profiles");
+      await __t.wait(350);
+      const profiles = document.querySelectorAll(".profile-row").length;
+      const hasDefault = document.querySelector(".profile-row.active")?.innerText.includes("默认存档") === true;
+      return { ok: lists >= 1 && providers === 2 && profiles === 2 && hasDefault
+                 && referenced.includes("被 1 条存档引用"),
+               detail: { lists, providers, profiles, hasDefault, referenced } };
     `,
   },
   {
-    name: "改 model 只发这一项(Merge Patch 最小化)",
+    name: "应用设置仍走 config.patch（只发差异项）",
     code: `
-      __t.type("模型", "ox-beta");
-      await __t.wait(200);
+      __t.nav("section-permission");
+      await __t.wait(250);
+      const before = __t.saves().length;
+      __t.click('input[name="permission-tier"][value="1"]');
+      await __t.wait(250);
       const foot = __t.foot();
-      __t.click(".primary-mini");
+      document.querySelector(".settings-foot-actions .primary-mini")?.click();
       await __t.wait(600);
       const patch = __t.lastSave();
-      return { ok: foot.includes("1 项") && JSON.stringify(Object.keys(patch ?? {})) === '["model"]'
-                 && patch?.model === "ox-beta" && __t.value("模型") === "ox-beta",
+      return { ok: foot.includes("1 项") && __t.saves().length === before + 1
+                 && JSON.stringify(Object.keys(patch ?? {})) === '["permissionLevel"]'
+                 && patch?.permissionLevel === 1,
                detail: { foot, patchKeys: Object.keys(patch ?? {}), saved: __t.saves().length } };
     `,
   },
   {
-    name: "清空 model 不产生改动(后端「空串 = 保持现值」)",
+    name: "设为默认存档走 profile.set_default，不碰 config.patch",
     code: `
-      __t.type("模型", "");
-      await __t.wait(200);
-      return { ok: __t.foot().includes("没有改动") && __t.saves().length === 1, detail: { foot: __t.foot(), saves: __t.saves().length } };
+      __t.nav("section-profiles");
+      await __t.wait(300);
+      const saves = __t.saves().length;
+      const before = __t.calls("profile.set_default").length;
+      const target = [...document.querySelectorAll(".profile-row:not(.active) button")]
+        .find((button) => button.textContent.includes("设为默认"));
+      target?.click();
+      await __t.wait(700);
+      const active = document.querySelector(".profile-row.active")?.innerText ?? "";
+      return { ok: __t.calls("profile.set_default").length === before + 1
+                 && __t.saves().length === saves && active.includes("默认存档"),
+               detail: { before, after: __t.calls("profile.set_default").length, saves, active } };
     `,
   },
   {
-    name: "密钥框:掩码不回填、填了新值才发",
+    name: "新建存档走 profile.create，且不丢应用设置草稿",
     code: `
-      const placeholder = __t.field("API key").placeholder;
-      __t.type("API key", "sk-fixture-new");
-      await __t.wait(200);
-      const foot = __t.foot();
-      __t.click(".primary-mini");
-      await __t.wait(600);
-      return { ok: placeholder.includes("已配置") && foot.includes("1 项") && __t.lastSave()?.apiKey === "sk-fixture-new",
-               detail: { placeholder, foot, apiKey: __t.lastSave()?.apiKey } };
-    `,
-  },
-  {
-    name: "BYOK 端点改动:endpoint + wire 各发一项(wire 出网用 daemon 认的旧拼写)",
-    code: `
-      __t.pick("协议", "messages");
+      // 先制造一份应用设置草稿（权限档降到 3，不保存）。
+      __t.nav("section-permission");
       await __t.wait(250);
-      __t.type("接口地址", "https://other.example/v1");
+      __t.click('input[name="permission-tier"][value="3"]');
       await __t.wait(250);
-      const foot = __t.foot();
-      const wire = __t.value("协议");
-      const endpoint = __t.value("接口地址");
-      __t.click(".primary-mini");
-      await __t.wait(600);
-      const patch = __t.lastSave() ?? {};
-      // 下拉与读模型是规范名 messages;出网必须是 daemon 写模型校验认的 anthropic,
-      // 直发 messages 会被 400 掉(bcbf013 后的真机回归)。
-      return { ok: foot.includes("2 项") && wire === "messages" && endpoint === "https://other.example/v1"
-                 && patch.wire === "anthropic" && patch.baseUrl === "https://other.example/v1",
-               detail: { foot, wire, endpoint, patchKeys: Object.keys(patch) } };
+      const dirtyBefore = document.querySelector(".settings-dirty-pill")?.innerText ?? "";
+      const saves = __t.saves().length;
+
+      __t.nav("section-profiles");
+      await __t.wait(300);
+      const creates = __t.calls("profile.create").length;
+      document.querySelector(".provider-cta")?.click();
+      await __t.wait(300);
+      __t.type("存档名称", "Fixture 存档");
+      __t.type("模型 id", "fixture-model");
+      await __t.wait(200);
+      document.querySelector(".profile-wizard-card .primary-mini")?.click();
+      await __t.wait(800);
+
+      const dirtyAfter = document.querySelector(".settings-dirty-pill")?.innerText ?? "";
+      const cards = document.querySelectorAll(".profile-row").length;
+      return { ok: __t.calls("profile.create").length === creates + 1
+                 && __t.saves().length === saves && dirtyBefore.includes("1 项")
+                 && dirtyAfter.includes("1 项") && cards === 3,
+               detail: { creates: __t.calls("profile.create").length, saves, dirtyBefore, dirtyAfter, cards } };
     `,
   },
   {
-    name: "档位降到 3:先拦下,打字确认后才写",
+    name: "编辑服务商走 provider.upsert，同一份草稿仍然保留",
+    code: `
+      __t.nav("section-providers");
+      await __t.wait(350);
+      const saves = __t.saves().length;
+      const before = __t.calls("provider.upsert").length;
+      [...document.querySelectorAll(".provider-row button")]
+        .find((button) => button.textContent === "编辑")?.click();
+      await __t.wait(250);
+      __t.type("服务商名称", "OpenCode Zen Edited");
+      await __t.wait(150);
+      document.querySelector(".provider-editor .primary-mini")?.click();
+      await __t.wait(700);
+      const renamed = __t.text(".provider-row").includes("OpenCode Zen Edited");
+      const dirty = document.querySelector(".settings-dirty-pill")?.innerText ?? "";
+      return { ok: __t.calls("provider.upsert").length === before + 1
+                 && __t.saves().length === saves && renamed && dirty.includes("1 项"),
+               detail: { before, after: __t.calls("provider.upsert").length, saves, renamed, dirty } };
+    `,
+  },
+  {
+    name: "默认存档不可删；非默认存档删除走 profile.delete",
+    code: `
+      __t.nav("section-profiles");
+      await __t.wait(350);
+      const defaultDisabled = document.querySelector(".profile-row.active .ghost-mini.is-danger")?.disabled === true;
+      const before = __t.calls("profile.delete").length;
+      const target = document.querySelector(".profile-row:not(.active) .ghost-mini.is-danger");
+      const removable = target?.disabled === false;
+      target?.click();
+      await __t.wait(700);
+      return { ok: defaultDisabled && removable && __t.calls("profile.delete").length === before + 1
+                 && document.querySelectorAll(".profile-row").length === 2,
+               detail: { defaultDisabled, removable, deletes: __t.calls("profile.delete").length } };
+    `,
+  },
+  {
+    name: "重新读取丢弃草稿并回到基线（应用设置）",
     code: `
       __t.nav("section-permission");
-      await __t.wait(200);
+      await __t.wait(300);
       const before = __t.saves().length;
-      __t.click('input[name="permission-tier"][value="3"]');
-      await __t.wait(200);
-      __t.click(".primary-mini");
-      await __t.wait(400);
-      const blocked = document.querySelector(".bypass-confirm") != null && __t.saves().length === before;
-      return { ok: blocked, detail: { blocked, confirmShown: document.querySelector(".bypass-confirm") != null } };
-    `,
-  },
-  {
-    name: "确认后写入 permissionLevel=3",
-    code: `
-      const ack = document.querySelector(".bypass-ack");
-      ack.value = "3";
-      ack.dispatchEvent(new Event("input", { bubbles: true }));
-      await __t.wait(200);
-      __t.click(".primary-mini");
-      await __t.wait(600);
-      return { ok: __t.lastSave()?.permissionLevel === 3, detail: { patch: __t.lastSave() } };
-    `,
-  },
-  {
-    name: "脏草稿下拒绝对 profile 动手(不静默覆盖草稿)",
-    code: `
-      __t.nav("section-byok");
-      await __t.wait(150);
-      __t.type("模型", "dirt-while-profile");
-      await __t.wait(200);
-      // 草稿是 store 级的:切到档案 pane,脏标记跟着走。
-      __t.nav("section-profiles");
-      await __t.wait(150);
-      const before = __t.calls("profile.delete").length;
-      // 目标必须是非活动 profile:活动档的删除按钮本来就 disabled。
-      document.querySelector(".profile-row:not(.active) .ghost-mini.is-danger")?.click();
-      await __t.wait(400);
-      const foot = __t.foot();
-      return { ok: foot.includes("有未保存的改动") && __t.calls("profile.delete").length === before,
-               detail: { foot, deletes: __t.calls("profile.delete").length } };
-    `,
-  },
-  {
-    name: "重新读取:丢掉草稿并回到基线",
-    code: `
-      __t.nav("section-byok");
-      await __t.wait(150);
-      const loads = __t.calls("config.load").length;
-      [...document.querySelectorAll(".settings-foot-actions .ghost-mini")].find((b) => b.textContent.includes("重新读取"))?.click();
-      await __t.wait(600);
-      return { ok: __t.calls("config.load").length > loads && __t.value("模型") === "ox-beta",
-               detail: { model: __t.value("模型"), loads: __t.calls("config.load").length } };
+      [...document.querySelectorAll(".settings-foot-actions .ghost-mini")]
+        .find((button) => button.textContent.includes("重新读取"))?.click();
+      await __t.wait(300);
+      [...document.querySelectorAll(".settings-confirm-actions button")]
+        .find((button) => button.textContent.includes("放弃并读取"))?.click();
+      await __t.wait(700);
+      const restored = document.querySelector('input[name="permission-tier"][value="1"]')?.checked === true;
+      return { ok: restored && __t.saves().length === before && !__t.foot().includes("项未保存"),
+               detail: { restored, saves: __t.saves().length, foot: __t.foot() } };
     `,
   },
   {
     name: "Esc 关闭遇脏草稿 → 先问放弃/留下",
     code: `
-      __t.type("模型", "esc-dirty");
-      await __t.wait(200);
+      __t.click('input[name="permission-tier"][value="3"]');
+      await __t.wait(250);
       __t.key("Escape");
       await __t.wait(300);
       const asked = document.querySelector(".settings-discard") != null && __t.modal() != null;
       [...document.querySelectorAll(".settings-discard .ghost-mini")].find((b) => b.textContent.includes("继续编辑"))?.click();
       await __t.wait(200);
-      const stayed = __t.modal() != null && __t.value("模型") === "esc-dirty";
+      const stayed = __t.modal() != null;
       [...document.querySelectorAll(".settings-foot-actions .ghost-mini")].find((b) => b.textContent.includes("重新读取"))?.click();
-      await __t.wait(600);
+      await __t.wait(300);
+      [...document.querySelectorAll(".settings-confirm-actions button")]
+        .find((b) => b.textContent.includes("放弃并读取"))?.click();
+      await __t.wait(700);
       __t.key("Escape");
       await __t.wait(300);
       [...document.querySelectorAll(".settings-discard .ghost-mini")].find((b) => b.textContent.includes("放弃并关闭"))?.click();
@@ -319,8 +323,9 @@ const steps = [
       __t.key(",", { ctrlKey: true });
       await __t.wait(600);
       const loads = __t.calls("config.load");
-      return { ok: bootErrorShown && __t.modal() != null && loads.length >= 1 && loads.every((c) => c.params && Object.keys(c.params).length === 0),
-               detail: { bootErrorShown, opened: __t.modal() != null, params: loads.map((c) => c.params) } };
+      return { ok: bootErrorShown && __t.modal() != null && loads.length >= 1
+                 && loads.every((call) => JSON.stringify(Object.keys(call.command ?? {})) === '["type"]'),
+               detail: { bootErrorShown, opened: __t.modal() != null, commands: loads.map((call) => call.command) } };
     `,
   },
 ];
@@ -385,12 +390,10 @@ try {
   await cdp.evaluate(`(() => { const __t = window.__t; return (async () => {
     if (__t.modal() == null) __t.key(",", { ctrlKey: true });
     await __t.wait(700);
-    __t.type("模型", "ox-two");
-    // 切换式单页:主题在外观 pane,截图前先切过去。
-    __t.nav("section-appearance");
+    // 切换式单页:截图停在新的「存档」分区。
+    __t.nav("section-profiles");
     await __t.wait(300);
-    __t.pick("主题", "dark");
-    await __t.wait(300); return "shot-ready";
+    return "shot-ready";
   })(); })()`);
   mkdirSync(dirname(SHOT), { recursive: true });
   const shot = await cdp.send("Page.captureScreenshot", { format: "png" });

@@ -4,14 +4,14 @@
  * 与 `pairing.ts` 同一分工：**HTTP 与 admin token 都留在 Rust 侧**，
  * 前端只拿状态投影（结构上不含 token）与一个需要交给系统浏览器打开的授权 URL。
  *
- * 八个方法的清单是 daemon 服务面（`qaqh_siwc::methods::ALL`）的镜像；
- * 壳侧另有一份白名单（`qaqh-electron/src/main/ipc-handlers.ts::SERVICE_METHODS`），
- * 两处都要加才通——白名单的存在是为了让「前端能调哪些 daemon 方法」可审计。
+ * 命令面是 RingingV2 的 `siwc.*` 统一命令。
  */
 import { invoke } from "./host";
 
 import type { SiwcSessionStatus } from "../siwc/brand";
+import type { DaemonCommand } from "./transport/backend";
 import { isDesktopRuntime } from "./transport/backend";
+import { transport } from "./transport";
 
 export interface SiwcModelEntry {
   slug: string;
@@ -51,23 +51,23 @@ export interface SiwcSignOutResult {
   usageUrl: string;
 }
 
-async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+async function query<T>(command: DaemonCommand): Promise<T> {
   if (!isDesktopRuntime()) {
     throw new Error("Sign in with ChatGPT 需要桌面壳：浏览器预览下不可用");
   }
-  return invoke<T>("service_rpc", { method, params });
+  return transport.query<T>(command);
 }
 
-export const siwcStatus = (): Promise<SiwcSessionStatus> => rpc("siwc.status");
+export const siwcStatus = (): Promise<SiwcSessionStatus> => query({ type: "siwc.status" });
 
 export const siwcProfiles = (): Promise<{
   active: string | null;
   profiles: SiwcSessionStatus[];
   pending: SiwcSessionStatus[];
-}> => rpc("siwc.profiles");
+}> => query({ type: "siwc.profiles" });
 
 export const siwcModels = (profileId?: string): Promise<SiwcModelEntry[]> =>
-  rpc("siwc.models", profileId == null ? {} : { profile_id: profileId });
+  query({ type: "siwc.models", profile_id: profileId ?? null });
 
 export const siwcSignInStart = (options: {
   profileId?: string;
@@ -75,24 +75,25 @@ export const siwcSignInStart = (options: {
   label?: string;
   reconsent?: boolean;
 } = {}): Promise<SiwcSignInStart> =>
-  rpc("siwc.sign_in.start", {
-    ...(options.profileId == null ? {} : { profile_id: options.profileId }),
-    ...(options.newProfile === true ? { new_profile: true } : {}),
-    ...(options.label == null ? {} : { label: options.label }),
-    ...(options.reconsent === true ? { reconsent: true } : {}),
+  query({
+    type: "siwc.sign_in.start",
+    profile_id: options.profileId ?? null,
+    new_profile: options.newProfile === true ? true : null,
+    label: options.label ?? null,
+    reconsent: options.reconsent === true ? true : null,
   });
 
 export const siwcSignInStatus = (flowId: string): Promise<SiwcFlowState> =>
-  rpc("siwc.sign_in.status", { flow_id: flowId });
+  query({ type: "siwc.sign_in.status", flow_id: flowId });
 
 export const siwcSignInCancel = (flowId: string): Promise<null> =>
-  rpc("siwc.sign_in.cancel", { flow_id: flowId });
+  query({ type: "siwc.sign_in.cancel", flow_id: flowId });
 
 export const siwcSelectProfile = (profileId: string): Promise<SiwcSessionStatus> =>
-  rpc("siwc.profile.select", { profile_id: profileId });
+  query({ type: "siwc.profile.select", profile_id: profileId });
 
 export const siwcSignOut = (profileId?: string): Promise<SiwcSignOutResult> =>
-  rpc("siwc.sign_out", profileId == null ? {} : { profile_id: profileId });
+  query({ type: "siwc.sign_out", profile_id: profileId ?? null });
 
 /** 用**系统浏览器**打开授权 URL（壳侧只放行 http/https）。 */
 export const openExternal = (url: string): Promise<void> =>

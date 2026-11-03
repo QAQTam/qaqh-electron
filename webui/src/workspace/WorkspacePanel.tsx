@@ -129,6 +129,9 @@ export const WorkspacePanel: Component<{ store: SessionStore;
             <div class="workspace-panel-section-head">
               <IconListTodo />
               <span>{STR.todoTitle}</span>
+              <Show when={props.store.todosSyncPending[0]()}>
+                <span class="todo-sync-pending" role="status" aria-live="polite">{STR.todoSyncPending}</span>
+              </Show>
               <Show when={items().length > 0}>
                 <b class="todo-count">{STR.todoDone(doneCount(), items().length)}</b>
               </Show>

@@ -124,8 +124,43 @@ try {
       const signedIn = scenario === 'signed-in';
       localStorage.setItem('qaqh.oauth.lastAccountProvider', signedIn ? 'deepseek-account' : 'openai');
       const expiresAtMs = Date.now() + 60000;
+      const providerId = 'fixture-provider';
+      const profileId = 'fixture-profile';
+      const provider = {
+        name: signedIn ? 'DeepSeek 账号' : 'Fixture BYOK',
+        base_url: 'https://api.deepseek.com',
+        wire: 'responses',
+        credential: signedIn ? 'deepseek_account' : 'api_key',
+        api_key: '****',
+      };
+      const profile = {
+        name: 'Fixture 存档',
+        provider: providerId,
+        model: signedIn ? 'deepseek-flash' : 'saved-byok-model',
+        reasoning_effort: 'high',
+        context_length: 1048576,
+        max_tokens: null,
+      };
       const FIXTURES = {
-        "config.load": { credential: signedIn ? "deepseek_account" : "api_key", model: signedIn ? "deepseek-flash" : "saved-byok-model", reasoningEffort: "high", wire: signedIn ? "responses" : "chat", baseUrl: "https://api.deepseek.com", contextLength: 1048576, profiles: [], activeProfile: null },
+        "config.load": {
+          credential: provider.credential, model: profile.model, reasoningEffort: "high",
+          wire: "responses", baseUrl: "https://api.deepseek.com", contextLength: 1048576,
+          apiKey: "****", profiles: [profileId], activeProfile: profileId,
+          profilesDetail: {
+            [profileId]: {
+              id: profileId, name: profile.name, providerId, providerName: provider.name,
+              model: profile.model, baseUrl: provider.base_url, wire: provider.wire,
+              effort: profile.reasoning_effort, contextLength: profile.context_length,
+              maxTokens: null, apiKeySet: true, credential: provider.credential,
+            },
+          },
+        },
+        "profile.list": {
+          revision: 1,
+          default_profile: profileId,
+          providers: { [providerId]: provider },
+          profiles: { [profileId]: profile },
+        },
         "siwc.status": { status: "disconnected", sharing: false },
         "siwc.models": [{ slug: "gpt-5.2", displayName: "GPT-5.2" }],
         "dsaccount.status": {
@@ -165,6 +200,10 @@ try {
           if (cmd !== "service_rpc") return Promise.resolve(null);
           const method = args?.method;
           if (method === 'config.save') { Object.assign(FIXTURES['config.load'], args.params); return Promise.resolve(null); }
+          if (method === 'provider.upsert' || method === 'profile.create' || method === 'profile.update'
+              || method === 'profile.set_default' || method === 'profile.delete' || method === 'provider.delete') {
+            return Promise.resolve(null);
+          }
           if (method === 'siwc.sign_in.start') return Promise.resolve({ flowId: 'fixture-flow', authorizeUrl: 'https://example.test/oauth', expiresAtMs, redirectUri: '', usageUrl: '' });
           if (method === 'siwc.sign_in.status') return Promise.resolve({ flowId: 'fixture-flow', state: 'failed', error: { code: 'cancelled', message: '演示：授权被取消' } });
           if (method === 'dsaccount.sign_in.start') return Promise.resolve({ attemptId: 'fixture-attempt', authorizeUrl: 'https://example.test/oauth', expiresAtMs });
@@ -205,7 +244,7 @@ try {
     await send("Emulation.setDeviceMetricsOverride", { width: scenario.width, height: scenario.height, deviceScaleFactor: 1, mobile: false });
     await send("Emulation.setEmulatedMedia", { features: [{ name: 'forced-colors', value: scenario.contrast ? 'active' : 'none' }] });
     await send("Page.navigate", { url: `${BASE}?view=${VIEW}&theme=${scenario.theme}&material=solid&oauthState=${scenario.state}` });
-    await until("document.querySelectorAll('.oauth-provider').length === 2 && document.fonts.status === 'loaded' && !document.querySelector('.oauth-pill input').disabled");
+    await until("document.querySelectorAll('.oauth-provider').length === 2 && document.fonts.status === 'loaded' && document.querySelector('.oauth-mode') != null");
     if (scenario.scale) await evaluate(`document.documentElement.style.zoom = ${scenario.scale}`);
     const geometry = await evaluate(`(() => {
       const body = document.querySelector('.oauth-page-body');
@@ -249,11 +288,8 @@ try {
       console.log('PASS login actions: both providers invoke host authorization; failures remain visible without config writes');
     }
     if (scenario.expanded) {
-      await click('.oauth-pill');
-      await until("window.__oauthFixture['config.load'].credential === 'api_key' && !document.querySelector('.oauth-pill input').checked && !document.querySelector('.oauth-pill input').disabled");
-      await click('.oauth-pill');
-      await until("window.__oauthFixture['config.load'].credential === 'deepseek_account' && document.querySelector('.oauth-pill input').checked && !document.querySelector('.oauth-pill input').disabled");
-      console.log('PASS source toggle: BYOK and last-used account source are restored');
+      assert(await evaluate("document.querySelector('.oauth-mode')?.textContent.includes('DeepSeek 账号')"), 'Current default profile should name the active account source');
+      console.log('PASS current source: header reads the default profile credential');
     }
   }
   assert(browserErrors.length === 0, `Browser runtime errors: ${browserErrors.join('\n')}`);

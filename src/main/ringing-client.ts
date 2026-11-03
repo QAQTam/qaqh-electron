@@ -6,7 +6,9 @@
 // credential refresh, multipart content upload — live in the SDK.
 import {
   createClient,
+  globalTarget,
   SdkError,
+  sessionTarget,
   type ApprovalsView,
   type ClientV2Bootstrap,
   type ClientState,
@@ -16,7 +18,7 @@ import {
 } from "@qaqh/sdk";
 import { readDiscovery } from "./daemon.js";
 import { requireAccepted, requireId } from "./approvals.js";
-import type { ControlCommand, ConversationCommand, RingingChannel, RingingCommand, ToolCommand } from "@qaqh/sdk/protocol";
+import type { RingingCommand, UnifiedCommand, UnifiedTarget } from "@qaqh/sdk/protocol";
 import type {
   DaemonDiscovery,
   ProjectionStatusWire,
@@ -26,23 +28,15 @@ import type {
 
 export type EventSender = (eventName: string, payload: any) => void;
 
-type CommandByChannel = { control: ControlCommand; conversation: ConversationCommand; tool: ToolCommand };
-const RECOVERABLE_RESETS = new Set([
-  "cursor_expired", "log_id_mismatch", "replay_overflow", "epoch_mismatch",
-  "snapshot_missing", "snapshot_expired", "snapshot_hash_mismatch",
-  "per_connection_overflow", "progress_buffer_overflow",
-]);
-const MAX_PROJECTION_RESYNCS = 3;
-
 export class RingingClient {
   private readonly sdk: SdkRingingClient;
   private readonly eventSender: EventSender;
   private activeSeed: string | null = null;
   private sessionWatch: SessionWatch | null = null;
+  private pendingBootstrapReset: { seed: string; generation: number } | null = null;
   private streamGeneration = 0;
   private projectionStatus: WatchStatus = "closed";
-  private resyncTimer: ReturnType<typeof setTimeout> | null = null;
-  private resyncAttempts = 0;
+  private attachRequest = 0;
 
   constructor(discovery: DaemonDiscovery, eventSender: EventSender) {
     this.eventSender = eventSender;
@@ -73,40 +67,42 @@ export class RingingClient {
   async attach(seed: string, _limit: number | null = null): Promise<void> {
     requireId(seed, "session_id");
     this.detachActive();
+    const request = ++this.attachRequest;
     this.activeSeed = seed;
     const generation = this.streamGeneration;
     const isCurrent = () => this.activeSeed === seed && this.streamGeneration === generation;
     this.projectionStatus = "connecting";
     this.sendProjectionStatus("connecting", seed);
 
-    // 1. session_resume 绑定该 seed 的展示通道（拒绝不影响只读 attach）
-    await this.command("control", { type: "session_resume", session_id: seed }, seed)
+    // 1. session.resume（control 频道 SessionResume）绑定该 seed 的展示通道（拒绝不影响只读 attach）
+    await this.submitChannel({ channel: "control", type: "session_resume", session_id: seed }, seed)
       .then(requireAccepted).catch((err) => {
         if (isCurrent()) this.reportError(`session_resume failed for ${seed}`, err);
       });
-    if (!isCurrent()) return;
+    if (!isCurrent() || request !== this.attachRequest) return;
 
     // 2. 投影单流（bootstrap + since_cursor 无缝续传）
     this.sessionWatch = this.sdk.watchSession(
       seed,
       {
-        onBootstrap: () => {
+        onBootstrap: (bootstrap) => {
           if (!isCurrent()) return;
-          // Initial attach and resync both rebuild the authoritative approvals.
-          this.eventSender("projection://reset", { session_id: seed, reason: "bootstrap" });
+          this.eventSender("projection://bootstrap", { session_id: seed, bootstrap });
+          if (this.pendingBootstrapReset?.seed === seed && this.pendingBootstrapReset.generation === generation) {
+            this.eventSender("projection://reset", { session_id: seed, reason: "bootstrap" });
+            this.pendingBootstrapReset = null;
+          }
+          this.eventSender("conn://liveness", {});
         },
         onEvent: (envelope) => {
           if (!isCurrent()) return;
-          this.resyncAttempts = 0;
           this.eventSender("conn://liveness", {});
           this.eventSender("projection://event", envelope);
         },
         onReset: (reset) => {
           if (!isCurrent()) return;
           console.warn(`[ringing] Reset required (${reset.reason}) for ${seed}`);
-          this.eventSender("projection://reset", { ...reset, session_id: reset.session_id || seed });
-          if (RECOVERABLE_RESETS.has(reset.reason)) this.scheduleProjectionResync(seed, generation);
-          else this.reportError(`Session stream paused for ${seed}: ${reset.reason}`);
+          if (!RECOVERABLE_RESETS.has(reset.reason)) this.reportError(`Session stream paused for ${seed}: ${reset.reason}`);
         },
         onStatus: (status) => {
           if (!isCurrent()) return;
@@ -123,13 +119,16 @@ export class RingingClient {
       },
       { skipBootstrap: false }
     );
+    // Test/facade implementations may synchronously publish a status before
+    // returning their watch handle; ensure the reset callback owns recovery.
+    const watch = this.sessionWatch;
+    void watch;
   }
 
   detachActive(): void {
+    this.attachRequest++;
     this.streamGeneration += 1;
-    if (this.resyncTimer) clearTimeout(this.resyncTimer);
-    this.resyncTimer = null;
-    this.resyncAttempts = 0;
+    this.pendingBootstrapReset = null;
     this.sessionWatch?.close();
     this.sessionWatch = null;
     this.projectionStatus = "closed";
@@ -139,26 +138,30 @@ export class RingingClient {
     }
   }
 
-  async command<C extends RingingChannel>(
-    channel: C,
-    cmd: CommandByChannel[C],
-    targetSeed?: string | null
-  ): Promise<RingingCommandAck> {
-    const target = targetSeed === undefined ? this.activeSeed : targetSeed;
-    if (target !== null) requireId(target, "session_id");
+  /** 统一目录命令（§8.1 信封，POST /ringing/v2/commands）。 */
+  async command(command: UnifiedCommand, target: UnifiedTarget = globalTarget()): Promise<RingingCommandAck> {
+    if (target.kind === "session") requireId(target.session_id, "session_id");
+    return this.normalizeAck(this.sdk.submit(target, command).then(({ ack }) => ack));
+  }
+
+  /** 频道命令（POST /ringing/v2/commands/{channel}；channel 由命令自带 tag 推导）。 */
+  async submitChannel(command: RingingCommand, sessionId: string): Promise<RingingCommandAck> {
+    requireId(sessionId, "session_id");
+    return this.normalizeAck(this.sdk.submitChannel(command.channel, command, sessionId));
+  }
+
+  /** service 查询/配置面（POST /ringing/v2/service/{method}）。 */
+  async serviceCall<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    return this.sdk.serviceCall<T>(method, params);
+  }
+
+  private async normalizeAck(submit: Promise<RingingCommandAck>): Promise<RingingCommandAck> {
     try {
-      const { ack } = await this.sdk.submit(channel, { ...cmd, channel } as RingingCommand, target);
-      return {
-        status: ack.status,
-        command_id: ack.command_id,
-        code: ack.code ?? undefined,
-        message: ack.message ?? undefined,
-        retry_after_ms: ack.retry_after_ms ?? undefined,
-      };
+      return await submit;
     } catch (err) {
       // 维持旧契约：daemon 明确拒绝时返回 rejected ack 而不是抛错；其余错误上抛。
       if (err instanceof SdkError && err.kind === "command_rejected") {
-        return { status: "rejected", command_id: err.commandId, code: err.code, message: err.message };
+        return { status: "rejected", command_id: err.commandId!, code: err.code, message: err.message };
       }
       // 提交超时 = 结果未知：命令可能已被 daemon 接受。按 command_id 轮询
       // commandStatus 闭环，而不是把未知结果当失败抛给渲染层。
@@ -185,18 +188,9 @@ export class RingingClient {
     }
   }
 
-  async serviceRpc<T = unknown>(method: string, params: Record<string, any> = {}): Promise<T> {
-    // ServiceMap covers only the exported typed slice, not every implemented
-    // backend service. Dynamic names use the same route at runtime.
-    return this.sdk.service(method as never, params as never) as Promise<T>;
-  }
-
-  adminService<T = unknown>(method: string, params: Record<string, any> = {}): Promise<T> {
-    return this.sdk.adminService<T>(method, params);
-  }
-
-  adminSessionService<T = unknown>(method: string, seed: string, params: Record<string, any> = {}): Promise<T> {
-    return this.sdk.adminService<T>(method, { ...params, session_id: seed });
+  /** Resolve a pending approval submission using the original durable command id. */
+  async commandStatus(commandId: string) {
+    return this.sdk.commandStatus(commandId);
   }
 
   adminRequest<T = unknown>(credential: { endpoint: string; token: string }, path: string, init: { method: string; body?: BodyInit; contentType?: string | false }): Promise<T> {
@@ -208,14 +202,18 @@ export class RingingClient {
     return this.sdk.bootstrap(seed);
   }
 
-  async readContentText(contentRef: string): Promise<string> {
-    const content = await this.sdk.downloadContent(contentRef);
+  async readContentText(contentRef: string, signal?: AbortSignal): Promise<string> {
+    const content = await this.sdk.downloadContent(contentRef, { signal });
     return new TextDecoder("utf-8", { fatal: true }).decode(content.bytes);
   }
 
   /** approvals.admin capability；渲染层拿到的仍是 ChallengeManager 发出的 challenge 视图。 */
   approvals(seed: string): Promise<ApprovalsView> {
     return this.sdk.approvals(seed);
+  }
+
+  approvalsSnapshot(seed: string): Promise<ClientV2Bootstrap> {
+    return this.sdk.bootstrap(seed);
   }
 
   async uploadContent(seed: string, _filename: string, buffer: Uint8Array, mediaType: string): Promise<any> {
@@ -253,6 +251,15 @@ export class RingingClient {
     return this.activeSeed === seed ? this.projectionStatus : "closed";
   }
 
+  async retryActive(seed: string): Promise<void> {
+    if (this.activeSeed === seed && this.sessionWatch) {
+      this.pendingBootstrapReset = { seed, generation: this.streamGeneration };
+      await this.sessionWatch.resync();
+      return;
+    }
+    await this.attach(seed);
+  }
+
   private sendProjectionStatus(status: WatchStatus, seed: string): void {
     this.eventSender("projection://status", {
       status,
@@ -275,29 +282,10 @@ export class RingingClient {
     this.eventSender("conn://error", { message: detail });
   }
 
-  private scheduleProjectionResync(seed: string, generation: number): void {
-    if (this.resyncTimer || this.activeSeed !== seed || this.streamGeneration !== generation) return;
-    if (this.resyncAttempts >= MAX_PROJECTION_RESYNCS) {
-      this.reportError(`Session stream recovery exhausted for ${seed}; retry the connection`);
-      return;
-    }
-    const delay = 250 * 2 ** this.resyncAttempts++;
-    // Defer until the SDK has finished pausing the old pump. Never resync
-    // synchronously inside onReset: the SDK sets paused after that callback.
-    this.resyncTimer = setTimeout(() => {
-      this.resyncTimer = null;
-      if (this.activeSeed !== seed || this.streamGeneration !== generation) return;
-      const watch = this.sessionWatch;
-      if (!watch) return;
-      this.projectionStatus = "reconnecting";
-      this.sendProjectionStatus("reconnecting", seed);
-      void watch.resync().catch(error => {
-        if (this.activeSeed !== seed || this.streamGeneration !== generation) return;
-        this.projectionStatus = "paused";
-        this.sendProjectionStatus("paused", seed);
-        this.reportError(`Session resync failed for ${seed}`, error);
-        this.scheduleProjectionResync(seed, generation);
-      });
-    }, delay);
-  }
 }
+
+const RECOVERABLE_RESETS = new Set([
+  "cursor_expired", "log_id_mismatch", "unknown_fact", "replay_overflow", "epoch_mismatch",
+  "snapshot_missing", "snapshot_expired", "snapshot_hash_mismatch",
+  "per_connection_overflow", "progress_buffer_overflow", "actor_mailbox_overflow",
+]);

@@ -19,11 +19,14 @@ import IconArchive from "~icons/lucide/archive";
 import IconFolder from "~icons/lucide/folder";
 import IconX from "~icons/lucide/x";
 import { STR } from "../lib/strings";
+import { GAMEPAD_ACTION_EVENT, type GamepadAction } from "../lib/gamepad";
 import type { SidebarWorkspace } from "../tabs/store";
 import type { ComposerMetrics, PendingAttachment, SessionProfileView } from "../session/store";
+import type { ProviderKind } from "../oauth/mode";
 import { tailName } from "./identity";
 import { WorkspaceMenu } from "../workspace/WorkspaceMenu";
 import { EffortCard } from "./EffortCard";
+import { ToolModeCard } from "./ToolModeCard";
 import { useDismissable } from "../ui/dismissable";
 
 export type SendBlockReason = "running" | "pending" | "offline" | "no-session" | null;
@@ -72,8 +75,22 @@ export const Composer: Component<{
   profileView?: () => SessionProfileView;
   onProfile?: (name: string | null) => void;
   onManageProfiles?: () => void;
+  /** 会话解析后的模型；不传则退回全局配置。 */
+  modelView?: () => string | null;
+  modelOverridden?: () => boolean;
+  onModel?: (model: string | null) => Promise<void> | void;
+  /** 本会话有效 Profile 的 provider 类别；不传按全局活跃 provider。 */
+  providerKind?: () => ProviderKind;
   effortView?: () => string | null;
-  onEffort?: (effort: import("../models/specs").ReasoningTier) => void;
+  effortOverridden?: () => boolean;
+  onEffort?: (effort: import("../models/specs").ReasoningTier | null) => void;
+  maxTokensView?: () => number | null;
+  onMaxTokens?: (maxTokens: number | null) => Promise<void> | void;
+  contextLengthView?: () => number | null;
+  onContextLength?: (contextLength: number | null) => Promise<void> | void;
+  /** 会话级工具模式视图 + 写口(§1.5)。不传 `onToolMode` 即不渲染选择器。 */
+  toolModeView?: () => import("../session/store").SessionToolModeView;
+  onToolMode?: (mode: string, customTools: string[]) => Promise<void> | void;
   /** Live session usage HUD; omitted from the empty-session composer. */
   metrics?: () => ComposerMetrics;
   /** 身份行:当前会话的工作区名;null = 目录项还没到,隐藏该项。 */
@@ -100,7 +117,7 @@ export const Composer: Component<{
 }> = (props) => {
   let textarea: HTMLTextAreaElement | undefined;
   let root: HTMLDivElement | undefined;
-  const [openMenu, setOpenMenu] = createSignal<"profile" | "workspace" | "context" | "effort" | null>(null);
+  const [openMenu, setOpenMenu] = createSignal<"profile" | "workspace" | "context" | "effort" | "toolmode" | null>(null);
   const [submitting, setSubmitting] = createSignal(false);
   const [stopping, setStopping] = createSignal(false);
 
@@ -147,6 +164,8 @@ export const Composer: Component<{
     const view = profile();
     return view?.details?.[name]?.model ?? (view != null && name === view.activeProfile ? view.model : null);
   };
+  const profileLabel = (id: string | null): string | null =>
+    id == null ? null : profile()?.details?.[id]?.name ?? id;
 
   const currentWorkspace = (): string | null => props.sessionWorkspace?.() ?? null;
   const showIdentity = (): boolean =>
@@ -160,6 +179,21 @@ export const Composer: Component<{
   };
 
   createEffect(() => props.draft(), () => autoGrow());
+
+  createEffect(() => textarea, () => {
+    const onGamepadAction = (event: Event): void => {
+      const action = (event as CustomEvent<GamepadAction>).detail;
+      if (action.kind === "focus-composer") {
+        textarea?.focus();
+      } else if (action.kind === "send" && document.activeElement === textarea) {
+        void submit();
+      } else if (action.kind === "cancel" && document.activeElement === textarea && props.running()) {
+        void stop();
+      }
+    };
+    window.addEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
+    return () => window.removeEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
+  });
 
   // 新会话打开/切回标签时恢复焦点(§12)。
   createEffect(
@@ -265,9 +299,9 @@ export const Composer: Component<{
                     title={STR.profilePickTitle(view().effective ?? STR.profileFollowGlobal)}
                     onClick={() => setOpenMenu(openMenu() === "profile" ? null : "profile")}
                   >
-                    <span>{view().effective ?? STR.profileFollowGlobal}</span>
-                    <Show when={view().model != null}>
-                      <span class="composer-profile-model">→ {view().model}</span>
+                    <span>{profileLabel(view().effective) ?? STR.profileFollowGlobal}</span>
+                    <Show when={(props.modelView?.() ?? view().model) != null}>
+                      <span class="composer-profile-model">→ {props.modelView?.() ?? view().model}</span>
                     </Show>
                     <IconChevronDown />
                   </button>
@@ -282,7 +316,7 @@ export const Composer: Component<{
                         onClick={() => { props.onProfile?.(null); setOpenMenu(null); }}
                       >
                         <span>{STR.profileFollowGlobal}</span>
-                        <small>{view().activeProfile ?? ""}</small>
+                        <small>{profileLabel(view().activeProfile) ?? ""}</small>
                       </button>
                       <For each={view().catalog}>{(name) => (
                         <button
@@ -292,7 +326,7 @@ export const Composer: Component<{
                           class={view().selected === name ? "selected" : undefined}
                           onClick={() => { props.onProfile?.(name); setOpenMenu(null); }}
                         >
-                          <span>{name}</span>
+                          <span>{profileLabel(name)}</span>
                           <small>{profileModel(name) ?? STR.profileModelHidden}</small>
                         </button>
                       )}</For>
@@ -322,7 +356,7 @@ export const Composer: Component<{
                           }}
                         >
                           <span style={{ "font-weight": "bold" }}>+</span>
-                          <span>管理 / 添加更多模型档案…</span>
+                          <span>管理 / 添加存档…</span>
                         </button>
                       </Show>
                       <small class="composer-menu-note">{STR.profileTakesEffectHint}</small>
@@ -335,9 +369,27 @@ export const Composer: Component<{
             <EffortCard
               open={openMenu() === "effort"}
               onToggle={() => setOpenMenu(openMenu() === "effort" ? null : "effort")}
+              model={props.modelView}
+              modelOverridden={props.modelOverridden}
+              onModel={props.onModel}
+              providerKind={props.providerKind}
               effort={props.effortView}
+              effortOverridden={props.effortOverridden}
               onEffort={props.onEffort}
+              maxTokens={props.maxTokensView}
+              onMaxTokens={props.onMaxTokens}
+              contextLength={props.contextLengthView}
+              onContextLength={props.onContextLength}
             />
+            {/* 工具模式（会话级）：同一条菜单位规则；触发器由 ToolModeCard 自带。 */}
+            <Show when={props.onToolMode != null && props.toolModeView != null}>
+              <ToolModeCard
+                open={openMenu() === "toolmode"}
+                onToggle={() => setOpenMenu(openMenu() === "toolmode" ? null : "toolmode")}
+                view={props.toolModeView}
+                onMode={props.onToolMode}
+              />
+            </Show>
             <Show when={props.onWorkspace != null}>
               <div class="composer-control-wrap">
                 <button

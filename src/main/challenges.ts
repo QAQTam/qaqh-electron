@@ -10,6 +10,8 @@ export interface StoredChallenge {
   internalId: string;
   expiresAt: number;
   details: Record<string, unknown>;
+  detailsUnavailable: boolean;
+  verified: boolean;
 }
 
 export const APPROVAL_TTL_MS = 300_000;
@@ -27,24 +29,39 @@ export class ChallengeManager {
     // A failed read must never reach here and revoke a still-pending card.
     const next = new Map([...this.challenges].filter(([, stored]) => stored.expiresAt > now && (
       stored.sessionId !== sessionId || pendingItems.some(item =>
-        item.kind === stored.kind && item.internalId === stored.internalId && isDeepStrictEqual(item.details, stored.details))
+        item.kind === stored.kind && item.internalId === stored.internalId
+        && (item.detailsUnavailable ?? false) === stored.detailsUnavailable
+        && isDeepStrictEqual(item.details, stored.details))
     )));
     const views: ApprovalView[] = [];
     for (const item of pendingItems) {
       requireId(item.internalId, "approval_id");
       if (!["tool_permission", "ask", "plan"].includes(item.kind)) throw new Error("invalid_approval_kind");
-      let stored = [...next.values()].find(value => value.sessionId === sessionId && value.kind === item.kind && value.internalId === item.internalId);
+      let stored = [...next.values()].find(value => value.sessionId === sessionId && value.kind === item.kind && value.internalId === item.internalId
+        && value.detailsUnavailable === (item.detailsUnavailable ?? false) && isDeepStrictEqual(value.details, item.details));
       if (!stored) {
         if (next.size >= MAX_PENDING_APPROVALS) throw new Error("approval_limit");
         const challengeId = randomBytes(32).toString("hex");
-        stored = { challengeId, sessionId, kind: item.kind, internalId: item.internalId, expiresAt: now + APPROVAL_TTL_MS, details: structuredClone(item.details) };
-        next.set(challengeId, stored);
+        const issued: StoredChallenge = {
+          challengeId,
+          sessionId,
+          kind: item.kind,
+          internalId: item.internalId,
+          expiresAt: now + APPROVAL_TTL_MS,
+          details: structuredClone(item.details),
+          detailsUnavailable: item.detailsUnavailable ?? false,
+          verified: true,
+        };
+        next.set(challengeId, issued);
+        stored = issued;
       }
       views.push({
         challenge_id: stored.challengeId,
         kind: stored.kind,
         expires_in: Math.ceil((stored.expiresAt - now) / 1000),
-        details: structuredClone(stored.details),
+        details: { ...structuredClone(stored.details), details_unavailable: stored.detailsUnavailable },
+        details_unavailable: stored.detailsUnavailable,
+        verified: stored.verified,
       });
     }
     this.challenges = next;
@@ -61,6 +78,27 @@ export class ChallengeManager {
     }
     this.challenges.delete(challengeId);
     return stored;
+  }
+
+  invalidate(sessionId: string): void {
+    for (const [challengeId, stored] of this.challenges) {
+      if (stored.sessionId === sessionId) this.challenges.delete(challengeId);
+    }
+  }
+
+  invalidateChallenge(sessionId: string, challengeId: string): void {
+    const stored = this.challenges.get(challengeId);
+    if (stored?.sessionId === sessionId) this.challenges.delete(challengeId);
+  }
+
+  confirmChallenge(sessionId: string, challengeId: string): void {
+    const stored = this.challenges.get(challengeId);
+    if (stored?.sessionId === sessionId) stored.verified = true;
+  }
+
+  markChallengeUnverified(sessionId: string, challengeId: string): void {
+    const stored = this.challenges.get(challengeId);
+    if (stored?.sessionId === sessionId) stored.verified = false;
   }
 
   clear(): void {

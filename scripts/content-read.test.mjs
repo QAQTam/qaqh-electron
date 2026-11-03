@@ -13,7 +13,7 @@ test("正文读取经固定 IPC 调用 SDK，并正确解码中文 UTF-8", async
   const client = new host.RingingClient(() => {});
   host.registerIpcHandlers(client, {}, new host.ChallengeManager());
   const ref = `sha256:${"a".repeat(64)}`;
-  assert.equal(await host.invoke("content_read_text", { contentRef: ref }), "你好！我是 QAQ。");
+  assert.equal(await host.invoke("content_read_text", { contentRef: ref, requestId: "a".repeat(32) }), "你好！我是 QAQ。");
   assert.deepEqual(calls, [ref]);
   for (const value of [null, "../config", "sha256:bad", "http://localhost", 42]) {
     await assert.rejects(host.invoke("content_read_text", { contentRef: value }), /invalid content_ref/);

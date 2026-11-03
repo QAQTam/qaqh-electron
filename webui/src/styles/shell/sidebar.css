@@ -191,6 +191,21 @@
   .message-session-item:focus-visible { outline-offset: 1px; }
   .message-session-item > svg { flex: none; width: 14px; height: 14px; opacity: .72; }
   .message-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .message-session-toolmode {
+    flex: none;
+    max-width: 88px;
+    overflow: hidden;
+    margin-left: auto;
+    padding: 1px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-pill);
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .message-session-item:has(.message-session-toolmode) .message-session-running { margin-left: 6px; }
   .message-session-running { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
   .message-sidebar-empty { padding: 8px; color: var(--muted); font-size: var(--fs-xs); }
 

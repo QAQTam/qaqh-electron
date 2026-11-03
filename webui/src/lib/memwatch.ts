@@ -1,6 +1,5 @@
 /**
- * 内存探测客户端 —— daemon `diagnostics.memory.*` 的读面(宿主白名单见
- * `qaqh-electron/src/main/ipc-handlers.ts:SERVICE_METHODS`)。
+ * 内存探测客户端 —— daemon `diagnostics.memwatch` / `diagnostics.dump` 的读面。
  *
  * 三条来自后端的硬约束在类型上有直接体现:
  *  - 采集是 **opt-in**:`start` 之前不采样,`snapshot` 只读环形缓冲
@@ -103,16 +102,14 @@ export const PHASE_KEEP = 240;
 export type MemoryStartResult = { enabled: boolean; started_at_ms: number };
 
 export const startMemoryProbe = (): Promise<MemoryStartResult> =>
-  transport.rpc<MemoryStartResult>("diagnostics.memory.start", {});
+  transport.query<MemoryStartResult>({ type: "diagnostics.memwatch", action: "start" });
 
 export const stopMemoryProbe = (): Promise<{ enabled: boolean }> =>
-  transport.rpc<{ enabled: boolean }>("diagnostics.memory.stop", {});
+  transport.query<{ enabled: boolean }>({ type: "diagnostics.memwatch", action: "stop" });
 
-/** `afterSequence` = 上次拿到的 `latest_phase_sequence`;null = 全量有界环。 */
-export const loadMemorySnapshot = (afterSequence: number | null): Promise<MemorySnapshot> =>
-  transport.rpc<MemorySnapshot>("diagnostics.memory.snapshot", {
-    after_sequence: afterSequence,
-  });
+/** 统一命令 `diagnostics.dump` 恒回全量有界环;增量合并由调用方按 sequence 去重。 */
+export const loadMemorySnapshot = (): Promise<MemorySnapshot> =>
+  transport.query<MemorySnapshot>({ type: "diagnostics.dump" });
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 

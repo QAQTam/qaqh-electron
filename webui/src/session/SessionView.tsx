@@ -341,8 +341,13 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
           <div class="history-note">{STR.truncatedWindow}</div>
         </Show>
         <Show when={store.loadError[0]()}>
-          <button type="button" class="history-note retry" onClick={() => void loadOlder()}>
+          <button type="button" class="history-note retry" onClick={() => store.loadBootstrap()}>
             {STR.loadFailedRetry}
+          </button>
+        </Show>
+        <Show when={Object.values(store.contentStatus[0]()).some((status) => status === "failed")}>
+          <button type="button" class="history-note retry" onClick={() => store.retryContent()}>
+            部分正文加载失败，点击重试
           </button>
         </Show>
         <Show when={store.compactedAfter[0]() != null && !state().slots.some((slot) => slot.key === store.compactedAfter[0]())}>

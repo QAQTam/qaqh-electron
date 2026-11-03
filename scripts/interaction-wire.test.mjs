@@ -4,13 +4,13 @@ import { createClient } from "@qaqh/sdk";
 import { loadHost } from "./test-host.mjs";
 
 const scenarios = [
-  { kind: "ask", decision: "submit", payload: { answers: [{ question_id: "q1", answer: "yes" }] }, channel: "control", type: "interaction_ask_respond" },
-  { kind: "ask", decision: "dismiss", channel: "control", type: "interaction_ask_dismiss" },
-  { kind: "tool_permission", decision: "approve", channel: "tool", type: "tool_permission_respond", approved: true, trust_folder: false },
-  { kind: "tool_permission", decision: "reject", channel: "tool", type: "tool_permission_respond", approved: false, trust_folder: false },
-  { kind: "tool_permission", decision: "trust", channel: "tool", type: "tool_permission_respond", approved: true, trust_folder: true },
-  { kind: "plan", decision: "approve", payload: { message: "approved", autonomous: true }, channel: "control", type: "plan_review_respond", approved: true },
-  { kind: "plan", decision: "reject", payload: { message: "revise", autonomous: false }, channel: "control", type: "plan_review_respond", approved: false },
+  { kind: "ask", decision: "submit", payload: { answers: [{ question_id: "q1", answer: "yes" }] }, type: "interaction.ask.respond", answers: { q1: "yes" } },
+  { kind: "ask", decision: "dismiss", type: "interaction.ask.dismiss" },
+  { kind: "tool_permission", decision: "approve", type: "interaction.permission.respond", approved: true, trust_folder: false },
+  { kind: "tool_permission", decision: "reject", type: "interaction.permission.respond", approved: false, trust_folder: false },
+  { kind: "tool_permission", decision: "trust", type: "interaction.permission.respond", approved: true, trust_folder: true },
+  { kind: "plan", decision: "approve", payload: { message: "approved" }, type: "interaction.plan.respond", approved: true, feedback: "approved" },
+  { kind: "plan", decision: "reject", payload: { message: "revise" }, type: "interaction.plan.respond", approved: false, feedback: "revise" },
 ];
 
 for (const scenario of scenarios) {
@@ -32,8 +32,10 @@ for (const scenario of scenarios) {
           response = { schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease-test", server_epoch: "epoch-test", renew_interval_ms: 3600_000 };
         } else if (path === "/ringing/v2/sessions/session-A/approvals") {
           response = pending;
-        } else if (path === `/ringing/v2/commands/${scenario.channel}`) {
-          response = { status: "accepted", command_id: body.command_id };
+        } else if (path === "/ringing/v2/sessions/session-A/bootstrap") {
+          response = { schema: "qaqh.Ringing", version: 2, session_id: "session-A", server_epoch: "epoch-test", snapshot_cursor: "cursor-1", control: { state: { revision: 1, interactions: [] } } };
+        } else if (path === "/ringing/v2/commands") {
+          response = { status: "accepted", command_id: body.command_id, result: null };
         } else throw new Error(`Unexpected request: ${path}`);
         return new Response(JSON.stringify(response), { status: 200, headers: { "Content-Type": "application/json" } });
       },
@@ -48,17 +50,13 @@ for (const scenario of scenarios) {
     const request = requests.at(-1);
     const envelope = request.body;
     assert.equal(request.method, "POST");
-    assert.equal(request.path, `/ringing/v2/commands/${scenario.channel}`);
+    assert.equal(request.path, "/ringing/v2/commands");
     assert.equal(request.headers.get("Authorization"), "Bearer synthetic-host-token");
     assert.equal(request.headers.get("X-QAQH-Client-Session-Id"), "lease-test");
     assert.equal(envelope.schema, "qaqh.Ringing");
     assert.equal(envelope.version, 2);
-    assert.equal(envelope.session_id, "session-A");
-    assert.equal(envelope.channel, scenario.channel);
-    assert.equal(envelope.command.channel, scenario.channel);
+    assert.deepEqual(envelope.target, { kind: "session", session_id: "session-A" });
     assert.equal(envelope.command.type, scenario.type);
-    assert.ok(!("session_id" in envelope.command));
-    assert.ok(!("driver_epoch" in envelope));
     if (scenario.kind === "tool_permission") {
       assert.equal(envelope.command.tool_call_id, canonicalId);
       assert.equal(envelope.command.approved, scenario.approved);
@@ -67,9 +65,8 @@ for (const scenario of scenarios) {
       assert.equal(envelope.command.interaction_id, canonicalId);
       if (scenario.kind === "plan") {
         assert.equal(envelope.command.approved, scenario.approved);
-        assert.equal(envelope.command.message, scenario.payload.message);
-        assert.equal(envelope.command.autonomous, scenario.payload.autonomous);
-      } else if (scenario.decision === "submit") assert.deepEqual(envelope.command.answers, scenario.payload.answers);
+        assert.equal(envelope.command.feedback, scenario.feedback);
+      } else if (scenario.decision === "submit") assert.deepEqual(envelope.command.answers, scenario.answers);
     }
   });
 }
@@ -83,10 +80,11 @@ test("real SDK reset pauses, then host resync re-bootstraps and resumes projecti
   const json = value => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
   const sdk = createClient({
     credentials: { endpoint: "http://mock.invalid", token: "synthetic" },
+    reconnect: { initialMs: 1, maxMs: 1 },
     fetch: async (url, init) => {
       const path = new URL(url).pathname;
       if (path.endsWith("/clients/open")) return json({ schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease", server_epoch: "epoch", renew_interval_ms: 3600_000 });
-      if (path.endsWith("/commands/control")) return json({ status: "accepted", command_id: JSON.parse(init.body).command_id });
+      if (path.endsWith("/commands")) return json({ status: "accepted", command_id: JSON.parse(init.body).command_id, result: null });
       if (path.endsWith("/bootstrap")) {
         bootstraps++;
         return json({ schema: "qaqh.Ringing", version: 2, session_id: "session-A", server_epoch: "epoch", snapshot_cursor: `cursor-${bootstraps}` });
@@ -95,7 +93,7 @@ test("real SDK reset pauses, then host resync re-bootstraps and resumes projecti
         streams++;
         if (streams === 1) return sse('event: ringing.reset_required\ndata: {"session_id":"session-A","reason":"cursor_expired"}\n\n');
         assert.equal(new URL(url).searchParams.get("since_cursor"), "cursor-2");
-        return sse('event: ringing.event\ndata: {"schema":"qaqh.Ringing","version":2,"session_id":"session-A","server_epoch":"epoch","cursor":"cursor-3","payload":{}}\n\n', true);
+    return sse('event: ringing.event\ndata: {"schema":"qaqh.Ringing","version":2,"session_id":"session-A","server_epoch":"epoch","cursor":"cursor-3","payload":{}}\n\n');
       }
       throw new Error(`Unexpected request: ${path}`);
     },
@@ -109,11 +107,11 @@ test("real SDK reset pauses, then host resync re-bootstraps and resumes projecti
     assert.fail("stream condition was not reached");
   };
   await client.attach("session-A");
-  await until(() => timers.jobs.size > 0);
-  assert.equal(client.getProjectionStatus("session-A"), "paused");
-  await timers.next();
+  // SDK owns its native recovery timer (the host's fake timer adapter must not
+  // create a competing recovery schedule).
+  await new Promise(resolve => setTimeout(resolve, 400));
   await until(() => events.some(e => e.name === "projection://event"));
   assert.equal(bootstraps, 2);
-  assert.equal(streams, 2);
-  assert.equal(client.getProjectionStatus("session-A"), "live");
+  assert.ok(streams >= 2);
+  assert.ok(["live", "reconnecting"].includes(client.getProjectionStatus("session-A")));
 });

@@ -53,7 +53,7 @@ export const MachinePanel: Component = () => {
     }
     let daemon = null as Awaited<ReturnType<typeof loadMemorySnapshot>>["process"] | null;
     try {
-      daemon = (await loadMemorySnapshot(null)).process;
+      daemon = (await loadMemorySnapshot()).process;
     } catch (cause) {
       notes.push(isScopeError(cause) ? "daemon 内存读数要求 admin scope" : `daemon 快照失败(${errorTextOf(cause)})`);
     }

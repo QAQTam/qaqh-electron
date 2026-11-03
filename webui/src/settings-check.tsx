@@ -1,9 +1,9 @@
 /**
  * 开发夹具:真实 `App` + 假宿主 IPC,在浏览器里跑设置浮层的读写语义。
  *
- * 为什么要有它:设置页的唯一通路是 Electron 的 `service_rpc` 白名单,浏览器里既没有
- * daemon 也没有宿主。这里把宿主替身做成「白名单式」的——只认宿主真允许的方法,
- * 其余抛错,于是 fixture 里能验的是语义而不是便利:`config.save` 收到什么 patch,
+ * 为什么要有它:设置页的唯一通路是 Electron 的 `command` 统一命令面,浏览器里既
+ * 没有 daemon 也没有宿主。这里把宿主替身做成「闭集式」的——只认统一命令,
+ * 其余抛错,于是 fixture 里能验的是语义而不是便利:`config.patch` 收到什么 patch,
  * 就是 webview 真的发出去了什么。
  *
  * 不进产品构建:vite 构建入口是 `index.html`,本文件只被 `/settings-check.html` 引用。
@@ -19,7 +19,7 @@ import type { McpServerDto } from "./api/qaqh/McpServerDto";
 import type { LspServerDto } from "./api/qaqh/LspServerDto";
 import type { DesktopHostBridge } from "./lib/desktop-host";
 
-type RpcCall = { method: string; params: Record<string, unknown> };
+type CommandCall = { command: Record<string, unknown> };
 
 const baseConfig = (): ConfigDto => ({
   model: "ox-alpha-free",
@@ -38,6 +38,36 @@ const baseConfig = (): ConfigDto => ({
   notificationsEnabled: true,
   activeProfile: "default",
   profiles: ["default", "fast"],
+  profilesDetail: {
+    default: {
+      id: "default",
+      name: "默认",
+      providerId: "default-provider",
+      providerName: "OpenCode Zen",
+      model: "ox-alpha-free",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      wire: "chat",
+      effort: "max",
+      contextLength: 1000000,
+      maxTokens: 96000,
+      apiKeySet: true,
+      credential: "api_key",
+    },
+    fast: {
+      id: "fast",
+      name: "极速",
+      providerId: "fast-provider",
+      providerName: "OpenCode Zen",
+      model: "ox-alpha-fast",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      wire: "chat",
+      effort: "medium",
+      contextLength: 200000,
+      maxTokens: 8192,
+      apiKeySet: true,
+      credential: "api_key",
+    },
+  },
   complianceEnabled: false,
   exec: { defaultShell: null },
   sessionIdleUnloadSecs: 0,
@@ -88,16 +118,100 @@ const baseConfig = (): ConfigDto => ({
       } satisfies LspServerDto,
     ],
   },
+  sandbox: { enabled: true },
+  toolAllowlistEnabled: false,
+  toolAllowlist: [],
+  defaultToolMode: "",
   tokenizerPath: null,
 });
 
 const probe = {
-  calls: [] as RpcCall[],
+  calls: [] as CommandCall[],
   saves: [] as Record<string, unknown>[],
   config: baseConfig(),
+  /** `profile.list` 的权威快照；写命令与 config.load 的读投影都从它派生。 */
+  registry: {
+    revision: 1,
+    default_profile: "default",
+    providers: {
+      "default-provider": {
+        name: "OpenCode Zen",
+        base_url: "https://opencode.ai/zen/go/v1",
+        wire: "chat",
+        credential: "api_key",
+        api_key: "****",
+      },
+      "fast-provider": {
+        name: "OpenCode Zen",
+        base_url: "https://opencode.ai/zen/go/v1",
+        wire: "chat",
+        credential: "api_key",
+        api_key: "****",
+      },
+    },
+    profiles: {
+      default: {
+        name: "默认",
+        provider: "default-provider",
+        model: "ox-alpha-free",
+        reasoning_effort: "max",
+        context_length: 1000000,
+        max_tokens: 96000,
+      },
+      fast: {
+        name: "极速",
+        provider: "fast-provider",
+        model: "ox-alpha-fast",
+        reasoning_effort: "medium",
+        context_length: 200000,
+        max_tokens: 8192,
+      },
+    },
+  } as Record<string, any>,
   /** 置 true 后 LAN 重启请求返回 `daemon_busy`,用来走查强制重启确认面板。 */
   lanBusy: false,
 };
+
+/** 把 profiles.toml 快照投影回 `config.load` 的顶字段（与 daemon 的读模型一致）。 */
+function syncProbeProjection(): void {
+  const doc = probe.registry;
+  const defaultId = doc.default_profile == null ? null : String(doc.default_profile);
+  const profile = defaultId == null ? null : doc.profiles[defaultId];
+  const provider = profile == null ? null : doc.providers[profile.provider];
+  probe.config.activeProfile = defaultId ?? "";
+  probe.config.profiles = Object.keys(doc.profiles);
+  probe.config.profilesDetail = Object.fromEntries(
+    Object.entries(doc.profiles).map(([id, item]: [string, any]) => {
+      const itemProvider = doc.providers[item.provider];
+      return [
+        id,
+        {
+          id,
+          name: item.name,
+          providerId: item.provider,
+          providerName: itemProvider?.name ?? item.provider,
+          model: item.model,
+          baseUrl: itemProvider?.base_url ?? "",
+          wire: itemProvider?.wire ?? "chat",
+          effort: item.reasoning_effort ?? null,
+          contextLength: item.context_length ?? null,
+          maxTokens: item.max_tokens ?? null,
+          apiKeySet: itemProvider?.api_key != null,
+          credential: itemProvider?.credential ?? "api_key",
+        },
+      ];
+    }),
+  );
+  if (profile == null || provider == null) return;
+  probe.config.model = profile.model;
+  probe.config.baseUrl = provider.base_url;
+  probe.config.wire = provider.wire;
+  probe.config.credential = provider.credential;
+  probe.config.reasoningEffort = profile.reasoning_effort ?? "";
+  probe.config.contextLength = profile.context_length ?? 0;
+  probe.config.maxTokens = profile.max_tokens ?? 0;
+  probe.config.apiKey = provider.api_key == null ? "" : "****";
+}
 
 /**
  * 项目级 skills 夹具:`workspace.list` 里注册一个工作区,`fs.list`/`fs.read`
@@ -193,61 +307,128 @@ function applyMergePatch(target: ConfigDto, patch: Record<string, unknown>): voi
   }
 }
 
-function serviceRpc(method: string, params: Record<string, unknown>): unknown {
-  probe.calls.push({ method, params });
-  switch (method) {
+function hostCommand(command: Record<string, unknown>): unknown {
+  probe.calls.push({ command });
+  switch (command.type) {
     case "config.load":
       return structuredClone(probe.config);
-    case "config.save":
-      probe.saves.push(structuredClone(params));
-      applyMergePatch(probe.config, params);
-      return null;
-    case "profile.save_current":
-      if (!probe.config.profiles.includes(String(params.name))) {
-        probe.config.profiles = [...probe.config.profiles, String(params.name)];
+    case "config.patch": {
+      const patch = (command.patch ?? {}) as Record<string, unknown>;
+      probe.saves.push(structuredClone(patch));
+      applyMergePatch(probe.config, patch);
+      return structuredClone(probe.config);
+    }
+    case "profile.list":
+      syncProbeProjection();
+      return structuredClone(probe.registry);
+    case "provider.upsert": {
+      const id = String(command.id);
+      const input = (command.provider ?? {}) as Record<string, unknown>;
+      const previous = probe.registry.providers[id] ?? {};
+      const next: Record<string, unknown> = { ...previous, ...input };
+      if ("baseUrl" in input) {
+        next.base_url = input.baseUrl;
+        delete next.baseUrl;
       }
+      if ("apiKey" in input) {
+        if (input.apiKey === "") delete next.api_key;
+        else next.api_key = "****";
+        delete next.apiKey;
+      }
+      probe.registry.providers[id] = next;
+      probe.registry.revision += 1;
       return null;
-    case "profile.apply":
-      probe.config.activeProfile = String(params.name);
+    }
+    case "profile.create": {
+      const id = String(command.id);
+      const input = (command.profile ?? {}) as Record<string, unknown>;
+      probe.registry.profiles[id] = {
+        name: input.name,
+        provider: input.provider,
+        model: input.model,
+        reasoning_effort: input.reasoningEffort ?? null,
+        context_length: input.contextLength ?? null,
+        max_tokens: input.maxTokens ?? null,
+      };
+      // 与后端一致：第一条存档自动成为默认。
+      if (probe.registry.default_profile == null) {
+        probe.registry.default_profile = id;
+      }
+      probe.registry.revision += 1;
+      syncProbeProjection();
       return null;
-    case "profile.delete":
-      probe.config.profiles = probe.config.profiles.filter((name) => name !== String(params.name));
+    }
+    case "profile.update": {
+      const id = String(command.id);
+      const input = (command.profile ?? {}) as Record<string, unknown>;
+      probe.registry.profiles[id] = {
+        name: input.name,
+        provider: input.provider,
+        model: input.model,
+        reasoning_effort: input.reasoningEffort ?? null,
+        context_length: input.contextLength ?? null,
+        max_tokens: input.maxTokens ?? null,
+      };
+      probe.registry.revision += 1;
+      syncProbeProjection();
       return null;
-    // 与宿主白名单同调(commands.rs:SERVICE_METHODS):这几条现在是真的放行的方法,
-    // 夹具不接就等于替真宿主放行它不曾放行过的东西——快照用 memwatch-sim 造。
+    }
+    case "profile.set_default": {
+      const id = String(command.id);
+      if (probe.registry.profiles[id] == null) throw new Error(`profile ${id} 不存在`);
+      probe.registry.default_profile = id;
+      probe.registry.revision += 1;
+      syncProbeProjection();
+      return null;
+    }
+    case "profile.delete": {
+      const id = String(command.id);
+      if (probe.registry.default_profile === id) throw new Error("默认存档不可删除");
+      delete probe.registry.profiles[id];
+      probe.registry.revision += 1;
+      syncProbeProjection();
+      return null;
+    }
+    case "provider.delete": {
+      const id = String(command.id);
+      const referenced = Object.values(probe.registry.profiles).some(
+        (profile: any) => profile.provider === id,
+      );
+      if (referenced) throw new Error("服务商仍被存档引用");
+      delete probe.registry.providers[id];
+      probe.registry.revision += 1;
+      return null;
+    }
     case "daemon.version":
       return "2.0.20261028";
     case "session.list":
       return [];
     case "workspace.list":
-      // 裸数组(service.rs:417 `Ok(Value::Array(items))`),与 `todo.list` 的
+      // 裸数组,与 `todo.list` 的
       // `{ items }` 不同形;侧栏按数组直接 `.map`,给成对象会当场halt掉反应式系统。
       return [projectWorkspace, ...multiWorkspaces];
-    // 项目级 skills 走 daemon 的 fs.*(宿主白名单放行,commands.rs:SERVICE_METHODS)。
     case "fs.list": {
-      const entries = projectFs[String(params.path)];
-      if (entries == null) throw new Error(`fs.list ${String(params.path)}: 系统找不到指定的文件。(fixture)`);
+      const entries = projectFs[String(command.path)];
+      if (entries == null) throw new Error(`fs.list ${String(command.path)}: 系统找不到指定的文件。(fixture)`);
       return entries;
     }
     case "fs.read": {
-      const content = projectFiles[String(params.path)];
-      if (content == null) throw new Error(`fs.read ${String(params.path)}: 系统找不到指定的文件。(fixture)`);
-      return { path: params.path, size: content.length, truncated: false, content };
+      const content = projectFiles[String(command.path)];
+      if (content == null) throw new Error(`fs.read ${String(command.path)}: 系统找不到指定的文件。(fixture)`);
+      return { path: command.path, size: content.length, truncated: false, content };
     }
-    // `?dev=1` 会真开一个标签,store 激活时按宿主白名单拉待办;夹具缺这条就会刷一条
-    // 告警出来(真宿主放行,见 commands.rs:SERVICE_METHODS)。
     case "todo.list":
       return { items: [] };
-    case "diagnostics.memory.start":
-      return { enabled: true, started_at_ms: Date.now() };
-    case "diagnostics.memory.stop":
-      return { enabled: false };
-    case "diagnostics.memory.snapshot":
-      return simMemorySnapshot(typeof params.after_sequence === "number" ? params.after_sequence : null);
+    case "session.meta":
+      return null;
+    case "diagnostics.memwatch":
+      return command.action === "start"
+        ? { enabled: true, started_at_ms: Date.now() }
+        : { enabled: false };
+    case "diagnostics.dump":
+      return simMemorySnapshot();
     default:
-      // 宿主白名单(commands.rs 的 SERVICE_METHODS)之外的方法在这里也必须失败,
-      // 否则夹具会替真实宿主放行它不曾放行的东西。
-      throw new Error(`service method not allowed in fixture: ${method}`);
+      throw new Error(`command not allowed in fixture: ${String(command.type)}`);
   }
 }
 
@@ -328,7 +509,13 @@ const internals = {
     callbacks.delete(id);
   },
   async invoke(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
-    if (cmd === "service_rpc") return serviceRpc(String(args.method), (args.params ?? {}) as Record<string, unknown>);
+    if (cmd === "command") {
+      return {
+        status: "completed",
+        command_id: "fixture-command",
+        result: hostCommand((args.command ?? {}) as Record<string, unknown>),
+      };
+    }
     if (cmd === "skills_user_scan") return structuredClone(userSkillsFixture);
     if (cmd === "session_list") return [];
     if (cmd === "timeline_status") return null;
@@ -412,7 +599,7 @@ if (root != null) render(() => <App />, root);
  * `?dev=1`:给开发者控制台铺一层「可拍的真状态」——开一个假会话标签(活动面板就
  * 有 store 可读)、打开设置、并解锁控制台。默认不开:既有断言与基线都不受影响。
  * 走的是真 `App` + 真 `ElectronTransport`,所以事件流面板在这里能看到埋点真的记到了
- * 收发(stress.tsx 那条路把 `transport.rpc` 整个替掉了,绕过埋点)。
+ * 收发(stress.tsx 那条路把 `transport.query` 整个替掉了,绕过埋点)。
  */
 const devHarness = new URLSearchParams(window.location.search).get("dev") === "1";
 if (devHarness) {

@@ -1,18 +1,14 @@
 /**
- * 作曲家侧的**全局模型/强度状态**。
+ * 作曲家侧的模型/强度**读模型**（只读）。
  *
- * 为什么放在这里而不是 composer 组件内部：强度和模型是 **daemon 全局配置**，
- * 不属于任何一条会话（会话级的是 profile，走 `session.set_profile`）。这一层
- * 只做三件事：
+ * `config.load` 给出当前默认存档的 credential/model/effort，作为会话没有覆写时的
+ * 回退值。会话内的写入走 `SessionStore` 的 `session.settings.patch`；全局配置的
+ * 写口是「设置 → 服务商 / 存档」（`../settings/registry`），**不经过这里**。
  *
- * 1. 读一次 `config.load`（credential / model / reasoningEffort 都从这一份来）；
- * 2. 写的时候**只发改动的那个字段**（K3 合并补丁）——绝不整包写回，否则会把
- *    设置页里未保存的草稿一起提交；
- * 3. 写成功后把该字段记进**当前 provider 的槽位**（`../oauth/provider-state`），
- *    于是切换 provider 时能连带把强度/模型一起换过去、换回来。
- *
- * 强度卡是**全局**的：BYOK 与套餐都走它。可用档位由模型特判决定
- * （`../models/specs` 的 `efforts`，缺省 = 全阶梯，后端再按端点 compat 钳制）。
+ * 目录与档位按 **provider 类别**参数化：同一时刻不同会话可以选到不同 Profile，
+ * 拿全局活跃项那一份会把模型目录与可用档位算到别的 provider 头上。可用档位由
+ * 模型特判决定（`../models/specs` 的 `efforts`，缺省 = 全阶梯，后端再按端点
+ * compat 钳制）。
  */
 import { createSignal } from "solid-js";
 
@@ -21,49 +17,44 @@ import {
   catalogKindOf,
   fetchModelCatalog,
   modelOptions,
+  specBucketOfKind,
+  type CatalogKind,
   type ModelEntry,
 } from "../oauth/model-catalog";
 import { transport } from "../lib/transport";
-import { notifyConfigChanged } from "../lib/config-events";
-import { modelEfforts, modelSpec, type ReasoningTier, type SpecBucket } from "../models/specs";
-import { isAccountCredential, isDeepseekAccountMode, isPlanMode } from "../oauth/mode";
-import {
-  activeProviderId,
-  loadState,
-  rememberState,
-  saveState,
-  type ProviderStateMap,
-} from "../oauth/provider-state";
-import { providerById } from "../oauth/providers";
+import { modelEfforts, modelSpec, type ReasoningTier } from "../models/specs";
+import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 
 /** 已保存事实（`config.load`）。null = 还没读到（或读失败）。 */
 const [config, setConfig] = createSignal<ConfigDto | null>(null);
-const [catalog, setCatalog] = createSignal<ModelEntry[] | null>(null);
-const [catalogError, setCatalogError] = createSignal<string | null>(null);
-const [busy, setBusy] = createSignal(false);
+/** 按目录来源缓存：套餐与 DeepSeek 账号可以同时留在内存里，互不覆盖。 */
+const [catalogs, setCatalogs] = createSignal<Partial<Record<CatalogKind, ModelEntry[]>>>({});
+const [catalogErrors, setCatalogErrors] = createSignal<Partial<Record<CatalogKind, string>>>({});
 const [error, setError] = createSignal<string | null>(null);
 
-export { busy as configBusy, catalogError, error as configError };
+export { error as configError };
 
 const messageOf = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-/** 当前凭据来源决定模型特判读哪个桶（套餐 / DeepSeek 账号 / BYOK）。 */
-export function specBucket(): SpecBucket {
-  const current = config();
-  if (isPlanMode(current)) return "plan";
-  if (isDeepseekAccountMode(current)) return "account";
-  return "byok";
+/** 全局活跃 provider 的类别；配置未到时按 BYOK（它没有账户级目录）。 */
+export function currentProviderKind(): ProviderKind {
+  return providerKindOfCredential(config()?.credential);
 }
 
 export const currentModel = (): string => config()?.model ?? "";
 export const currentEffort = (): string => config()?.reasoningEffort ?? "";
-/** 套餐(OAuth)是否生效:读 daemon 全局配置,与 `specBucket` 同一份事实。 */
-export const planActive = (): boolean => isPlanMode(config());
-/** 账号类额度（套餐或 DeepSeek 账号）：都要拉账户级模型目录，也都要走目录选择器。 */
-export const accountActive = (): boolean => isAccountCredential(config());
-/** 目录原样条目（调试用；渲染请用 [`catalogOptions`]，那条才带正确的展示名与兜底项）。 */
-export const catalogModels = (): ModelEntry[] | null => catalog();
+/** 某 provider 类别的目录原样条目；BYOK 恒为 null（没有账户级目录）。 */
+export function catalogModels(kind: ProviderKind): ModelEntry[] | null {
+  const ck = catalogKindOf(kind);
+  return ck == null ? null : (catalogs()[ck] ?? null);
+}
+
+/** 某 provider 类别最近一次目录拉取的错误；BYOK 恒为 null。 */
+export function catalogError(kind: ProviderKind): string | null {
+  const ck = catalogKindOf(kind);
+  return ck == null ? null : (catalogErrors()[ck] ?? null);
+}
 
 /**
  * 选择器要列的条目：**这一家的目录** + 配置里当前那个模型。
@@ -72,18 +63,19 @@ export const catalogModels = (): ModelEntry[] | null => catalog();
  * 留下的旧 slug）——不列出来的话，用户点开就是一屏没有选中项的列表，看起来跟
  * "这家没有模型"一模一样。
  */
-export function catalogOptions(): ModelEntry[] {
-  const current = config();
-  const entries = catalog();
-  if (current == null || entries == null) return [];
-  const provider = providerById(activeProviderId(current));
-  if (provider == null) return [];
-  return modelOptions(provider.kind, entries, [current.model]);
+export function catalogOptions(kind: ProviderKind, model: string): ModelEntry[] {
+  const ck = catalogKindOf(kind);
+  if (ck == null) return modelOptions(kind, [], [model]);
+  // 账号类目录尚未到位时返回空，让调用方显示「目录拿不到」的可操作提示；
+  // 只列当前模型会让用户误以为这家只有这一个模型。
+  const entries = catalogs()[ck];
+  if (entries == null) return [];
+  return modelOptions(kind, entries, [model]);
 }
 
-/** 当前模型可用的档位（缺省全阶梯）。 */
-export function availableTiers(): readonly ReasoningTier[] {
-  return modelEfforts(modelSpec(specBucket(), currentModel()).spec);
+/** 指定 provider 类别下，某模型可用的档位（会话传会话有效模型）。 */
+export function availableTiers(kind: ProviderKind, model: string): readonly ReasoningTier[] {
+  return modelEfforts(modelSpec(specBucketOfKind(kind), model).spec);
 }
 
 /** 后端那份配置**读到了没有**。没读到就不能对外报任何档名（见 `effortDisplayOf`）。 */
@@ -105,9 +97,9 @@ export async function bootModelConfig(): Promise<void> {
   await loadCatalog();
 }
 
-/** 当前模型的默认档（重置键用）。 */
-export function defaultTier(): ReasoningTier {
-  const spec = modelSpec(specBucket(), currentModel()).spec;
+/** 指定 provider 类别下，某模型的默认档（重置键用）。 */
+export function defaultTier(kind: ProviderKind, model: string): ReasoningTier {
+  const spec = modelSpec(specBucketOfKind(kind), model).spec;
   const allowed = modelEfforts(spec);
   if (spec.defaultEffort != null && allowed.includes(spec.defaultEffort)) return spec.defaultEffort;
   return allowed[Math.floor(allowed.length / 2)] ?? "medium";
@@ -115,73 +107,52 @@ export function defaultTier(): ReasoningTier {
 
 export async function refreshConfig(): Promise<void> {
   try {
-    setConfig(await transport.rpc<ConfigDto>("config.load"));
+    setConfig(await transport.query<ConfigDto>({ type: "config.load" }));
     setError(null);
   } catch (cause) {
     setError(messageOf(cause));
   }
 }
 
-/**
- * 拉一次账户级模型目录。BYOK 模式下**不拉**——那个目录是账户级的，与自带端点无关。
- * 失败不清空已有目录：一次网络抖动不该让选择器变空。
- *
- * 配置还没读到时**先等它**：这一层的全部判据都来自 `credential`，而调用方（输入区
- * 打开卡片那一刻）是把 `refreshConfig()` 与 `loadCatalog()` 并排发出的。不等待就
- * 会拿着 `null` 判成"没在用账号额度"，于是套餐明明连着、选择器却永远是空的
- * ——而且空在那儿，直到用户关掉卡片再开一次。
- */
-export async function loadCatalog(): Promise<void> {
-  let current = config();
-  if (current == null) {
-    await refreshConfig();
-    current = config();
-  }
-  const provider = current == null ? null : providerById(activeProviderId(current));
-  const kind = provider == null ? null : catalogKindOf(provider.kind);
-  if (kind == null) {
-    setCatalog(null);
-    setCatalogError(null);
-    return;
-  }
+async function loadCatalogKind(kind: CatalogKind): Promise<void> {
   try {
     // 两家的目录各有各的来源：套餐走 `siwc.models`（ChatGPT 目录），
     // DeepSeek 账号走推理 origin 自己的 `/models`（`dsaccount.models`）。
-    setCatalog(await fetchModelCatalog(kind));
-    setCatalogError(null);
+    const entries = await fetchModelCatalog(kind);
+    setCatalogs((previous) => ({ ...previous, [kind]: entries }));
+    setCatalogErrors((previous) => {
+      if (previous[kind] == null) return previous;
+      const next = { ...previous };
+      delete next[kind];
+      return next;
+    });
   } catch (cause) {
-    setCatalogError(messageOf(cause));
+    // 失败不清空已有目录：一次网络抖动不该让选择器变空。
+    setCatalogErrors((previous) => ({ ...previous, [kind]: messageOf(cause) }));
   }
 }
 
-/** 只发一个字段的合并补丁，并把结果记进当前 provider 的槽位。 */
-async function patchAndRemember(field: "model" | "effort", value: string): Promise<boolean> {
-  const current = config();
-  if (current == null || busy()) return false;
-  setBusy(true);
-  setError(null);
-  try {
-    const payload = field === "model" ? { model: value } : { reasoningEffort: value };
-    await transport.rpc("config.save", payload);
-    // 记进槽位：切换 provider 时这一份要能跟着走。
-    const states: ProviderStateMap = rememberState(
-      loadState(),
-      activeProviderId(current),
-      field === "model" ? { model: value } : { effort: value },
-    );
-    saveState(states);
-    await refreshConfig();
-    // 模型/档位也是一份全局配置:设置页与输入区之外还有别的镜像(上下文百分比),
-    // 这里已经重读过自己的读模型了,顺手让其它镜像重读一次。
-    notifyConfigChanged();
-    return true;
-  } catch (cause) {
-    setError(messageOf(cause));
-    return false;
-  } finally {
-    setBusy(false);
+/**
+ * 拉一次账户级模型目录。BYOK 模式下**不拉**——那个目录是账户级的，与自带端点无关。
+ *
+ * 不传 `providerKind` 时按全局活跃 provider 取（启动预热）。会话卡片必须传
+ * **本会话有效 Profile 的类别**：同一时刻不同会话可以选到不同 provider，
+ * 拿全局那一份会把模型目录与档位算到别的 provider 头上。
+ *
+ * 全局模式下配置还没读到时**先等它**：调用方（输入区打开卡片那一刻）是把
+ * `refreshConfig()` 与 `loadCatalog()` 并排发出的。不等待就会拿着 `null`
+ * 判成"没在用账号额度"，于是套餐明明连着、选择器却永远是空的。
+ */
+export async function loadCatalog(providerKind?: ProviderKind | null): Promise<void> {
+  let kind: ProviderKind | null = providerKind ?? null;
+  if (kind == null) {
+    let current = config();
+    if (current == null) {
+      await refreshConfig();
+      current = config();
+    }
+    kind = current == null ? null : providerKindOfCredential(current.credential);
   }
+  const catalogKind = kind == null ? null : catalogKindOf(kind);
+  if (catalogKind != null) await loadCatalogKind(catalogKind);
 }
-
-export const setEffort = (tier: ReasoningTier): Promise<boolean> => patchAndRemember("effort", tier);
-export const setModel = (model: string): Promise<boolean> => patchAndRemember("model", model);

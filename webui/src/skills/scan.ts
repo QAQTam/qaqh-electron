@@ -4,16 +4,12 @@
  * 两层的读盘面不同,因为 daemon 的白名单不同:
  *
  * 1. **项目级**(workspace/.qaqh|.agents|skills/名字/SKILL.md)
- *    走 transport.rpc → Electron 宿主 SERVICE_METHODS 白名单(已放行 fs.list/fs.read)
- *    → daemon 的 fs.list/fs.read(service.rs:421-434;fs.* 是 daemon MethodInfo 表里的
- *    READ,requires_session=false——路径守卫全在 allowed_roots:数据根 + UI 注册工作区 +
- *    各会话 cwd,fs_git.rs:28-48)。所以:
+ *    走统一命令 `fs.list`/`fs.read`(路径守卫全在 allowed_roots:数据根 + UI
+ *    注册工作区 + 各会话 cwd,fs_git.rs:28-48)。所以:
  *     - 只扫 UI 工作区注册表(workspaceCatalog)下的 skills/名字/SKILL.md;
  *     - E:\myXCode 这类未注册目录会被 FORBIDDEN 拒——按工作区分桶展示提示,
  *       明说「注册为工作区即可读」,不吞错;
- *     - 宿主 service_rpc 对 fs.* 需要活动 seed(commands.rs:service_requires_session
- *       没豁免 fs.*)并自动注入 scope_session_id——零会话时整个扫描直接失败,
- *       也按「演示数据」兜底。
+ *     - 全局 target 的 fs.* 不绑定活动 seed,零会话时也能读注册工作区。
  *
  * 2. **用户级**(~/.qaqh/skills、~/.agents/skills)
  *    **读不到**——这两个根不在上面那份 allowed_roots 里,daemon 的 fs.read 一律
@@ -99,16 +95,16 @@ type FsEntry = { name: string; path: string; is_dir: boolean; is_file: boolean }
 
 /** daemon fs.list 返回裸数组(service.rs:417 Value::Array)。 */
 async function fsList(path: string): Promise<FsEntry[]> {
-  const value = await transport.rpc<unknown>("fs.list", { path, scope_session_id: null });
+  const value = await transport.query<unknown>({ type: "fs.list", path });
   if (!Array.isArray(value)) throw new Error("fs.list 返回了非数组(宿主与 daemon 版本不匹配?)");
   return value as FsEntry[];
 }
 
 async function fsRead(path: string, maxBytes = 512 * 1024): Promise<string> {
-  const value = await transport.rpc<{ content?: string; truncated?: boolean }>("fs.read", {
+  const value = await transport.query<{ content?: string; truncated?: boolean }>({
+    type: "fs.read",
     path,
     max_bytes: maxBytes,
-    scope_session_id: null,
   });
   if (typeof value?.content !== "string") throw new Error("fs.read " + path + ": 返回缺 content");
   return value.content;
@@ -305,7 +301,7 @@ export async function rescanSkills(): Promise<void> {
   // 宿主不可达(Electron 之外 / daemon 未连):整个 rpc 面都会抛——转演示数据。
   let daemonUnreachable = false;
   try {
-    await transport.rpc("daemon.version", {});
+    await transport.query({ type: "daemon.version" });
   } catch {
     daemonUnreachable = true;
   }

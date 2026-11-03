@@ -13,7 +13,7 @@ import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import IconCopy from "~icons/lucide/copy";
 import IconEdit from "~icons/lucide/file-pen-line";
 import { localTitleOf, renameLocalSession, sessionCatalog, type Tab } from "../tabs/store";
-import { transport } from "../lib/transport";
+import { sessionTarget, transport } from "../lib/transport";
 import { toast } from "../ui/toast";
 import { STR } from "../lib/strings";
 import { useDismissable } from "../ui/dismissable";
@@ -69,7 +69,7 @@ export const SessionHeader: Component<SessionHeaderProps> = (props) => {
     // TitleChanged(user)；回灌走 title_changed echo，到达时本地覆盖自动清退
     // （tabs/store 的 onSessionTitleChanged 已实现）。
     transport
-      .rpc("session.rename", { title: next }, props.tab.seed)
+      .command({ type: "session.rename", title: next }, sessionTarget(props.tab.seed))
       .catch((error: unknown) => {
         toast(
           `重命名持久化失败：${String(error instanceof Error ? error.message : error)}`,

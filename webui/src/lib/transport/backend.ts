@@ -6,21 +6,35 @@
  * store/组件只面向本接口;连接管理由宿主事件驱动(见 `StreamHandlers`)。
  */
 
+import type { RingingV2CommandAck } from "../../api/qaqh/RingingV2CommandAck";
 import type { ContentRef } from "../../api/qaqh/ContentRef";
-import type { RingingCommandAck } from "../../api/qaqh/RingingCommandAck";
+import type { UnifiedCommand } from "../../api/qaqh/UnifiedCommand";
+import type { UnifiedTarget } from "../../api/qaqh/UnifiedTarget";
 import { isDesktopRuntime } from "../desktop-host";
 
 export { isDesktopRuntime };
+export type { UnifiedCommand, UnifiedTarget };
+
+/**
+ * 渲染层可发的 daemon 命令面：
+ * - `UnifiedCommand`：统一目录操作（§8.1 信封，宿主走统一端点）；
+ * - 宽形状 `{type, ...}`：service 查询/配置面方法与频道命令，
+ *   由宿主按命令名路由（conversation.* → conversation 频道，其余 → service 面）。
+ */
+export type DaemonCommand = UnifiedCommand | ({ type: string } & Record<string, unknown>);
 
 export const RINGING_SCHEMA = "qaqh.Ringing";
 /** Ringing v2 单一信封版本:历史 v1 兼容已拆除。 */
 export const RINGING_VERSION = 2;
 
 /**
- * 命令确认。形状是生成绑定(此前手写镜像漏掉了 `retry_after_ms` —— 限流/退避
- * 提示),本地只留别名。
+ * 命令确认。形状是生成绑定,本地只留别名。
  */
-export type Ack = RingingCommandAck;
+export type Ack = RingingV2CommandAck;
+
+export const globalTarget = (): UnifiedTarget => ({ kind: "global" });
+export const sessionTarget = (sessionId: string): UnifiedTarget => ({ kind: "session", session_id: sessionId });
+export const workspaceTarget = (workspaceId: string): UnifiedTarget => ({ kind: "workspace", workspace_id: workspaceId });
 
 export type ApprovalKind = "tool_permission" | "ask" | "plan";
 
@@ -29,6 +43,10 @@ export type ApprovalView = {
   kind: ApprovalKind;
   expires_in: number;
   details: Record<string, any>;
+  /** False until a fresh authoritative approvals read confirms the view. */
+  details_unavailable?: boolean;
+  /** The view is stale or its latest authoritative check failed. */
+  verified?: boolean;
 };
 
 /** Electron 宿主转发的 projection 状态(projection://status)。 */
@@ -78,18 +96,10 @@ export type ScreenshotWire = { path: string; name: string; size: number };
  */
 export type ShotMode = "selection" | "fullscreen";
 
-/**
- * 从命令里取出待发附件引用。空数组等同携带——会被序列化成 `attachments: []`,
- * 所以这里直接收敛成 null,让命令与「本来就没有附件」逐字同形。
- */
-export function attachmentRefsOf(command: Record<string, unknown>): ContentRef[] | null {
-  const value = command.attachments;
-  return Array.isArray(value) && value.length > 0 ? (value as ContentRef[]) : null;
-}
-
 /** 宿主事件的订阅面(事件 payload 与现行 SSE 帧同形)。 */
 export interface StreamHandlers {
   onProjectionStatus?(status: ProjectionStatusWire): void;
+  onProjectionBootstrap?(seed: string, bootstrap: Record<string, any>): void;
   onProjectionEvent(seed: string, envelope: Record<string, any>): void;
   onProjectionReset(seed: string, reset: Record<string, any>): void;
   onIncompatible(details: Record<string, any>): void;
@@ -107,17 +117,21 @@ export interface TransportBackend {
   /** 待审批(challenge 由宿主签发,canonical id 不出宿主)。 */
   approvals(sessionId: string): Promise<ApprovalView[]>;
 
+  invalidateApprovals(sessionId: string, challengeId?: string, verified?: boolean | "revoke"): Promise<void>;
+
   respondApproval(sessionId: string, challengeId: string, decision: string, payload?: Record<string, unknown>): Promise<null>;
 
-  command(channel: "control" | "conversation", command: Record<string, unknown>, sessionId?: string): Promise<Ack>;
+  /** Submit one daemon command (catalog op / channel command / service call) and return its acknowledgement. */
+  command(command: DaemonCommand, target?: UnifiedTarget): Promise<Ack>;
 
-  rpc<T = unknown>(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<T>;
+  /** Submit a command whose result is the value itself (queries and synchronous writes). */
+  query<T = unknown>(command: DaemonCommand, target?: UnifiedTarget): Promise<T>;
 
   /** per-session bootstrap RPC(获取权威快照)。 */
   sessionBootstrap(seed: string): Promise<unknown>;
 
   /** 由宿主经 SDK 读取引用正文，认证信息留在主进程。 */
-  readContentText(contentRef: string): Promise<string>;
+  readContentText(contentRef: string, signal?: AbortSignal): Promise<string>;
 
   /** 原生目录选择(新建会话的目标工作区);null = 用户取消或该形态无对话框。 */
   pickDirectory(): Promise<string | null>;
@@ -135,7 +149,7 @@ export interface TransportBackend {
 
   /**
    * 上传单个本地附件。字节读取与上传都在宿主侧完成(命令里不允许出现本地路径),
-   * 返回的引用直接进 `send_message` 的 `attachments`。
+   * 返回的引用直接进 `conversation.send` 的 `attachments`。
    */
   uploadAttachment(seed: string, path: string): Promise<AttachmentUploadWire>;
 

@@ -9,7 +9,7 @@
  *    清空不会生效(dto.rs:10-11),所以这些框清空即视作未改动。
  *  - MCP/LSP 只有读模型(ConfigDto:56-59 注明写模型另立),这里只读展示。
  *
- * BYOK 六字段与档案预设拆在 `byok/Sections`(两个分区按导航分别渲染);
+ * 服务商与存档在 `ProvidersSection` / `ProfilesSection`（命令直写 profiles.toml）;
  * 设备配对在 `PairingSection`;
  * 左侧分区导航是**切换式单页**:点谁渲染谁(2026-10-16 起,原「长滚动+锚点
  * 跳转+scroll-spy」因高亮与视口脱节下线),草稿在 store,切换不丢改动。
@@ -69,18 +69,20 @@ import {
 import { Field, Section, Switch, TextInput } from "./controls";
 import { Select } from "../ui/Select";
 import { NumberInput } from "../ui/NumberInput";
-import { ByokSection, ProfilesSection } from "./byok/Sections";
 import { PairingSection } from "./PairingSection";
 import { AboutSection } from "./AboutSection";
 import { HostSection } from "./HostSection";
+import { ProfilesSection } from "./ProfilesSection";
+import { ProvidersSection } from "./ProvidersSection";
+import { refreshRegistry, registry as registryState } from "./registry";
 
 /**
  * 左侧分区导航:分组 + 点击切换(切换式单页——点谁渲染谁,不做滚动联动)。
  * `data-section-id` 被 visual-capture.mjs 按 id 点击,改名前先查那边。
  */
 const NAV = [
-  { id: "section-byok", label: "模型与端点", group: "接入" },
-  { id: "section-profiles", label: "档案预设", group: "接入" },
+  { id: "section-providers", label: "服务商", group: "接入" },
+  { id: "section-profiles", label: "存档", group: "接入" },
   { id: "section-pairing", label: "设备配对", group: "接入" },
   { id: "section-permission", label: "权限档位", group: "运行" },
   { id: "section-context", label: "上下文", group: "运行" },
@@ -94,6 +96,13 @@ const NAV = [
 
 /** 导航渲染顺序 = 分组 contiguous 排列;pane 渲染与顺序无关(各自 Show)。 */
 const NAV_GROUP_ORDER = ["接入", "运行", "界面", "关于"] as const;
+
+/** 这些分区即时写 profiles.toml，不参与应用设置的草稿/保存流程。 */
+const REGISTRY_SECTIONS: ReadonlySet<string> = new Set([
+  "section-providers",
+  "section-profiles",
+  "section-pairing",
+]);
 
 const FontPicker: Component<{
   label: string;
@@ -131,13 +140,27 @@ const FontPicker: Component<{
   );
 };
 
-export const SettingsView: Component = () => {
+export const SettingsView: Component<{
+  initialSection?: string;
+  /** 同一分区的重复请求也要生效（App 每次打开菜单时递增）。 */
+  sectionNonce?: number;
+  onOpenOAuth?: () => void;
+}> = (props) => {
   // 子代理密钥与工具清单是「只进不出」的本地缓冲:它们的 DOM 文本不等于草稿值
   // (掩码不能回填,逗号串要解析成数组),回填会让用户和输入框互相打架。
   const [subKey, setSubKey] = createSignal("");
   const [toolsInput, setToolsInput] = createSignal("");
   const [themeChoice, setThemeChoice] = createSignal(storedTheme() ?? "");
-  const [activeSection, setActiveSection] = createSignal<string>(NAV[0].id);
+  const [activeSection, setActiveSection] = createSignal<string>(
+    props.initialSection ?? NAV[0].id,
+  );
+  // 设置页已打开时从菜单/引导跳到指定分区：不能靠 remount，直接跟 prop 走。
+  createEffect(
+    () => [props.initialSection, props.sectionNonce] as const,
+    ([next]) => {
+      if (next != null) setActiveSection(next);
+    },
+  );
   let page: HTMLElement | undefined;
 
   onSettled(() => {
@@ -145,6 +168,9 @@ export const SettingsView: Component = () => {
     page?.querySelector<HTMLElement>("#settings-title")?.focus();
     // 壳侧 GPU 偏好现状(本次启动 vs 下次启动):撑起「待重启」提示。
     void refreshShellGpuPref();
+    // 应用设置草稿与 profiles.toml 名录是两套读模型，并行读，谁失败谁显示错误。
+    void reload();
+    void refreshRegistry();
     return () => previousFocus?.focus();
   });
 
@@ -258,13 +284,25 @@ export const SettingsView: Component = () => {
     () => NAV.find((item) => item.id === activeSection())?.label ?? "",
   );
 
+  const registrySection = (id: string): boolean => REGISTRY_SECTIONS.has(id);
+
+  /** 页头副标题读 registry 的名录，而不是应用设置草稿里的 activeProfile。 */
+  const defaultProfileName = createMemo(() => {
+    const value = registryState();
+    if (value?.defaultProfile == null) return null;
+    return (
+      value.profiles.find((profile) => profile.id === value.defaultProfile)?.name ??
+      value.defaultProfile
+    );
+  });
+
   return (
     <main class="settings-page" ref={(node) => { page = node; }} aria-labelledby="settings-title">
         <header class="settings-head">
           <div class="settings-title">
             <h1 id="settings-title" tabindex={-1}>{activeLabel() || STR.settings}</h1>
-            <Show when={(draft()?.activeProfile ?? "") !== ""}>
-              <span class="settings-sub">profile · {draft()?.activeProfile}</span>
+            <Show when={defaultProfileName()}>
+              {(name) => <span class="settings-sub">默认存档 · {name()}</span>}
             </Show>
           </div>
           <Show when={dirty()}>
@@ -284,9 +322,6 @@ export const SettingsView: Component = () => {
           </div>
         </Show>
 
-        <Show when={draft()}>
-          {(config) => (
-            <>
               <div class="settings-body" ref={(el) => { bodyEl = el; }}>
                 <nav class="settings-nav" aria-label="设置分区">
                   <For each={[...NAV_GROUP_ORDER]}>
@@ -333,13 +368,28 @@ export const SettingsView: Component = () => {
                     </div>
                   </Show>
 
-                  <Show when={activeSection() === "section-byok"}>
-                    <ByokSection />
+                  <Show when={registrySection(activeSection())}>
+                    <Show when={activeSection() === "section-providers"}>
+                      <ProvidersSection
+                        onOpenProfiles={() => setActiveSection("section-profiles")}
+                        onOpenOAuth={props.onOpenOAuth}
+                      />
+                    </Show>
+                    <Show when={activeSection() === "section-profiles"}>
+                      <ProfilesSection />
+                    </Show>
+                    <Show when={activeSection() === "section-pairing"}>
+                      <PairingSection />
+                    </Show>
                   </Show>
 
-                  <Show when={activeSection() === "section-profiles"}>
-                    <ProfilesSection />
-                  </Show>
+                  <Show when={!registrySection(activeSection())}>
+                    <Show
+                      when={draft()}
+                      fallback={<div class="settings-state">{STR.settingsLoading}</div>}
+                    >
+                      {(config) => (
+                        <>
 
                   <Show when={activeSection() === "section-permission"}>
                   <Section
@@ -633,10 +683,6 @@ export const SettingsView: Component = () => {
                   </Section>
                   </Show>
 
-                  <Show when={activeSection() === "section-pairing"}>
-                    <PairingSection />
-                  </Show>
-
                   <Show when={activeSection() === "section-mcp"}>
                   <Section
                     id="section-mcp"
@@ -705,52 +751,64 @@ export const SettingsView: Component = () => {
                   <Show when={activeSection() === "section-about"}>
                     <AboutSection />
                   </Show>
+                        </>
+                      )}
+                    </Show>
+                  </Show>
                 </div>
               </div>
 
               <footer class="settings-foot">
-                <div class="settings-foot-state">
-                  <Show when={error() != null}>
-                    <span class="settings-error">{error()}</span>
-                  </Show>
-                  <Show when={error() == null && note() != null}>
-                    <span class="settings-note">{note()}</span>
-                  </Show>
-                  <Show when={error() == null && note() == null}>
-                    <span class="settings-muted">
-                      {changedCount() > 0 ? `${STR.settingsChanged} ${changedCount()} 项` : STR.settingsClean}
-                    </span>
-                  </Show>
-                </div>
-                <div class="settings-foot-actions">
-                  <Show when={confirmDiscard()}>
-                    <span class="settings-discard">
-                      {STR.settingsDiscardAsk}
-                      <button type="button" class="ghost-mini" onClick={discard}>
-                        {STR.settingsDiscardYes}
-                      </button>
-                      <button type="button" class="ghost-mini" onClick={() => setConfirmDiscard(false)}>
-                        {STR.settingsStay}
-                      </button>
-                    </span>
-                  </Show>
-                  <button type="button" class="ghost-mini" disabled={busy()} onClick={requestReload}>
-                    <IconRotate />
-                    {STR.settingsReload}
-                  </button>
-                  <button
-                    type="button"
-                    class="primary-mini button-primary"
-                    disabled={busy() || loading() || !dirty()}
-                    onClick={() => void save()}
-                  >
-                    {busy() ? STR.settingsSaving : STR.settingsSave}
-                  </button>
-                </div>
+                <Show
+                  when={registrySection(activeSection())}
+                  fallback={
+                    <>
+                      <div class="settings-foot-state">
+                        <Show when={error() != null}>
+                          <span class="settings-error">{error()}</span>
+                        </Show>
+                        <Show when={error() == null && note() != null}>
+                          <span class="settings-note">{note()}</span>
+                        </Show>
+                        <Show when={error() == null && note() == null}>
+                          <span class="settings-muted">
+                            {changedCount() > 0 ? `${STR.settingsChanged} ${changedCount()} 项` : STR.settingsClean}
+                          </span>
+                        </Show>
+                      </div>
+                      <div class="settings-foot-actions">
+                        <Show when={confirmDiscard()}>
+                          <span class="settings-discard">
+                            {STR.settingsDiscardAsk}
+                            <button type="button" class="ghost-mini" onClick={discard}>
+                              {STR.settingsDiscardYes}
+                            </button>
+                            <button type="button" class="ghost-mini" onClick={() => setConfirmDiscard(false)}>
+                              {STR.settingsStay}
+                            </button>
+                          </span>
+                        </Show>
+                        <button type="button" class="ghost-mini" disabled={busy()} onClick={requestReload}>
+                          <IconRotate />
+                          {STR.settingsReload}
+                        </button>
+                        <button
+                          type="button"
+                          class="primary-mini button-primary"
+                          disabled={busy() || loading() || !dirty()}
+                          onClick={() => void save()}
+                        >
+                          {busy() ? STR.settingsSaving : STR.settingsSave}
+                        </button>
+                      </div>
+                    </>
+                  }
+                >
+                  <span class="settings-muted">
+                    本页改动即时写入 profiles.toml；应用设置草稿不受影响。
+                  </span>
+                </Show>
               </footer>
-            </>
-          )}
-        </Show>
     </main>
   );
 };

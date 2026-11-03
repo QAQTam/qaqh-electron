@@ -4,11 +4,11 @@
  * 与 `siwc.ts` 同一分工：**HTTP 与凭据都留在 Rust 侧**，前端只拿状态投影
  * （结构上不含 token）与一个需要交给系统浏览器打开的授权 URL。
  *
- * 八个方法的清单是 daemon 服务面（`qaqh_dsaccount::methods::ALL`）的镜像；
- * 壳侧白名单（`qaqh-electron/src/main/ipc-handlers.ts::SERVICE_METHODS`）也要同步加。
+ * 命令面是 RingingV2 的 `dsaccount.*` 统一命令。
  */
-import { serviceRpc } from "./service-rpc";
-import { openExternalUrl } from "./transport";
+import type { DaemonCommand } from "./transport/backend";
+import { isDesktopRuntime } from "./transport/backend";
+import { openExternalUrl, transport } from "./transport";
 import type { DsSignInDeps, DsSignInStart } from "../dsaccount/flow";
 import type { DsAccountStatus, DsFlowProjection, DsVerifyResult } from "../dsaccount/state";
 
@@ -48,30 +48,38 @@ export interface DsBonus {
 
 export type { DsSignInStart };
 
-export const dsaccountStatus = (): Promise<DsAccountStatus> => serviceRpc("DeepSeek 账号", "dsaccount.status");
+async function query<T>(command: DaemonCommand): Promise<T> {
+  if (!isDesktopRuntime()) {
+    throw new Error("DeepSeek 账号需要桌面壳：浏览器预览下不可用");
+  }
+  return transport.query<T>(command);
+}
 
-export const dsaccountBalance = (): Promise<DsBalance> => serviceRpc("DeepSeek 账号", "dsaccount.balance");
+export const dsaccountStatus = (): Promise<DsAccountStatus> => query({ type: "dsaccount.status" });
 
-export const dsaccountBonuses = (): Promise<DsBonus[]> => serviceRpc("DeepSeek 账号", "dsaccount.bonuses");
+export const dsaccountBalance = (): Promise<DsBalance> => query({ type: "dsaccount.balance" });
+
+export const dsaccountBonuses = (): Promise<DsBonus[]> => query({ type: "dsaccount.bonuses" });
 
 export const dsaccountSignInStart = (
   options: { locale?: string; port?: number } = {},
 ): Promise<DsSignInStart> =>
-  serviceRpc("DeepSeek 账号", "dsaccount.sign_in.start", {
-    ...(options.locale == null ? {} : { locale: options.locale }),
-    ...(options.port == null ? {} : { port: options.port }),
+  query({
+    type: "dsaccount.sign_in.start",
+    locale: options.locale ?? null,
+    port: options.port ?? null,
   });
 
 export const dsaccountSignInStatus = (): Promise<DsFlowProjection> =>
-  serviceRpc("DeepSeek 账号", "dsaccount.sign_in.status");
+  query({ type: "dsaccount.sign_in.status" });
 
 export const dsaccountSignInCancel = (attemptId: string): Promise<null> =>
-  serviceRpc("DeepSeek 账号", "dsaccount.sign_in.cancel", { attempt_id: attemptId });
+  query({ type: "dsaccount.sign_in.cancel", attempt_id: attemptId });
 
-export const dsaccountSignOut = (): Promise<null> => serviceRpc("DeepSeek 账号", "dsaccount.sign_out");
+export const dsaccountSignOut = (): Promise<null> => query({ type: "dsaccount.sign_out" });
 
 export const dsaccountAckBonus = (orderId: string): Promise<null> =>
-  serviceRpc("DeepSeek 账号", "dsaccount.bonus.ack", { order_id: orderId });
+  query({ type: "dsaccount.bonus.ack", order_id: orderId });
 
 /**
  * 模型目录条目。与 `SiwcModelEntry` 同形（选择器共用一套渲染），键名映射在下面。
@@ -89,7 +97,7 @@ export interface DsModelEntry {
  * 标准形态，展示名按几个常见写法兜底；取不到展示名就用 slug（**不猜**）。
  */
 export async function dsaccountModels(): Promise<DsModelEntry[]> {
-  const entries = await serviceRpc<Record<string, unknown>[]>("DeepSeek 账号", "dsaccount.models");
+  const entries = await query<Record<string, unknown>[]>({ type: "dsaccount.models" });
   const text = (value: unknown): string | null =>
     typeof value === "string" && value.trim() !== "" ? value : null;
   return entries.flatMap((entry) => {
@@ -108,7 +116,7 @@ export async function dsaccountModels(): Promise<DsModelEntry[]> {
  * 要把状态与余额都重新读一遍，别让界面停留在"已登录"上。
  */
 export const dsaccountVerify = (): Promise<DsVerifyResult> =>
-  serviceRpc("DeepSeek 账号", "dsaccount.verify");
+  query({ type: "dsaccount.verify" });
 
 /** 流程驱动本体在 `../dsaccount/flow`（纯逻辑，依赖注入，可脱浏览器单测）。 */
 export { runDeepSeekSignIn } from "../dsaccount/flow";

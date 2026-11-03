@@ -75,6 +75,8 @@ export function mockSdk() {
       handlers.onStatus?.("live");
       return watch;
     },
+    approvals: async () => ({ kind: "admin", pending: { pending_permission: null, pending_ask: null, pending_plan: null } }),
+    bootstrap: async seed => ({ session_id: seed, control: { state: { revision: 1, interactions: [] } } }),
   };
   return { sdk, sessionWatches, submissions };
 }

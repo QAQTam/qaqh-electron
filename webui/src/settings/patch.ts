@@ -44,27 +44,13 @@ export type ConfigPatchWire = Optionalize<Omit<ConfigPatch, "subagent">> & {
 export const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 /** BYOK 读写都使用后端的四个规范 wire 名，旧协议别名不再是合法出站值。 */
 export const WIRE_PROTOCOLS = ["chat", "responses", "messages", "gemini"] as const;
-/** 仅用于迁移本地旧 profile/草稿；出站请求不得携带这些别名。 */
-const WIRE_LEGACY_ALIASES: Record<string, string> = {
-  openai: "chat",
-  "openai-compatible": "chat",
-  chat_completions: "chat",
-  anthropic: "messages",
-  claude: "messages",
-  "openai-responses": "responses",
+/** 下拉展示名:规范值 + 官方协议全称。value 恒为规范名。 */
+export const WIRE_LABELS: Record<string, string> = {
+  chat: "chat（OpenAI Chat Completions）",
+  responses: "responses（OpenAI Responses）",
+  messages: "messages（Anthropic Messages）",
+  gemini: "gemini（Google generateContent）",
 };
-/** 任一种已知拼写 → 规范名;认不出(含空串)返回 null。trim+小写与 `Wire::parse` 同调。 */
-export function canonicalWire(wire: string | null | undefined): string | null {
-  const value = (wire ?? "").trim().toLowerCase();
-  if (value === "") return null;
-  if ((WIRE_PROTOCOLS as readonly string[]).includes(value)) return value;
-  return WIRE_LEGACY_ALIASES[value] ?? null;
-}
-
-/** 本地草稿/快照的协议名归一后出站；始终返回规范名。 */
-export function wireForDaemon(wire: string | null | undefined): string | null {
-  return canonicalWire(wire);
-}
 
 /** "" = 跟随系统(apply_patch:lang/theme/tokenizerPath 空串 = 清除)。 */
 export const THEME_OPTIONS = [
@@ -155,23 +141,8 @@ export function buildExecPatch(
 /** baseline 与 draft 的差 → Merge Patch;没有差异时得到 `{}`。 */
 export function buildPatch(baseline: ConfigDto, draft: ConfigDto): ConfigPatchWire {
   const raw: Sink = {};
-  // 密钥 + 「空串=保持」的字符串
-  keepIfBlank(raw, "apiKey", baseline.apiKey, draft.apiKey);
-  keepIfBlank(raw, "model", baseline.model, draft.model);
-  keepIfBlank(raw, "baseUrl", baseline.baseUrl, draft.baseUrl);
-  // wire 恒为非空枚举值(空即非法),按差异发送而非按空串保持。
-  // 本地旧快照可归一，比较和出站都使用规范名。
-  const baseWire = canonicalWire(baseline.wire);
-  const draftWire = canonicalWire(draft.wire);
-  if (draftWire != null && draftWire !== baseWire) {
-    const sendWire = wireForDaemon(draftWire);
-    if (sendWire != null) raw["wire"] = sendWire;
-  }
-  keepIfBlank(raw, "reasoningEffort", baseline.reasoningEffort, draft.reasoningEffort);
   // 空串 = 清除
   clearable(raw, "tokenizerPath", baseline.tokenizerPath, draft.tokenizerPath);
-  changed(raw, "maxTokens", baseline.maxTokens, draft.maxTokens);
-  changed(raw, "contextLength", baseline.contextLength, draft.contextLength);
   changed(raw, "autoCompactThreshold", baseline.autoCompactThreshold, draft.autoCompactThreshold);
   changed(raw, "complianceEnabled", baseline.complianceEnabled, draft.complianceEnabled);
   changed(raw, "permissionLevel", baseline.permissionLevel, draft.permissionLevel);
@@ -200,23 +171,6 @@ export function validatePatch(patch: ConfigPatchWire): string | null {
   const threshold = patch.autoCompactThreshold;
   if (threshold != null && (Number.isNaN(threshold) || threshold < 0 || threshold > 1)) {
     return `autoCompactThreshold 必须在 [0, 1] 区间（0=关闭自动压缩），收到 ${threshold}`;
-  }
-  if (patch.maxTokens != null && (patch.maxTokens <= 0 || !Number.isInteger(patch.maxTokens))) {
-    return "maxTokens 必须是大于 0 的整数";
-  }
-  if (patch.contextLength != null && (patch.contextLength <= 0 || !Number.isInteger(patch.contextLength))) {
-    return "contextLength 必须是大于 0 的整数";
-  }
-  const wire = patch.wire;
-  if (wire != null) {
-    // 与后端相同：只接收规范名；校验不修改调用方的 patch。
-    if (!(WIRE_PROTOCOLS as readonly string[]).includes(wire.trim().toLowerCase())) {
-      return `wire 仅允许 ${WIRE_PROTOCOLS.join("|")}，收到 ${wire}`;
-    }
-  }
-  const effort = patch.reasoningEffort;
-  if (effort != null && !(REASONING_EFFORTS as readonly string[]).includes(effort)) {
-    return `reasoningEffort 仅允许 ${REASONING_EFFORTS.join("|")}，收到 ${effort}`;
   }
   const level = patch.permissionLevel;
   if (level != null && ![1, 2, 3].includes(level)) {

@@ -73,10 +73,9 @@ export function projectionActions(delta: ProjectionDelta): ProjectionAction[] {
       // 只把 ToolIntent 特判到 tool),工具终态要在这里接。
       if (kind === "activity") return ["activity"];
       if (kind === "interaction_requested" || kind === "interaction_resolved" || kind === "interaction_expired") return ["approvals", "sessions"];
-      // Todo writes still emit legacy DashboardUpdated, which actor.rs no longer
-      // broadcasts. Until the producer persists WorkspaceResourceChanged(todo),
-      // use the durable tool terminal fact to invalidate the RPC read model.
-      // ToolFinished has no tool name, so do not infer one from output text.
+      // Legacy/model tools are not yet all wired to publish Todo resource facts;
+      // keep the terminal event as a compatibility fallback while that contract
+      // is introduced, but do not treat it as the primary change signal.
       if (kind === "tool_finished") return ["approvals", "todos", "sessions"];
       // MetaDelta 也在 control 频道上:`projection_stream_key` 把
       // `ProjectionSlot::Meta|Mailbox|Team` 全映射成 `RingingChannel::Control`

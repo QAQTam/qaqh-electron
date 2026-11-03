@@ -2,7 +2,7 @@
 import type { McpServerDto } from "./McpServerDto";
 
 /**
- * MCP 客户端配置读模型（docs/current/architecture.md）。
+ * MCP 客户端配置读模型。
  */
 export type McpDto = { enabled: boolean, idleShutdownSecs: number, 
 /**

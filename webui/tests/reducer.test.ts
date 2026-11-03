@@ -69,7 +69,7 @@ describe("outputFromDisplay & parseToolOutput", () => {
 
   test("contentValueToText 转换", () => {
     expect(contentValueToText({ kind: "inline", data: { text: "hello" } })).toBe("hello");
-    expect(contentValueToText({ kind: "ref", data: { content_ref: "sha256:abc" } })).toBe("正文加载中…");
+    expect(contentValueToText({ kind: "ref", data: { content_ref: "sha256:abc" } })).toBe("");
     expect(contentValueToText({ kind: "unavailable", data: { reason: "lost" } })).toBe("正文不可用");
     expect(contentValueToText(null)).toBe("");
   });

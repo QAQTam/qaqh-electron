@@ -3,6 +3,7 @@ import type { ActorRef } from "./ActorRef";
 import type { ContentHash } from "./ContentHash";
 import type { ContentValue } from "./ContentValue";
 import type { ExecutionId } from "./ExecutionId";
+import type { InteractionChoice } from "./InteractionChoice";
 import type { InteractionDecision } from "./InteractionDecision";
 import type { InteractionExpiryReason } from "./InteractionExpiryReason";
 import type { InteractionId } from "./InteractionId";
@@ -22,7 +23,11 @@ import type { ToolReplayCapability } from "./ToolReplayCapability";
 import type { ToolTerminalStatus } from "./ToolTerminalStatus";
 import type { TurnId } from "./TurnId";
 
-export type ControlDelta = { "kind": "session_created", "data": { revision: number, session_id: SessionId, cwd: string, model: string, schema_caps: Array<string>, } } | { "kind": "round", "data": { revision: number, turn_id: TurnId, round: number, request_hash: ContentHash, context_revision: number, } } | { "kind": "activity", "data": { revision: number, turn_id: TurnId | null, call_id: ToolCallId | null, state: SessionActivityState, } } | { "kind": "tool_intent", "data": { revision: number, call_id: ToolCallId, execution_id: ExecutionId, policy_decision: PolicyDecisionRef, replay_capability: ToolReplayCapability, side_effect_class: SideEffectClass, intent_at_ms: number, } } | { "kind": "tool_finished", "data": { revision: number, call_id: ToolCallId, execution_id: ExecutionId | null, terminal_status: ToolTerminalStatus, output: ContentValue | null, error: SessionToolError | null, metrics: ToolMetrics, reconciled: boolean, } } | { "kind": "interaction_requested", "data": { revision: number, interaction_id: InteractionId, call_id: ToolCallId | null, kind: SessionInteractionKind, request: ContentValue, expires_at_ms: number | null, } } | { "kind": "interaction_resolved", "data": { revision: number, interaction_id: InteractionId, decision: ContentValue, 
+export type ControlDelta = { "kind": "session_created", "data": { revision: number, session_id: SessionId, cwd: string, model: string, schema_caps: Array<string>, } } | { "kind": "round", "data": { revision: number, turn_id: TurnId, round: number, request_hash: ContentHash, context_revision: number, } } | { "kind": "activity", "data": { revision: number, turn_id: TurnId | null, call_id: ToolCallId | null, state: SessionActivityState, } } | { "kind": "tool_intent", "data": { revision: number, call_id: ToolCallId, execution_id: ExecutionId, policy_decision: PolicyDecisionRef, replay_capability: ToolReplayCapability, side_effect_class: SideEffectClass, intent_at_ms: number, } } | { "kind": "tool_finished", "data": { revision: number, call_id: ToolCallId, execution_id: ExecutionId | null, terminal_status: ToolTerminalStatus, output: ContentValue | null, error: SessionToolError | null, metrics: ToolMetrics, reconciled: boolean, } } | { "kind": "interaction_requested", "data": { revision: number, interaction_id: InteractionId, call_id: ToolCallId | null, kind: SessionInteractionKind, request: ContentValue,
+/**
+ * daemon 给出的可选项；空 = 该交互没有预设按钮（如自由文本 ask）。
+ */
+choices?: Array<InteractionChoice>, expires_at_ms: number | null, } } | { "kind": "interaction_resolved", "data": { revision: number, interaction_id: InteractionId, decision: ContentValue,
 /**
  * Structured verdict; `None` for legacy facts.
  */

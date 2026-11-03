@@ -4,9 +4,9 @@ import type { ControlDelta } from "./ControlDelta";
 import type { ConversationDelta } from "./ConversationDelta";
 import type { MailboxDelta } from "./MailboxDelta";
 import type { MetaDelta } from "./MetaDelta";
+import type { OperationFailure } from "./OperationFailure";
 import type { ResourceDelta } from "./ResourceDelta";
 import type { TeamDelta } from "./TeamDelta";
-import type { TimelineDelta } from "./TimelineDelta";
 import type { UnknownProjection } from "./UnknownProjection";
 
-export type ProjectionPayload = { "kind": "conversation_delta", "data": ConversationDelta } | { "kind": "timeline_delta", "data": TimelineDelta } | { "kind": "control_delta", "data": ControlDelta } | { "kind": "resource_delta", "data": ResourceDelta } | { "kind": "meta_delta", "data": MetaDelta } | { "kind": "mailbox_delta", "data": MailboxDelta } | { "kind": "team_delta", "data": TeamDelta } | { "kind": "audit_ref", "data": AuditRef } | { "kind": "unknown", "data": UnknownProjection };
+export type ProjectionPayload = { "kind": "conversation_delta", "data": ConversationDelta } | { "kind": "control_delta", "data": ControlDelta } | { "kind": "resource_delta", "data": ResourceDelta } | { "kind": "meta_delta", "data": MetaDelta } | { "kind": "mailbox_delta", "data": MailboxDelta } | { "kind": "team_delta", "data": TeamDelta } | { "kind": "audit_ref", "data": AuditRef } | { "kind": "unknown", "data": UnknownProjection } | { "kind": "operation_failed", "data": OperationFailure };

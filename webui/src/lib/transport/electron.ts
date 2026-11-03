@@ -15,7 +15,6 @@ import { noteEvent, noteRpc } from "../devlog";
 import {
   type Ack,
   type ApprovalView,
-  attachmentRefsOf,
   type AttachmentUploadWire,
   type ScreenshotWire,
   type ShotMode,
@@ -23,6 +22,8 @@ import {
   type ProjectionStatusWire,
   type ReconnectStatusWire,
   type TransportBackend,
+  type DaemonCommand,
+  type UnifiedTarget,
   type UserSkillsWire,
 } from "./backend";
 
@@ -38,9 +39,6 @@ function rejectAck(ack: Ack): Error {
 }
 
 export class ElectronTransport implements TransportBackend {
-  /** 宿主的单一 active seed(attach 时登记;命令按它定界,与宿主语义一致)。 */
-  private activeSeed: string | null = null;
-
   sessions(): Promise<any[]> {
     return invoke<any[]>("session_list");
   }
@@ -48,11 +46,14 @@ export class ElectronTransport implements TransportBackend {
   async attach(seed: string, limit?: number): Promise<void> {
     // limit:宿主按这个大小取权威首页并推给 webview;省略则后端用默认页大小。
     await invoke("attach", { seed, limit: limit ?? null });
-    this.activeSeed = seed;
   }
 
   approvals(sessionId: string): Promise<ApprovalView[]> {
     return invoke<ApprovalView[]>("pending_approvals", { seed: sessionId });
+  }
+
+  async invalidateApprovals(sessionId: string, challengeId?: string, verified: boolean | "revoke" = false): Promise<void> {
+    await invoke("invalidate_approvals", { seed: sessionId, challengeId: challengeId ?? null, verified });
   }
 
   async respondApproval(sessionId: string, challengeId: string, decision: string, payload: Record<string, unknown> = {}): Promise<null> {
@@ -60,50 +61,22 @@ export class ElectronTransport implements TransportBackend {
     return null;
   }
 
-  async command(channel: "control" | "conversation", command: Record<string, unknown>, sessionId?: string): Promise<Ack> {
-    const type = typeof command.type === "string" ? command.type : "";
-    if (channel === "conversation" && type === "conversation_send_message") {
-      const text = typeof command.text === "string" ? command.text : "";
-      const attachments = attachmentRefsOf(command);
-      const ack = await invoke<Ack>("send_message", { seed: sessionId ?? this.requireSeed("send_message"), text, attachments });
+  async command(command: DaemonCommand, target: UnifiedTarget = { kind: "global" }): Promise<Ack> {
+    const startedAt = Date.now();
+    try {
+      const ack = await invoke<Ack>("command", { command, target });
+      noteRpc(command.type, startedAt, null);
       if (ack.status === "rejected") throw rejectAck(ack);
       return ack;
+    } catch (cause) {
+      noteRpc(command.type, startedAt, cause);
+      throw cause;
     }
-    if (channel === "conversation" && type === "conversation_cancel") {
-      const turnId = typeof command.turn_id === "string" ? command.turn_id : null;
-      const ack = await invoke<Ack>("cancel_turn", { seed: sessionId ?? this.requireSeed("cancel_turn"), turnId });
-      if (ack.status === "rejected") throw rejectAck(ack);
-      return ack;
-    }
-    if (channel === "conversation" && type === "conversation_compact") {
-      // ack 只代表命令进队;终态由 CompactFinished(compaction_applied)决定。
-      const ack = await invoke<Ack>("compact_context", { seed: sessionId ?? this.requireSeed("compact_context") });
-      if (ack.status === "rejected") throw rejectAck(ack);
-      return ack;
-    }
-    if (channel === "control" && type === "session_create") {
-      const cwd = typeof command.cwd === "string" && command.cwd.trim() !== "" ? command.cwd : null;
-      const ack = await invoke<Ack>("create_session", { cwd });
-      if (ack.status === "rejected") throw rejectAck(ack);
-      return ack;
-    }
-    throw new Error(`command not allowed from webui: ${channel}/${type || "(untyped)"}`);
   }
 
-  rpc<T = unknown>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
-    const scoped = sessionId == null ? params : { ...params, session_id: sessionId };
-    const startedAt = Date.now();
-    // 开发者模式埋点:只旁听,成功值与错误传播路径都保持原样(失败原样再抛)。
-    return invoke<T>("service_rpc", { method, params: scoped }).then(
-      (value) => {
-        noteRpc(method, startedAt, null);
-        return value;
-      },
-      (cause: unknown) => {
-        noteRpc(method, startedAt, cause);
-        throw cause;
-      },
-    );
+  async query<T = unknown>(command: DaemonCommand, target: UnifiedTarget = { kind: "global" }): Promise<T> {
+    const ack = await this.command(command, target);
+    return (ack.result ?? null) as T;
   }
 
   /** 用户级 skills:宿主自己扫 `~/.qaqh/skills` 与 `~/.agents/skills`(不经 daemon)。 */
@@ -140,6 +113,10 @@ export class ElectronTransport implements TransportBackend {
       }));
     };
     await on<ProjectionStatusWire>("projection://status", (payload) => handlers.onProjectionStatus?.(payload));
+    await on<Record<string, any>>("projection://bootstrap", (payload) => {
+      const seed = typeof payload?.session_id === "string" ? payload.session_id : "";
+      if (seed && payload?.bootstrap && typeof payload.bootstrap === "object") handlers.onProjectionBootstrap?.(seed, payload.bootstrap);
+    });
     await on<Record<string, any>>("projection://event", (payload) => {
       const seed = typeof payload?.session_id === "string" ? payload.session_id : "";
       handlers.onProjectionEvent(seed, payload);
@@ -160,8 +137,19 @@ export class ElectronTransport implements TransportBackend {
     return invoke<unknown>("session_bootstrap", { seed });
   }
 
-  readContentText(contentRef: string): Promise<string> {
-    return invoke<string>("content_read_text", { contentRef });
+  readContentText(contentRef: string, signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted) return Promise.reject(new DOMException("aborted", "AbortError"));
+    const requestId = crypto.randomUUID();
+    const request = invoke<string>("content_read_text", { contentRef, requestId });
+    if (!signal) return request;
+    return new Promise<string>((resolve, reject) => {
+      const onAbort = () => {
+        void invoke("content_read_cancel", { requestId }).catch(() => {});
+        reject(new DOMException("aborted", "AbortError"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      request.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    });
   }
 
   async streamsRetry(seed?: string): Promise<void> {
@@ -172,10 +160,6 @@ export class ElectronTransport implements TransportBackend {
     return invoke<"stopping" | "busy" | "unsupported">("stop_stale_daemon");
   }
 
-  private requireSeed(action: string): string {
-    if (this.activeSeed == null) throw new Error(`${action} 需要活动标签(尚未 attach)`);
-    return this.activeSeed;
-  }
 }
 
 /** 外链经宿主系统浏览器打开(仅 http/https)。 */

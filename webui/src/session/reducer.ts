@@ -29,7 +29,9 @@ export function contentValueToText(value: ContentValue | null | undefined): stri
   if (!value) return "";
   if (typeof value === "string") return value;
   if (value.kind === "inline") return value.data.text;
-  if (value.kind === "ref") return "正文加载中…";
+  // Loading/error presentation belongs to the UI; never turn status copy into
+  // canonical message content.
+  if (value.kind === "ref") return "";
   if (value.kind === "unavailable") return "正文不可用";
   return "";
 }
@@ -56,8 +58,26 @@ export function pendingContentRefs(draft: SessionState): Set<string> {
   return refs;
 }
 
+/** Collect immutable content refs directly from a bootstrap/delta payload. */
+export function contentRefsInPayload(value: unknown): Set<string> {
+  const refs = new Set<string>();
+  const visit = (node: unknown): void => {
+    if (node == null || typeof node !== "object") return;
+    const record = node as Record<string, unknown>;
+    if (record.kind === "ref" && record.data != null && typeof record.data === "object") {
+      const ref = (record.data as Record<string, unknown>).content_ref;
+      if (typeof ref === "string" && ref !== "") refs.add(ref);
+    }
+    if (Array.isArray(node)) for (const item of node) visit(item);
+    else for (const child of Object.values(record)) visit(child);
+  };
+  visit(value);
+  return refs;
+}
+
 /** 按当前引用回填，已替换/已卸载的块不会被旧下载覆盖。 */
 export function resolveContentRef(draft: SessionState, ref: string, text: string, resolved = true): void {
+  void resolved; // retained in the call contract for loader adapters
   for (const slot of draft.slots) {
     if (slot.kind !== "turn") continue;
     const turn = draft.turns[slot.key];

@@ -1,14 +1,14 @@
 /**
- * 设置页状态:daemon 全局配置的读写面。
+ * 设置页里**应用设置**的草稿状态。
  *
- * 模块级单例(与 `tabs/store.ts` 同形)——配置本来就是 daemon 全局态,不属于
- * 任何标签;宿主对 `config.*`/`profile.*` 不注入 seed(`qaqh-electron/src/main/ipc-handlers.ts
- * 的 `service_requires_session` 豁免),所以零会话/引导失败时也能打开设置。
+ * 只负责 `ConfigDto` 中除 provider/profile 外的应用配置（权限、上下文、运行时、
+ * 子代理、MCP/LSP 等）。服务商与存档是命令直写的另一套状态（`./registry`），
+ * 不经过这里，因此编辑存档不会丢掉应用设置草稿。
  *
  * 三条不可省的现实:
  *  1. 写 = Merge Patch,只发差异(见 `./patch`);整包写回会覆盖别的端的改动。
- *  2. 保存成功后**重新 load**:`config.save` 的返回值恒为 null(qaqh-runtime/src/service.rs:538),
- *     且落盘前有服务端归一化(u64→u32 饱和、空串清除、掩码守卫)——草稿不是事实。
+ *  2. 保存成功后**重新 load**:`config.patch` 只返回 ack,落盘前还有服务端归一化
+ *     (u64→u32 饱和、空串清除、掩码守卫)——草稿不是事实。
  *  3. 掩码 `"****"` 是读模型对密钥的全部表达(qaqh-config/src/dto.rs:22),
  *     前端永不可能读到明文,也就不可能把它写回。
  */
@@ -18,6 +18,7 @@ import { applyTheme, storedTheme } from "../lib/theme";
 import { notifyConfigChanged } from "../lib/config-events";
 import { toast } from "../ui/toast";
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
+import type { JsonValue } from "../api/serde_json/JsonValue";
 import {
   buildPatch,
   isPatchEmpty,
@@ -58,7 +59,7 @@ async function fetchConfig(): Promise<void> {
   setLoading(true);
   setError(null);
   try {
-    const dto = await transport.rpc<ConfigDto>("config.load");
+    const dto = await transport.query<ConfigDto>({ type: "config.load" });
     setBaseline(dto);
     setDraft(structuredClone(dto));
     applyTheme(storedTheme());
@@ -176,103 +177,19 @@ export async function save(): Promise<void> {
   setBusy(true);
   setError(null);
   try {
-    await transport.rpc("config.save", next as Record<string, unknown>);
+    if (!isPatchEmpty(next)) {
+      await transport.command({ type: "config.patch", patch: next as JsonValue });
+    }
     await fetchConfig();
     // 本页自己的基线刷新了,但**输入区的镜像**(模型芯片、上下文百分比的分母)各有
     // 一份:广播一次让它们重读,否则「已热载生效」只对了设置页这一半。
     notifyConfigChanged();
-    setNote(`已保存 ${Object.keys(next).length} 项改动`);
-    toast(`配置已保存(${Object.keys(next).length} 项),已热载生效`, "ok", { dedupeKey: "config-saved" });
+    const count = Object.keys(next).length;
+    setNote(`已保存 ${count} 项改动`);
+    toast(`配置已保存(${count} 项),已热载生效`, "ok", { dedupeKey: "config-saved" });
   } catch (cause) {
     setError(messageOf(cause));
     toast(`保存失败:${messageOf(cause)}`, "err", { dedupeKey: "config-save-error" });
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function runService(
-  method: string,
-  params: Record<string, unknown>,
-  done: string,
-): Promise<void> {
-  if (busy() || loading()) return;
-  // profile 操作会整段重写配置(apply 换一套 model/baseUrl/effort…),
-  // 带着未保存草稿去点它 = 草稿被服务端事实覆盖。拒绝,而不是静默丢改动。
-  if (dirty()) {
-    setError("有未保存的改动:先保存或放弃,再操作 profile");
-    return;
-  }
-  setBusy(true);
-  setError(null);
-  try {
-    await transport.rpc(method, params);
-    await fetchConfig();
-    // profile 整段换 model/端点/window:`context_length` 跟着换,输入区必须重读分母。
-    notifyConfigChanged();
-    setNote(done);
-    toast(done, "ok", { dedupeKey: `profile:${method}` });
-  } catch (cause) {
-    setError(messageOf(cause));
-    toast(`${method} 失败:${messageOf(cause)}`, "err", { dedupeKey: `profile:${method}` });
-  } finally {
-    setBusy(false);
-  }
-}
-
-export const applyProfile = (name: string): Promise<void> =>
-  runService("profile.set_default", { name }, `已将「${name}」设为全局默认预设`);
-
-export const setDefaultProfile = applyProfile;
-
-export const saveProfileAs = (name: string): Promise<void> =>
-  runService("profile.save_current", { name }, `已把当前配置存为 profile「${name}」`);
-
-export const deleteProfile = (name: string): Promise<void> =>
-  runService("profile.delete", { name }, `已删除 profile「${name}」`);
-
-/**
- * 直接创建并固化一个新 Profile 实体（小白向导式直写）。
- * 【彻底消除全局污染】：绝不调用 config.save 覆写全局当前配置，直接调用 profile.create 原子写入！
- */
-export async function createAndSaveProfile(profile: {
-  id?: string;
-  name: string;
-  model: string;
-  baseUrl: string;
-  wire: string;
-  apiKey?: string;
-  effort?: string;
-  contextLength?: number;
-  maxTokens?: number;
-}): Promise<boolean> {
-  if (busy() || loading()) return false;
-  setBusy(true);
-  setError(null);
-  try {
-    const payload: Record<string, unknown> = {
-      id: profile.id || profile.name.trim(),
-      name: profile.name.trim(),
-      model: profile.model.trim(),
-      baseUrl: profile.baseUrl.trim(),
-      wire: profile.wire.trim(),
-      contextLength: profile.contextLength ?? 128000,
-      maxTokens: profile.maxTokens ?? 8192,
-      reasoningEffort: profile.effort ?? "high",
-    };
-    if (profile.apiKey && profile.apiKey.trim() !== "") {
-      payload.apiKey = profile.apiKey.trim();
-    }
-    // 纯血独立原子创建：绝不覆写全局当前活跃配置！
-    await transport.rpc("profile.create", payload);
-    await fetchConfig();
-    notifyConfigChanged();
-    toast(`已成功创建模型预设「${profile.name}」`, "ok", { dedupeKey: `profile:created:${profile.name}` });
-    return true;
-  } catch (cause) {
-    setError(messageOf(cause));
-    toast(`创建预设失败: ${messageOf(cause)}`, "err");
-    return false;
   } finally {
     setBusy(false);
   }

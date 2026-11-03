@@ -155,11 +155,25 @@
   .profile-active-tag { flex: none; font-size: var(--fs-xs); color: var(--accent); font-weight: 500; }
   .profile-row .ghost-mini { margin-left: auto; }
   .profile-row .ghost-mini.is-danger { margin-left: 0; color: var(--err); }
+  .settings-row-wide { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .provider-cta { font-weight: 600; padding: 8px 16px; height: auto; }
+  .provider-meta { display: block; opacity: 0.62; font-size: var(--fs-xs); overflow-wrap: anywhere; }
+  .provider-editor {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 10px;
+    max-width: 600px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--surface);
+  }
+  .provider-editor__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .profile-create { display: flex; align-items: center; gap: 8px; max-width: 380px; width: 100%; }
   .profile-create .field-input { flex: 1; min-width: 0; max-width: 280px; }
   .profile-create .ghost-mini { flex: none; height: 34px; padding-inline: 14px; }
 
-  /* 小白友好模型档案编辑器 */
+  /* 存档编辑器 */
   .profile-wizard-card {
     grid-column: 1 / -1;
     display: grid;
@@ -236,6 +250,9 @@
     gap: 10px;
     margin-top: 8px;
   }
+  .model-picker-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+  .model-picker-input { flex: 1; min-width: 0; }
+  .model-picker-row .ghost-mini { flex: none; height: 34px; white-space: nowrap; }
 
   /* 密钥输入 + 显隐切换 */
   .secret-input { position: relative; display: flex; }
@@ -340,4 +357,81 @@
   color: var(--warn);
   font-size: 0.85em;
   text-align: right;
+}
+
+/* ── 首次引导：全屏遮罩，正常 App 在下面继续挂载 ── */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.onboarding-panel {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel, 16px);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg, 0 24px 80px rgb(0 0 0 / 0.35));
+}
+
+.onboarding-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.onboarding-head h1 { margin: 0 0 6px; font-size: 22px; }
+.onboarding-head p { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+
+.onboarding-routes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.onboarding-route {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.onboarding-route span { color: var(--muted); font-size: var(--fs-xs); }
+.onboarding-route.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); }
+
+.onboarding-body { display: grid; gap: 10px; }
+.onboarding-byok { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.onboarding-byok > .settings-row-wide,
+.onboarding-byok > .onboarding-actions { grid-column: 1 / -1; }
+.onboarding-note { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+.onboarding-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.onboarding-error { margin: 0; color: var(--err); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.onboarding-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+@media (max-width: 720px) {
+  .onboarding-routes { grid-template-columns: 1fr; }
+  .onboarding-byok { grid-template-columns: 1fr; }
 }

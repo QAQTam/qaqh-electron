@@ -13,10 +13,10 @@ import { errorTextOf, isScopeError, loadMemorySnapshot } from "../../lib/memwatc
 type Call = { id: string; label: string; hint: string; run: () => Promise<unknown> };
 
 const CALLS: Call[] = [
-  { id: "daemon.version", label: "daemon.version", hint: "sidecar 自身版本(与壳版本分开)", run: () => transport.rpc("daemon.version", {}) },
-  { id: "session.list", label: "session.list", hint: "daemon 侧会话目录", run: () => transport.rpc("session.list", {}) },
-  { id: "workspace.list", label: "workspace.list", hint: "UI 工作区注册表", run: () => transport.rpc("workspace.list", {}) },
-  { id: "config.load", label: "config.load", hint: "原始配置,密钥为掩码", run: () => transport.rpc("config.load", {}) },
+  { id: "daemon.version", label: "daemon.version", hint: "sidecar 自身版本(与壳版本分开)", run: () => transport.query({ type: "daemon.version" }) },
+  { id: "session.list", label: "session.list", hint: "daemon 侧会话目录", run: () => transport.query({ type: "session.list" }) },
+  { id: "workspace.list", label: "workspace.list", hint: "UI 工作区注册表", run: () => transport.query({ type: "workspace.list" }) },
+  { id: "config.load", label: "config.load", hint: "原始配置,密钥为掩码", run: () => transport.query({ type: "config.load" }) },
 ];
 
 export const HostPanel: Component = () => {
@@ -41,7 +41,7 @@ export const HostPanel: Component = () => {
     setBusy("scope");
     setScopeNote(null);
     try {
-      const snap = await loadMemorySnapshot(null);
+      const snap = await loadMemorySnapshot();
       setScopeNote(`admin 可用:快照 schema v${snap.schema_version},${snap.sessions.length} 条会话量规。`);
     } catch (cause) {
       setScopeNote(isScopeError(cause)
