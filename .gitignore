@@ -11,3 +11,8 @@ crates/qaqh-update/target/
 .DS_Store
 resources/baseline/
 .qaqh-baseline/
+.codegraph/
+release-shell/
+webui/artifacts/
+artifacts/
+out/
