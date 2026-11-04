@@ -12,9 +12,7 @@ import IconFolder from "~icons/lucide/folder";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import IconCopy from "~icons/lucide/copy";
 import IconEdit from "~icons/lucide/file-pen-line";
-import { localTitleOf, renameLocalSession, sessionCatalog, type Tab } from "../tabs/store";
-import { sessionTarget, transport } from "../lib/transport";
-import { toast } from "../ui/toast";
+import { localTitleOf, renameSession, sessionCatalog, type Tab } from "../tabs/store";
 import { STR } from "../lib/strings";
 import { useDismissable } from "../ui/dismissable";
 
@@ -61,21 +59,8 @@ export const SessionHeader: Component<SessionHeaderProps> = (props) => {
     const next = editingText().trim();
     setIsEditing(false);
     if (!next || next === displayTitle()) return;
-    // 乐观生效：本地覆盖 + 侧栏目录立即更新（方案A，断线时也是兜底显示）。
-    // 不写 store.title —— 那是后端标题的回灌通道，混写会让 title_changed
-    // 无法区分来源。
-    renameLocalSession(props.tab.seed, next);
-    // 方案B（已落地）：后端 session.rename 落 meta.title 并广播
-    // TitleChanged(user)；回灌走 title_changed echo，到达时本地覆盖自动清退
-    // （tabs/store 的 onSessionTitleChanged 已实现）。
-    transport
-      .command({ type: "session.rename", title: next }, sessionTarget(props.tab.seed))
-      .catch((error: unknown) => {
-        toast(
-          `重命名持久化失败：${String(error instanceof Error ? error.message : error)}`,
-          "err",
-        );
-      });
+    // 本地乐观更新和 RingingV2 持久化由侧栏与标题栏共用。
+    void renameSession(props.tab.seed, next);
   };
 
   const cancelRename = () => {

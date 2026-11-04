@@ -26,6 +26,7 @@ export interface Turn {
   /** answer 指向的 step id;用于作答开始后回退重分类。 */
   answerStepId: string | null;
   status: TurnStatus;
+  phase?: import("@qaqh/sdk/protocol").TurnPhase;
   workStartedAt?: number;
   error?: { message: string };
   usage?: import("@qaqh/sdk/protocol").UsageInfo | null;
@@ -63,7 +64,16 @@ export interface TextStep {
   contentRef?: string;
 }
 
-export type ToolStatus = import("@qaqh/sdk/protocol").ToolCallStatus;
+/** Renderer-only status derived from the canonical Ringing ToolCallState. */
+export type ToolStatus =
+  | "declared"
+  | "awaiting_permission"
+  | "running"
+  | "cancelling"
+  | "finished"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
 
 export interface ToolOutput {
   text?: string;
@@ -85,6 +95,9 @@ export interface ToolStep {
   argsJson?: string;
   argsRef?: string;
   status: ToolStatus;
+  state?: import("@qaqh/sdk/protocol").ToolCallState;
+  execSessionId?: string;
+  execSessionState?: import("@qaqh/sdk/protocol").ExecSessionState;
   output?: ToolOutput;
   outputRef?: string;
   error?: string;
@@ -114,6 +127,10 @@ export interface Wait {
 /** 会话级归约状态(reducer 的操作对象;Solid store draft)。 */
 export interface SessionState {
   turns: Record<string, Turn>;
+  /** Session-level execution records survive turn pagination and late output. */
+  execSessions: Record<string, import("@qaqh/sdk/protocol").ExecSessionView>;
+  /** Lazily loaded source turns used by execution cards after transcript eviction. */
+  originTurns: Record<string, import("@qaqh/sdk/protocol").SessionTurnSnapshot>;
   /** 渲染顺序槽:回合或(被淘汰回合的)等高占位。 */
   slots: Slot[];
   /** 结构提交版本。消息列表只订阅它,token 更新不重读所有槽位 key。 */
@@ -135,10 +152,6 @@ export interface SessionState {
   /** 当前运行中回合的 key;无运行中回合为 null(等待区间归属判定)。 */
   activeTurnKey: string | null;
   waits: Wait[];
-  /** Cumulative text frames that arrived before their timeline entry. */
-  pendingBlocks: Record<string, { turnId: string; text: string }>;
-  /** Cumulative tool argument frames that arrived before their tool call entry. */
-  pendingToolArguments: Record<string, { turnId: string; text: string }>;
   interactionIds: string[];
   watermark: number;
   compactionSummaries: string[];
@@ -178,6 +191,8 @@ export function emptySession(): SessionState {
 
   return {
     turns: {},
+    execSessions: {},
+    originTurns: {},
     slots: [],
     structureVersion: 0,
     serverEpoch: null,
@@ -191,8 +206,6 @@ export function emptySession(): SessionState {
     failedTurns: 0,
     activeTurnKey: null,
     waits: [],
-    pendingBlocks: {},
-    pendingToolArguments: {},
     interactionIds: [],
     watermark: 0,
     compactionSummaries: [],

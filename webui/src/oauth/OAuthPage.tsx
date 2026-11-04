@@ -47,8 +47,6 @@ import { SiwcSignInButton } from "../siwc/components/SignInButton";
 import { siwcAccountView } from "../siwc/state";
 import { toast } from "../ui/toast";
 import {
-  DSACCOUNT_CONTEXT_LENGTH,
-  OAUTH_CONTEXT_LENGTH,
   providerKindOfCredential,
 } from "./mode";
 import {
@@ -535,9 +533,6 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
     return () => window.clearInterval(timer);
   });
 
-  const contextFor = (entry: AccountEntry): number =>
-    entry.kind === "plan" ? OAUTH_CONTEXT_LENGTH : DSACCOUNT_CONTEXT_LENGTH;
-
   /** 官方端点只从后端取：套餐来自 `siwc.status.apiBase`，DeepSeek 来自账号态。 */
   const accountBaseUrl = (entry: AccountEntry): string | null =>
     entry.kind === "plan" ? siwcApiBase(status()) : (dsStatus()?.inferenceOrigin ?? null);
@@ -589,7 +584,7 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
         kind: entry.kind,
         baseUrl,
         model,
-        contextLength: contextFor(entry),
+        modelMetadata: catalog.find((item) => item.slug === model),
         makeDefault,
       });
       if (result == null) {
@@ -687,7 +682,7 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
         kind: target.kind,
         baseUrl,
         model: slug,
-        contextLength: contextFor(target),
+        modelMetadata: catalogs()[target.kind]?.entries?.find((item) => item.slug === slug),
         makeDefault: activeId() === target.id,
       });
       if (result == null) {

@@ -18,7 +18,6 @@ import {
 } from "../lib/siwc";
 import { isDesktopRuntime } from "../lib/transport/backend";
 import { fetchModelCatalog } from "../oauth/model-catalog";
-import { DSACCOUNT_CONTEXT_LENGTH, OAUTH_CONTEXT_LENGTH } from "../oauth/mode";
 import type { ModelDef } from "@qaqh/sdk/protocol";
 import { Field, TextInput } from "../settings/controls";
 import { Select } from "../ui/Select";
@@ -97,7 +96,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
       return;
     }
     const catalog = await fetchModelCatalog("plan");
-    const model = catalog[0]?.slug;
+    const model = catalog[0];
     if (model == null) {
       setError("登录成功但模型目录为空，请到「接入」页刷新目录。");
       return;
@@ -105,8 +104,8 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
     const result = await ensureAccountProfile({
       kind: "plan",
       baseUrl,
-      model,
-      contextLength: OAUTH_CONTEXT_LENGTH,
+      model: model.slug,
+      modelMetadata: model,
       makeDefault: true,
     });
     if (result == null) setError(registryError() ?? "写入账号存档失败");
@@ -129,7 +128,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
       return;
     }
     const catalog = await fetchModelCatalog("account");
-    const model = catalog[0]?.slug;
+    const model = catalog[0];
     if (model == null) {
       setError("登录成功但模型目录为空，请到「接入」页刷新目录。");
       return;
@@ -137,8 +136,8 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
     const result = await ensureAccountProfile({
       kind: "account",
       baseUrl,
-      model,
-      contextLength: DSACCOUNT_CONTEXT_LENGTH,
+      model: model.slug,
+      modelMetadata: model,
       makeDefault: true,
     });
     if (result == null) setError(registryError() ?? "写入账号存档失败");
@@ -152,8 +151,8 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
   const [wire, setWire] = createSignal(firstTemplate.wire);
   const [apiKey, setApiKey] = createSignal("");
   const [model, setModel] = createSignal("");
-  const [contextLength, setContextLength] = createSignal(String(firstTemplate.defaultContextLength));
-  const [maxTokens, setMaxTokens] = createSignal(String(firstTemplate.defaultMaxTokens));
+  const [contextLength, setContextLength] = createSignal("");
+  const [maxTokens, setMaxTokens] = createSignal("");
   const [liveModels, setLiveModels] = createSignal<Array<{ id: string; label: string }>>([]);
   const [fetching, setFetching] = createSignal(false);
 
@@ -164,8 +163,8 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
     setProviderName(template.name);
     setBaseUrl(template.baseUrl);
     setWire(template.wire);
-    setContextLength(String(template.defaultContextLength));
-    setMaxTokens(String(template.defaultMaxTokens));
+    setContextLength("");
+    setMaxTokens("");
     setLiveModels([]);
   };
 
@@ -202,12 +201,12 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
     }
     const context = Number(contextLength());
     const tokens = Number(maxTokens());
-    if (!Number.isInteger(context) || context <= 0) {
+    if (!Number.isSafeInteger(context) || context <= 0) {
       setError("上下文窗口必须是大于 0 的整数。");
       return;
     }
-    if (!Number.isInteger(tokens) || tokens <= 0) {
-      setError("最大输出必须是大于 0 的整数。");
+    if (!Number.isSafeInteger(tokens) || tokens <= 0) {
+      setError("最大输出必须是正整数。");
       return;
     }
     await refreshRegistry();
@@ -390,11 +389,11 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
                 </div>
               </Show>
             </Field>
-            <Field label="上下文窗口">
-              <TextInput value={contextLength()} onInput={setContextLength} placeholder="128000" />
+            <Field label="上下文窗口" hint="按当前模型可用的上下文窗口手动填写">
+              <TextInput type="number" value={contextLength()} onInput={setContextLength} />
             </Field>
-            <Field label="最大输出">
-              <TextInput value={maxTokens()} onInput={setMaxTokens} placeholder="8192" />
+            <Field label="最大输出" hint="手动填写端点支持的最大输出 tokens">
+              <TextInput type="number" value={maxTokens()} onInput={setMaxTokens} />
             </Field>
             <div class="onboarding-actions">
               <button

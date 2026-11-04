@@ -40,7 +40,7 @@ test("single stream turn segments: tool followed by answer", () => {
     kind: "tool_call", data: { turn_id: "t1", call_id: "call1" },
   } });
   applySessionEvent(state, { seq: 3, type: "tool_arguments_delta", turn_id: "t1", call_id: "call1", text: "{}" });
-  applySessionEvent(state, { seq: 4, type: "tool_finished", call_id: "call1", status: "finished", output: inline("ok"), output_truncated: false, error: null, metrics: null });
+  applySessionEvent(state, { seq: 4, type: "tool_finished", call_id: "call1", outcome: { kind: "completed" }, output: inline("ok"), output_truncated: false, metrics: null });
   applySessionEvent(state, { seq: 5, type: "timeline_appended", entry: {
     kind: "assistant_block", data: { turn_id: "t1", block_id: "ans1", block_kind: "answer", content: inline("done"), model: "m", usage: null },
   } });

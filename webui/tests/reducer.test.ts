@@ -9,6 +9,7 @@ import {
   parseToolOutput,
 } from "../src/session/reducer";
 import { contentRef, inline, sessionBootstrap } from "./session-fixtures";
+import type { ExecSessionView } from "../src/api/qaqh/ExecSessionView";
 
 describe("tool output helpers", () => {
   test("parses the raw output payload and preserves an actual unified diff", () => {
@@ -48,8 +49,9 @@ describe("applySessionBootstrap", () => {
         } },
       ],
       tools: [{
-        call_id: "call-1", turn_id: "turn-1", tool_name: "read", args: { path: "README.md" }, status: "finished",
-        output: inline('{"output":"README.md","exit_code":0}'), output_truncated: false, error: null, metrics: null,
+        call_id: "call-1", turn_id: "turn-1", tool_name: "read", args: { path: "README.md" },
+        state: { kind: "finished", outcome: { kind: "completed" } },
+        output: inline('{"output":"README.md","exit_code":0}'), output_truncated: false, metrics: null,
       }],
     });
 
@@ -82,8 +84,8 @@ test("applySessionEvent reduces a flat turn, tool, assistant block, and terminal
     kind: "tool_call", data: { turn_id: "t1", call_id: "call1" },
   } });
   applySessionEvent(state, { seq: 3, type: "tool_arguments_delta", turn_id: "t1", call_id: "call1", text: '{"path":"README.md"}' });
-  applySessionEvent(state, { seq: 4, type: "tool_started", call_id: "call1" });
-  applySessionEvent(state, { seq: 5, type: "tool_finished", call_id: "call1", status: "finished", output: inline('{"output":"ok","exit_code":0}'), output_truncated: false, error: null, metrics: null });
+  applySessionEvent(state, { seq: 4, type: "tool_state_changed", turn_id: "t1", call_id: "call1", state: { kind: "running" } });
+  applySessionEvent(state, { seq: 5, type: "tool_finished", call_id: "call1", outcome: { kind: "completed" }, output: inline('{"output":"ok","exit_code":0}'), output_truncated: false, metrics: null });
   applySessionEvent(state, { seq: 6, type: "timeline_appended", entry: {
     kind: "assistant_block", data: { turn_id: "t1", block_id: "ans1", block_kind: "answer", content: inline("done"), model: "m", usage: null },
   } });
@@ -97,10 +99,100 @@ test("applySessionEvent reduces a flat turn, tool, assistant block, and terminal
   expect(turn.answer?.text).toBe("done");
 });
 
+test("first message deltas render immediately and sealed blocks replace streamed prefixes", () => {
+  const state = emptySession();
+  applySessionEvent(state, { seq: 1, type: "turn_started", turn_id: "t", input_id: "i", mode: "normal" });
+  applySessionEvent(state, { seq: 2, type: "message_delta", turn_id: "t", block_id: "r", block_kind: "reasoning", text: "先检查" });
+  expect(state.turns.t!.steps).toMatchObject([{ id: "r", kind: "thinking", text: "先检查" }]);
+  expect(state.activeReasoningId).toBe("r");
+  const structureVersion = state.structureVersion;
+  applySessionEvent(state, { seq: 3, type: "message_delta", turn_id: "t", block_id: "r", block_kind: "reasoning", text: "先检查结构" });
+  expect(state.structureVersion).toBe(structureVersion);
+  applySessionEvent(state, { seq: 4, type: "timeline_appended", entry: {
+    kind: "assistant_block", data: { turn_id: "t", block_id: "r", block_kind: "reasoning", content: inline("先检查结构和配置"), model: "m", usage: null },
+  } });
+  expect(state.activeReasoningId).toBeNull();
+  applySessionEvent(state, { seq: 5, type: "message_delta", turn_id: "t", block_id: "a", block_kind: "answer", text: "正在检查" });
+  expect(state.turns.t!.answer?.text).toBe("正在检查");
+  applySessionEvent(state, { seq: 6, type: "timeline_appended", entry: {
+    kind: "assistant_block", data: { turn_id: "t", block_id: "a", block_kind: "answer", content: inline("正在检查，完整尾部"), model: "m", usage: null },
+  } });
+  expect(state.turns.t!.steps).toMatchObject([
+    { id: "r", kind: "thinking", text: "先检查结构和配置" },
+    { id: "a", kind: "text", text: "正在检查，完整尾部" },
+  ]);
+  expect(state.turns.t!.answer?.text).toBe("正在检查，完整尾部");
+});
+
+test("tool progress creates an identity and declaration replaces partial args while retaining intermediate speech", () => {
+  const state = emptySession();
+  applySessionEvent(state, { seq: 1, type: "message_delta", turn_id: "t", block_id: "before", block_kind: "answer", text: "我先读取文件" });
+  applySessionEvent(state, { seq: 2, type: "tool_arguments_delta", turn_id: "t", call_id: "c", tool_name: "read", text: '{"path":' });
+  expect(state.turns.t!.answerStepId).toBeNull();
+  expect(state.turns.t!.steps[1]).toMatchObject({ id: "c", kind: "tool", name: "read", argsJson: '{"path":', status: "declared" });
+  applySessionEvent(state, { seq: 3, type: "tool_declared", turn_id: "t", call_id: "c", tool_name: "read", args: { path: "README.md" } });
+  applySessionEvent(state, { seq: 4, type: "timeline_appended", entry: { kind: "tool_call", data: { turn_id: "t", call_id: "c" } } });
+  applySessionEvent(state, { seq: 5, type: "tool_state_changed", turn_id: "t", call_id: "c", state: { kind: "running" } });
+  applySessionEvent(state, { seq: 6, type: "tool_output_delta", call_id: "c", stream: "stdout", text: "file contents" });
+  expect(state.turns.t!.steps[1]).toMatchObject({ name: "read", status: "running", progressTail: "file contents", seq: 1 });
+  expect(JSON.parse((state.turns.t!.steps[1] as { argsJson: string }).argsJson)).toEqual({ path: "README.md" });
+  applySessionEvent(state, { seq: 7, type: "tool_declared", turn_id: "t", call_id: "without-progress", tool_name: "pwd", args: {} });
+  applySessionEvent(state, { seq: 8, type: "message_delta", turn_id: "t", block_id: "after", block_kind: "answer", text: "检查完成" });
+  expect(state.turns.t!.steps.map(step => step.id)).toEqual(["before", "c", "without-progress", "after"]);
+  expect(state.turns.t!.steps[0]).toMatchObject({ kind: "text", text: "我先读取文件" });
+  expect(state.turns.t!.steps[2]).toMatchObject({ kind: "tool", name: "pwd", argsJson: "{}" });
+  expect(state.turns.t!.answerStepId).toBe("after");
+});
+
+test("exec output offsets ignore duplicate frames and account for a lost range", () => {
+  const state = emptySession();
+  const session: ExecSessionView = {
+    id: "exec-1",
+    owner_session_id: "session-1",
+    origin_turn_id: "turn-1",
+    origin_call_id: "call-1",
+    state: { kind: "running" },
+    tty: false,
+    command: "printf output",
+    started_at_ms: 1,
+    next_offset: 0,
+    output_preview: "",
+    preview_start_offset: 0,
+    output_complete: false,
+    capture_omitted_bytes: 0,
+    stream_dropped_bytes: 0,
+  };
+  applySessionEvent(state, { seq: 1, type: "exec_session_started", session });
+  const first = {
+    exec_session_id: session.id,
+    start_offset: 0,
+    end_offset: 3,
+    source: "stdout" as const,
+    text: "abc",
+  };
+  applySessionEvent(state, { seq: 2, type: "exec_session_output_delta", ...first });
+  applySessionEvent(state, { seq: 3, type: "exec_session_output_delta", ...first });
+  applySessionEvent(state, {
+    seq: 4,
+    type: "exec_session_output_delta",
+    exec_session_id: session.id,
+    start_offset: 6,
+    end_offset: 9,
+    source: "stderr",
+    text: "jkl",
+  });
+
+  expect(state.execSessions[session.id]).toMatchObject({
+    output_preview: "abcjkl",
+    next_offset: 9,
+    stream_dropped_bytes: 3,
+  });
+});
+
 test("forceSealTurn closes a stuck turn and recomputes the running count", () => {
   const state = emptySession();
   applySessionEvent(state, { seq: 1, type: "turn_started", turn_id: "stuck", input_id: "in1", mode: "normal" });
-  applySessionEvent(state, { seq: 2, type: "message_delta", turn_id: "stuck", block_id: "answer", text: "partial" });
+  applySessionEvent(state, { seq: 2, type: "message_delta", turn_id: "stuck", block_id: "answer", block_kind: "answer", text: "partial" });
   applySessionEvent(state, { seq: 3, type: "timeline_appended", entry: {
     kind: "assistant_block", data: { turn_id: "stuck", block_id: "answer", block_kind: "answer", content: inline("partial"), model: "m", usage: null },
   } });

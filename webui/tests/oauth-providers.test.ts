@@ -1,20 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_CONTEXT_WINDOW,
   EFFORT_LADDER,
   MODEL_SPECS,
-  modelContextWindow,
   modelDefaultEffort,
   modelEfforts,
   modelSpec,
 } from "../src/models/specs";
 import {
-  DSACCOUNT_CONTEXT_LENGTH,
   isAccountCredential,
   isDeepseekAccountMode,
   isPlanMode,
-  OAUTH_CONTEXT_LENGTH,
 } from "../src/oauth/mode";
 
 describe("账号额度判定", () => {
@@ -36,7 +32,7 @@ describe("账号额度判定", () => {
 });
 
 describe("模型特判合集", () => {
-  it("实测到的套餐 slug 都有条目（565K + 展示名）", () => {
+  it("套餐模型条目提供展示名", () => {
     for (const slug of [
       "gpt-6.1-sol",
       "gpt-6-astra",
@@ -49,16 +45,13 @@ describe("模型特判合集", () => {
       const { spec, known } = modelSpec("plan", slug);
       expect(known, slug).toBe(true);
       expect(spec.displayName, slug).toBeTruthy();
-      expect(modelContextWindow(spec), slug).toBe(565_000);
     }
   });
 
-  it("未收录的模型不报错但必须标出 known=false，字段走保守缺省", () => {
+  it("未收录的模型不报错但必须标出 known=false", () => {
     const { spec, known } = modelSpec("plan", "brand-new-model");
     expect(known).toBe(false);
-    expect(modelContextWindow(spec)).toBe(DEFAULT_CONTEXT_WINDOW);
     expect(modelEfforts(spec)).toEqual(EFFORT_LADDER);
-    expect(modelContextWindow(spec)).toBeLessThan(OAUTH_CONTEXT_LENGTH);
   });
 
   it("efforts 可以收窄档位；默认档不在可选里时落到最弱档", () => {
@@ -80,8 +73,4 @@ describe("模型特判合集", () => {
     expect(modelEfforts({})).toEqual(EFFORT_LADDER);
   });
 
-  it("账号模式的上下文常量仍按各自平台设置", () => {
-    expect(OAUTH_CONTEXT_LENGTH).toBeGreaterThan(0);
-    expect(DSACCOUNT_CONTEXT_LENGTH).toBeGreaterThan(0);
-  });
 });

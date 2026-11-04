@@ -11,6 +11,7 @@ import { isDesktopRuntime } from "./transport/backend";
 import { openExternalUrl, transport } from "./transport";
 import type { DsSignInDeps, DsSignInStart } from "../dsaccount/flow";
 import type { DsAccountStatus, DsFlowProjection, DsVerifyResult } from "../dsaccount/state";
+import type { DsAccountModel } from "../api/qaqh/DsAccountModel";
 
 /** 一个钱包条目。金额是**原串**（平台用 big.js 语法：`0E-16` 就是 0）。 */
 export interface DsWallet {
@@ -94,18 +95,48 @@ export const dsaccountAckBonus = (orderId: string): Promise<null> =>
 export interface DsModelEntry {
   slug: string;
   displayName: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  reasoningLevels?: string[];
+  defaultEffort?: string;
 }
+
+const positiveSafeInteger = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+
+const recordOf = (value: unknown): Record<string, unknown> | null =>
+  typeof value === "object" && value != null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+
+const mapModel = (entry: DsAccountModel): DsModelEntry => {
+  const effort = recordOf(entry["effort"]);
+  const supported = effort?.["supported_levels"];
+  const reasoningLevels = Array.isArray(supported) && supported.every((level) => typeof level === "string")
+    ? supported as string[]
+    : undefined;
+  const defaultEffort = typeof effort?.["default_level"] === "string" ? effort["default_level"] : undefined;
+  const contextWindow = positiveSafeInteger(entry["context_window"]);
+  const maxOutputTokens = positiveSafeInteger(entry["max_output_tokens"]);
+  return {
+    slug: entry.id,
+    displayName: entry.id,
+    ...(contextWindow == null ? {} : { contextWindow }),
+    ...(maxOutputTokens == null ? {} : { maxOutputTokens }),
+    ...(reasoningLevels == null ? {} : { reasoningLevels }),
+    ...(defaultEffort == null ? {} : { defaultEffort }),
+  };
+};
 
 /**
  * 账号可用的模型目录。
  *
- * 后端**原样**转发平台的条目（比 OpenAI 标准形态多几个字段：上下文窗口、输出
- * 上限、能力位、`effort.supported_levels`），这里只取能确认的两个键——`id` 是
- * 标准形态，展示名按几个常见写法兜底；取不到展示名就用 slug（**不猜**）。
+ * 后端**原样**转发平台的条目（上下文窗口、输出上限、能力位、推理档位）。这里只
+ * 映射 id 和我们实际使用的数值/档位字段；字段缺失时保持缺省，不猜上下文或上限。
  */
 export async function dsaccountModels(): Promise<DsModelEntry[]> {
   const entries = await query("dsaccount.models", {});
-  return entries.map(({ id }) => ({ slug: id, displayName: id }));
+  return entries.map(mapModel);
 }
 
 /**

@@ -8,7 +8,7 @@ export function sessionBootstrap(
   sessionId: string,
   options: {
     seq?: number;
-    activity?: "idle" | "running" | "interrupted";
+    activity?: "idle" | "running" | "waiting_user" | "cancelling";
     currentTurnId?: string | null;
     turns?: TurnView[];
     timeline?: TimelineEntry[];
@@ -20,6 +20,7 @@ export function sessionBootstrap(
   return {
     schema: "qaqh.Ringing",
     version: 2,
+    session_contract_revision: "ringing-session-2",
     server_epoch: "test-epoch",
     session_id: sessionId,
     state: {
@@ -33,6 +34,7 @@ export function sessionBootstrap(
       tools: options.tools ?? [],
       interactions: options.interactions ?? [],
       subagents: [],
+      exec_sessions: [],
     },
   };
 }

@@ -37,6 +37,51 @@
     scrollbar-gutter: stable both-edges;
   }
 
+  .exec-session-list {
+    width: min(var(--content-width), 100%);
+    margin: 0 auto 20px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .exec-session-list-head, .exec-session-card-head {
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+  }
+  .exec-session-list-head {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text); font-size: var(--fs-sm);
+  }
+  .exec-session-list-head > span {
+    min-width: 20px; padding: 1px 6px; border-radius: 999px;
+    color: var(--muted); background: var(--surface-2); text-align: center;
+    font-size: var(--fs-xs);
+  }
+  .exec-session-card { padding: 11px 12px 12px; border-bottom: 1px solid var(--border); }
+  .exec-session-card:last-child { border-bottom: 0; }
+  .exec-session-card-head { color: var(--muted); font-size: var(--fs-xs); }
+  .exec-session-status { color: var(--text); font-size: var(--fs-sm); }
+  .exec-session-card.failed .exec-session-status, .exec-session-error { color: var(--err); }
+  .exec-session-card-head time { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .exec-session-card .ghost-mini { min-height: 24px; }
+  .exec-session-card .ghost-mini.danger { color: var(--err); }
+  .exec-session-command, .exec-session-output {
+    margin: 8px 0 0; padding: 8px 10px; border-radius: var(--r-sm);
+    background: var(--bg); color: var(--text); font-family: var(--font-mono);
+    font-size: var(--fs-xs); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .exec-session-output { max-height: 280px; overflow: auto; overflow-anchor: auto; }
+  .exec-session-meta, .exec-session-notes {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px;
+    margin-top: 7px; color: var(--muted); font-size: var(--fs-xs);
+  }
+  .exec-session-meta > span { min-width: 0; overflow-wrap: anywhere; }
+  .exec-session-note { display: flex; align-items: center; gap: 7px; margin-top: 8px; color: var(--muted); font-size: var(--fs-xs); }
+  .exec-session-origin { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .exec-session-origin > .turn { width: min(var(--content-width), 100%); margin: 0 auto; }
+  .exec-session-notes:empty { display: none; }
+
   /* ── 会话标题(现居 TopBar 中格,spec §6.4) ───────────────────────────── */
   .session-header {
     display: flex; align-items: center; justify-content: space-between;

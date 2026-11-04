@@ -30,6 +30,7 @@ const KIND_ICON = {
   permission: IconShieldAlert,
   ask: IconCircleHelp,
   plan: IconClipboardList,
+  interaction: IconCircleHelp,
 } as const;
 
 export const SessionPendingCard: Component<{ session: SidebarSession; fastApproval?: ApprovalView | null }> = (props) => {

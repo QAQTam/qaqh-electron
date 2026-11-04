@@ -35,15 +35,15 @@ import {
   closeTab,
   createSession,
   creating,
-  detachSessionFromWorkspace,
+  deleteSession,
   draftOf,
   focusToken,
   isStartup,
-  moveSessionToWorkspace,
   newSessionCwd,
   openSession,
   openStartup,
   pollSessions,
+  renameSession,
   setBootError,
   setDraftOf,
   setNewSessionCwd,
@@ -575,13 +575,15 @@ const App: Component = () => {
     if (tab.store.pending[0]().length > 0) return "pending";
     // 运行态读 reducer 维护的计数与乐观发送态:遍历 turns 会让输入区订阅每一个回合,
     // 于是每帧流式写入都重算一次发送按钮(高吞吐下的卡顿放大器)。
-    if (tab.store.isSending[0]() || tab.store.state[0].runningTurns > 0 || tab.store.activity[0]() === "working") return "running";
+    const activity = tab.store.activity[0]();
+    if (tab.store.isSending[0]() || tab.store.state[0].runningTurns > 0 || activity === "working" || activity === "cancelling") return "running";
     return null;
   };
 
   const runningNow = (tab: Tab | null = active()): boolean => {
     if (tab == null) return false;
-    return tab.store.isSending[0]() || tab.store.state[0].runningTurns > 0 || tab.store.activity[0]() === "working";
+    const activity = tab.store.activity[0]();
+    return tab.store.isSending[0]() || tab.store.state[0].runningTurns > 0 || activity === "working" || activity === "cancelling";
   };
 
   // 倒计时心跳:只在活动标签 reconnecting 时运转,其余时间零定时器。
@@ -657,7 +659,7 @@ const App: Component = () => {
     void transport.query("session.activity", {})
       .then((activities) => {
         const activeCount = activities.filter((item) =>
-          item.state === "starting" || item.state === "working" || item.state === "waiting_user",
+          item.state === "running" || item.state === "waiting_user" || item.state === "cancelling",
         ).length;
         setQuitPrompt(activeCount);
         requestAnimationFrame(() => quitCancelButton?.focus());
@@ -899,8 +901,8 @@ const App: Component = () => {
         onCreate={() => { setSidebarDrawerOpen(false); setSection("messages"); openStartup(); }}
         creating={creating()}
         canCreate={hostIncompatible() == null}
-        onMove={(seed, workspaceId) => { void moveSessionToWorkspace(seed, workspaceId); }}
-        onDetach={(seed) => { void detachSessionFromWorkspace(seed); }}
+        onRename={renameSession}
+        onDelete={deleteSession}
       />
       <div class={settingsOpen() ? "workspace workspace-settings" : "workspace"}>
         <Show when={settingsOpen()} fallback={

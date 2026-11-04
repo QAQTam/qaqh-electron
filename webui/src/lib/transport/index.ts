@@ -25,7 +25,7 @@ export const transport: TransportBackend = new ElectronTransport();
 
 export { listenHostDiagnostics, openExternalUrl, desktopHostSurface };
 
-export { RINGING_SCHEMA, RINGING_VERSION, globalTarget, sessionTarget, workspaceTarget } from "./backend";
+export { RINGING_SCHEMA, RINGING_VERSION, execSessionTarget, globalTarget, sessionTarget, workspaceTarget } from "./backend";
 export type { CommandPrecondition, CommandTarget, RingingCommand, ServiceMethod, ServiceParams, ServiceResult } from "./backend";
 export { isDesktopRuntime } from "../desktop-host";
 export type {

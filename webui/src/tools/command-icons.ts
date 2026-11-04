@@ -114,7 +114,7 @@ export function toolCommandIcon(
   argsJson: string | undefined,
 ): CommandIcon | undefined {
   const args = parseJsonish(argsJson);
-  const command = typeof args?.command === "string" ? args.command : Array.isArray(args?.argv) ? args.argv.map(String).join(" ") : "";
+  const command = typeof args?.cmd === "string" ? args.cmd : "";
   const executableIcon = command ? commandIcon(command) : undefined;
   if (executableIcon) return executableIcon;
 

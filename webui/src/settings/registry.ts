@@ -393,7 +393,12 @@ export async function ensureAccountProfile(input: {
   kind: AccountKind;
   baseUrl: string;
   model: string;
-  contextLength: number;
+  modelMetadata?: {
+    contextWindow?: number;
+    maxOutputTokens?: number;
+    reasoningLevels?: string[];
+    defaultEffort?: string;
+  };
   makeDefault?: boolean;
 }): Promise<{ providerId: string; modelId: string } | null> {
   const identity = ACCOUNT_IDENTITY[input.kind];
@@ -412,19 +417,33 @@ export async function ensureAccountProfile(input: {
   const latest = registry();
   const provider = latest?.providers.find((item) => item.id === providerId);
   const existingModel = provider?.models.find((item) => item.id === input.model)?.definition;
-  const model: ModelDef = existingModel ?? {
-    enabled: true,
-    display_name: input.model,
-    context_window: input.contextLength,
-    max_output_tokens: 8_192,
-    reasoning_levels: [],
-    // Account catalog metadata does not establish these generic transport
-    // capabilities. Keep them off until the user or an authoritative catalog
-    // entry enables them in Provider settings.
-    capabilities: { tool_calls: false, image_input: false, native_web_search: false, reasoning: false },
-    defaults: { max_output_tokens: 8_192, native_web_search: false },
-  };
-  if (existingModel == null && !await saveModel(providerId, input.model, model)) return null;
+  if (existingModel == null) {
+    const contextWindow = input.modelMetadata?.contextWindow;
+    const maxOutputTokens = input.modelMetadata?.maxOutputTokens;
+    if (
+      contextWindow == null || !Number.isSafeInteger(contextWindow) || contextWindow <= 0 ||
+      maxOutputTokens == null || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0
+    ) {
+      setError(`模型目录没有提供 ${input.model} 的上下文窗口和最大输出；请到「设置 → 服务商」手动添加该模型，再回「接入」页启用。`);
+      return null;
+    }
+    const reasoningLevels = input.modelMetadata?.reasoningLevels ?? [];
+    const defaultEffort = input.modelMetadata?.defaultEffort;
+    const model: ModelDef = {
+      enabled: true,
+      display_name: input.model,
+      context_window: contextWindow,
+      max_output_tokens: maxOutputTokens,
+      reasoning_levels: reasoningLevels,
+      capabilities: { tool_calls: false, image_input: false, native_web_search: false, reasoning: false },
+      defaults: {
+        max_output_tokens: maxOutputTokens,
+        reasoning_effort: defaultEffort != null && reasoningLevels.includes(defaultEffort) ? defaultEffort : null,
+        native_web_search: false,
+      },
+    };
+    if (!await saveModel(providerId, input.model, model)) return null;
+  }
   if (input.makeDefault === true || latest?.defaultSelection == null) {
     const selected = await perform(async () => {
       await setDefaultSelection({ provider_id: providerId, model_id: input.model, options: {} });

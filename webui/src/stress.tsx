@@ -205,6 +205,7 @@ function ansiLog(rand: () => number, lines: number): string {
   return {
     schema: "qaqh.Ringing",
     version: 2,
+    session_contract_revision: "ringing-session-2",
     server_epoch: "visual-fixture",
     session_id: "stress",
     state: {
@@ -219,6 +220,7 @@ function ansiLog(rand: () => number, lines: number): string {
       interactions: [],
       subagents: [],
       driver: null,
+      exec_sessions: [],
     },
   };
 };
@@ -239,18 +241,17 @@ const previewWorkspaces: SidebarWorkspace[] = [
 ];
 const previewSessions: SidebarSession[] = fixtureTabs.map((item, index) => {
   const working = item.store.activity[0]() === "working";
-  // 待人态只在 `?pending=1` 时铺:默认不铺,免得每次打开 stress 预览都看到三条
-  // 假的「等授权」会话,也让视觉回归的既有基线不被这次改动整批刷掉。
+  // 等待态只在 `?pending=1` 时铺,保留默认视觉基线。
   const status: SessionRunStatus | undefined = pendingPreview
-    ? index === 1 ? "waiting_permission" : index === 2 ? "waiting_ask" : index === 3 ? "waiting_plan" : working ? "working" : "idle"
-    : working ? "working" : "idle";
+    ? index >= 1 && index <= 3 ? "waiting_user" : working ? "running" : "idle"
+    : working ? "running" : "idle";
   return {
     session_id: item.seed,
     title: item.store.title[0]() ?? `会话 ${index + 1}`,
     cwd: index < 8 ? "E:/qaqh-desktop-app" : index < 14 ? "E:/qaqh-backend" : null,
     workspace_id: index < 8 ? "ws-web" : index < 14 ? "ws-backend" : null,
     status,
-    busy: status !== "idle",
+    busy: status === "running" || status === "waiting_user",
     updated_at: 100 - index,
   };
 });
@@ -474,7 +475,7 @@ if (previewView === "approval") {
     kind: "tool_permission",
     expires_in: 120,
     details: {
-      tool_name: "exec",
+      tool_name: "exec_command",
       action_summary: "执行具有外部影响的命令",
       reason: "此操作会访问工作区以外的路径，并可能触发网络请求。请核对路径与命令内容。",
       paths: ["E:/workspace/project/dist/release/package.exe", "C:/workspace/cache/"],
@@ -673,7 +674,7 @@ function seedToolCall(turnId: string, callId: string, name: string, args = "{}")
     recomputeDerived(draft);
   });
   feed({ type: "tool_arguments_delta", call_id: callId, turn_id: turnId, tool_name: name, text: args });
-  feed({ type: "tool_started", call_id: callId, tool_name: name });
+  feed({ type: "tool_state_changed", call_id: callId, turn_id: turnId, state: { kind: "running" } });
 }
 
 function toolOutputDelta(callId: string, text: string, stream: "stdout" | "stderr" = "stdout"): void {
@@ -684,10 +685,9 @@ function finishTool(callId: string, rawOutput: string, codeDelta?: ToolStep["cod
   feed({
     type: "tool_finished",
     call_id: callId,
-    status: "finished",
+    outcome: { kind: "completed" },
     output: { kind: "inline", data: { text: rawOutput } },
     output_truncated: false,
-    error: null,
     metrics: null,
     ...(codeDelta != null ? { code_delta: codeDelta } : {}),
   });

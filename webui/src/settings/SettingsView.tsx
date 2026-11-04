@@ -629,7 +629,11 @@ export const SettingsView: Component<{
                         }}
                       />
                     </Field>
-                    <Field label={STR.settingsSubagentMaxTokens} hint={STR.settingsSubagentNewOnlyHint} compact>
+                    <Field
+                      label={STR.settingsSubagentMaxTokens}
+                      hint={STR.settingsSubagentNewOnlyHint}
+                      compact
+                    >
                       <NumberInput
                         value={config().subagent.maxTokens}
                         min={1}

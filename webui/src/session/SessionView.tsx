@@ -13,10 +13,12 @@ import IconArrowDown from "~icons/lucide/arrow-down";
 import IconLoader from "~icons/lucide/loader-circle";
 import { TurnView } from "../turn/TurnView";
 import { anchorScrollTop, clampPlaceholderHeight, EVICT_SCREENS, shouldLoadOlder, TURN_WINDOW } from "../session/pagination";
+import { sessionTurnFromSnapshot } from "../session/reducer";
 import { STR } from "../lib/strings";
 import type { SessionStore } from "../session/store";
 import { gapHeight, type Slot, type Wait } from "../session/types";
 import type { Tab } from "../tabs/store";
+import type { ExecSessionView } from "@qaqh/sdk/protocol";
 
 export const SessionView: Component<{ tab: Tab }> = (props) => {
   let scroller: HTMLDivElement | undefined;
@@ -24,8 +26,10 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
   const [unseen, setUnseen] = createSignal(false);
   const [activeNavKey, setActiveNavKey] = createSignal<string | null>(null);
   const [hoveredNavKey, setHoveredNavKey] = createSignal<string | null>(null);
+  const [execSessionLayoutVersion, setExecSessionLayoutVersion] = createSignal(0);
   const store = props.tab.store;
   const state = () => store.state[0];
+  const execSessions = createMemo(() => Object.values(state().execSessions).sort((a, b) => b.started_at_ms - a.started_at_ms));
   const slots = createMemo(() => {
     state().structureVersion;
     // keying 只读普通结构快照,避免 For 订阅 50 个 store 槽位的 100+ 叶子。
@@ -257,12 +261,13 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
   });
 
   createEffect(
-    () => [state().slots.length, tailVisibleChars(), pinned()] as const,
-    ([count, chars, follow], prev) => {
-      if (count === 0) return;
+    () => [state().slots.length, tailVisibleChars(), execSessionLayoutVersion(), pinned()] as const,
+    ([count, chars, execLayout, follow], prev) => {
+      const grewExecList = prev !== undefined && execLayout > prev[2];
+      if (count === 0 && !grewExecList) return;
       const newSlots = prev === undefined || count > prev[0];
       const grewTail = prev !== undefined && chars > prev[1];
-      if (!newSlots && !grewTail) return;
+      if (!newSlots && !grewTail && !grewExecList) return;
       if (!follow) {
         if (prev !== undefined) setUnseen(true);
         return;
@@ -301,6 +306,17 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
         onPointerDown={markUserScrolled}
         onKeyDown={markUserScrolled}
       >
+        <ExecSessionList
+          sessions={execSessions()}
+          contentStatus={store.contentStatus[0]()}
+          onLayoutChange={() => setExecSessionLayoutVersion((version) => version + 1)}
+          hasLoadedCall={(callId) => Object.values(state().turns).some((turn) => turn.steps.some((step) => step.kind === "tool" && step.id === callId))}
+          onLocateCall={(callId) => {
+            const target = scroller?.querySelector<HTMLElement>(`[data-tool-call-id="${CSS.escape(callId)}"]`);
+            target?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }}
+          store={store}
+        />
         {/* 后台标签已卸载转录,重新激活后等 attach 权威首页落地(BUG-2026-10-29):
             未 hydrate 时显式给「消息同步中」,不闪空态。 */}
         <Show when={!store.hydrated[0]()}>
@@ -378,6 +394,179 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
         </button>
       </Show>
     </div>
+  );
+};
+
+const ExecSessionList: Component<{
+  sessions: ExecSessionView[];
+  contentStatus: Record<string, "loading" | "ready" | "failed">;
+  onLayoutChange: () => void;
+  hasLoadedCall: (callId: string) => boolean;
+  onLocateCall: (callId: string) => void;
+  store: SessionStore;
+}> = (props) => {
+  let observer: ResizeObserver | undefined;
+  onCleanup(() => observer?.disconnect());
+  const observeLayout = (element: HTMLElement): void => {
+    observer?.disconnect();
+    observer = new ResizeObserver(() => props.onLayoutChange());
+    observer.observe(element);
+  };
+  return (
+    <Show when={props.sessions.length > 0}>
+      <section class="exec-session-list" aria-label="后台执行会话" ref={observeLayout}>
+        <header class="exec-session-list-head"><strong>后台执行</strong><span>{props.sessions.length}</span></header>
+        <For each={props.sessions} keyed={(session) => session.id}>{(session) => (
+          <ExecSessionCard
+            session={session()}
+            contentStatus={props.contentStatus}
+            hasLoadedCall={props.hasLoadedCall(session().origin_call_id)}
+            onLocateCall={() => props.onLocateCall(session().origin_call_id)}
+            store={props.store}
+          />
+        )}</For>
+      </section>
+    </Show>
+  );
+};
+
+const ExecSessionCard: Component<{
+  session: ExecSessionView;
+  contentStatus: Record<string, "loading" | "ready" | "failed">;
+  hasLoadedCall: boolean;
+  onLocateCall: () => void;
+  store: SessionStore;
+}> = (props) => {
+  const [pending, setPending] = createSignal<"interrupt" | "terminate" | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const [originPending, setOriginPending] = createSignal(false);
+  const [originError, setOriginError] = createSignal<string | null>(null);
+  const [originExpanded, setOriginExpanded] = createSignal(false);
+  const originSnapshot = () => props.store.state[0].originTurns[props.session.origin_turn_id];
+  const originTurn = createMemo(() => {
+    const snapshot = originSnapshot();
+    return snapshot ? sessionTurnFromSnapshot(snapshot) : null;
+  });
+  const canLocateOriginCall = createMemo(() => props.hasLoadedCall || (
+    originExpanded()
+    && originTurn()?.steps.some((step) => step.kind === "tool" && step.id === props.session.origin_call_id) === true
+  ));
+  const outputRef = () => props.session.output?.kind === "ref" ? props.session.output.data.content_ref : null;
+  const outputText = () => props.session.output?.kind === "inline"
+    ? props.session.output.data.text
+    : props.session.output_preview;
+  let outputScroller: HTMLPreElement | undefined;
+  let outputFollowing = true;
+  let outputFrame: number | undefined;
+  createEffect(() => outputText(), () => {
+    if (outputFrame != null) cancelAnimationFrame(outputFrame);
+    outputFrame = requestAnimationFrame(() => {
+      outputFrame = undefined;
+      if (outputFollowing && outputScroller) outputScroller.scrollTop = outputScroller.scrollHeight;
+    });
+  });
+  onCleanup(() => { if (outputFrame != null) cancelAnimationFrame(outputFrame); });
+  const active = () => props.session.state.kind === "running";
+  const nonzeroExit = () => props.session.state.kind === "finished"
+    && props.session.state.outcome.kind === "exited"
+    && props.session.state.outcome.exit_code !== 0;
+  const status = (): string => {
+    const state = props.session.state;
+    if (state.kind === "running") return "运行中";
+    if (state.kind === "stopping") return state.reason === "interrupt" ? "正在中断" : state.reason === "terminate" ? "正在终止" : "正在停止";
+    const outcome = state.outcome;
+    if (outcome.kind === "exited") return outcome.exit_code === 0 ? "已退出 · 0" : `退出码 ${outcome.exit_code}`;
+    if (outcome.kind === "cancelled") return `已取消 · ${outcome.reason}${outcome.exit_code == null ? "" : ` · 退出码 ${outcome.exit_code}`}`;
+    if (outcome.kind === "timed_out") return `已超时${outcome.exit_code == null ? "" : ` · 退出码 ${outcome.exit_code}`}`;
+    return `执行已中断 · ${outcome.reason}`;
+  };
+  const stop = async (action: "interrupt" | "terminate"): Promise<void> => {
+    setPending(action);
+    setError(null);
+    try {
+      if (action === "interrupt") await props.store.interruptExecSession(props.session.id);
+      else await props.store.terminateExecSession(props.session.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPending(null);
+    }
+  };
+  const toggleOrigin = async (): Promise<void> => {
+    if (originSnapshot()) {
+      setOriginExpanded((expanded) => !expanded);
+      return;
+    }
+    setOriginPending(true);
+    setOriginError(null);
+    try {
+      await props.store.loadExecSessionOrigin(props.session.origin_turn_id);
+      setOriginExpanded(true);
+    } catch (reason) {
+      setOriginError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setOriginPending(false);
+    }
+  };
+  return (
+    <article class={{ "exec-session-card": true, failed: nonzeroExit() }}>
+      <div class="exec-session-card-head">
+        <strong class="exec-session-status">{status()}</strong>
+        <time>{new Date(props.session.started_at_ms).toLocaleString()}</time>
+        <Show when={props.session.finished_at_ms != null}><time>结束 {new Date(props.session.finished_at_ms!).toLocaleString()}</time></Show>
+        <Show when={active()}>
+          <span class="spacer" />
+          <button type="button" class="ghost-mini" disabled={pending() !== null} onClick={() => void stop("interrupt")}>{pending() === "interrupt" ? "中断中…" : "中断"}</button>
+          <button type="button" class="ghost-mini danger" disabled={pending() !== null} onClick={() => void stop("terminate")}>{pending() === "terminate" ? "终止中…" : "终止"}</button>
+        </Show>
+      </div>
+      <pre class="exec-session-command">{props.session.command}</pre>
+      <div class="exec-session-meta">
+        <span title={props.session.id}>会话 {props.session.id}</span>
+        <span title={`会话 ${props.store.seed} / 回合 ${props.session.origin_turn_id} / 调用 ${props.session.origin_call_id}`}>来源 {props.session.origin_turn_id} · {props.session.origin_call_id}</span>
+        <Show when={canLocateOriginCall()}><button type="button" class="ghost-mini" onClick={props.onLocateCall}>定位来源调用</button></Show>
+        <button type="button" class="ghost-mini" disabled={originPending()} onClick={() => void toggleOrigin()}>
+          {originPending() ? "加载来源回合…" : originSnapshot() ? originExpanded() ? "收起来源回合" : "查看来源回合" : "读取来源回合"}
+        </button>
+      </div>
+      <Show when={originError()}><div class="exec-session-note exec-session-error" role="alert">{originError()}</div></Show>
+      <Show when={originExpanded() && originTurn()}>
+        {(turn) => <div class="exec-session-origin">
+          <TurnView turn={turn()} waits={[]} store={props.store} isLatestTurn={false} />
+        </div>}
+      </Show>
+      <Show when={outputText() || outputRef()}>
+        <pre
+          ref={outputScroller}
+          class="exec-session-output"
+          tabindex={0}
+          role="region"
+          aria-label="执行会话输出"
+          onWheel={(event) => { if (event.deltaY < 0) outputFollowing = false; }}
+          onPointerDown={() => { outputFollowing = false; }}
+          onTouchStart={() => { outputFollowing = false; }}
+          onKeyDown={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key)) outputFollowing = false; }}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            if (element.scrollHeight - element.scrollTop - element.clientHeight <= 2) outputFollowing = true;
+          }}
+        >{outputText()}</pre>
+      </Show>
+      <Show when={outputRef() && props.contentStatus[outputRef()!] === "loading"}>
+        <div class="exec-session-note" role="status"><IconLoader class="spin" />正在加载完整输出…</div>
+      </Show>
+      <Show when={!outputText() && !outputRef() && props.session.state.kind === "running"}>
+        <div class="exec-session-note">等待命令输出…</div>
+      </Show>
+      <div class="exec-session-notes">
+        <Show when={props.session.preview_start_offset > 0}><span>当前显示输出尾部</span></Show>
+        <Show when={props.session.stream_dropped_bytes > 0}><span>实时流缺失 {props.session.stream_dropped_bytes} 字节</span></Show>
+        <Show when={props.session.capture_omitted_bytes > 0}><span>完整记录省略 {props.session.capture_omitted_bytes} 字节</span></Show>
+        <Show when={props.session.state.kind === "finished" && !props.session.output_complete}><span>输出未完整收尾</span></Show>
+        <Show when={outputRef() && props.contentStatus[outputRef()!] === "failed"}><span>完整输出加载失败，仍显示实时尾窗</span></Show>
+        <Show when={error()}><span class="exec-session-error">{error()}</span></Show>
+      </div>
+    </article>
   );
 };
 

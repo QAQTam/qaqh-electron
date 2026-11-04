@@ -4,11 +4,10 @@
  * ## 为什么在前端
  *
  * 后端（SDK / daemon）短期内没有 per-provider 的模型结构可挂（`mutilproviderconfig`
- * 那类东西），而"这个模型支持哪些档位、窗口多大、默认哪档"是**展示与选择**的事，
- * 不影响请求形状（请求形状由后端的 compat 收口）。所以照 Codex 的做法：
- * 上游目录只给 slug/displayName（`siwc.models` 实测如此），**其余特判自己收一份**。
- * 代价要说清：这份数据是**我们维护**的，上游新增模型时不会自动出现——目录里有而
- * 这里没有的模型，一律走保守缺省（见 `modelSpec().known`）。
+ * 那类东西），而"这个模型支持哪些档位、默认哪档"是**展示与选择**的事，
+ * 不影响请求形状（请求形状由后端的 compat 收口）。因此这里只维护档位差异和展示名：
+ * 上游目录给 slug/displayName 与部分模型能力；套餐目录没有窗口元数据时，不在这里
+ * 猜上下文窗口或输出上限。这里仅维护展示名和推理档位差异。
  *
  * ## 与 Codex 的对应关系
  *
@@ -16,7 +15,7 @@
  * |---|---|
  * | `defaultThinkingEffortByModelSlug` | `defaultEffort` |
  * | `sliderSettings[{modelSlug, thinkingEffort}]` | `efforts`（该模型允许的档位） |
- * | 模型目录里的 `modelContextWindow` | `contextWindow` |
+ * | 模型目录里的模型能力 | `efforts` |
  *
  * 档位阶梯与后端**逐字同序**（`qaqh-gate/src/types.rs::EFFORT_LADDER` 六档：
  * low → medium → high → xhigh → max → ultra），可用性再由后端按端点 compat 钳制
@@ -47,8 +46,6 @@ export type ReasoningTier = "low" | "medium" | "high" | "xhigh" | "max" | "ultra
  */
 export const EFFORT_LADDER: readonly ReasoningTier[] = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
-/** 未收录模型的保守缺省。**不要**在这里给"更强"的值：猜大了会撞上游上限。 */
-export const DEFAULT_CONTEXT_WINDOW = 128_000;
 export const DEFAULT_EFFORT: ReasoningTier = "medium";
 
 /**
@@ -67,10 +64,6 @@ export type ModelSpec = {
   efforts?: readonly ReasoningTier[];
   /** 默认档位（Codex 的 `defaultThinkingEffortByModelSlug`）。 */
   defaultEffort?: ReasoningTier;
-  /** 上下文窗口（本地压缩分母）。 */
-  contextWindow?: number;
-  /** 备注：给后来的人看"这条为什么这么写"。 */
-  notes?: string;
 };
 
 /**
@@ -84,23 +77,20 @@ export const MODEL_SPECS: {
   byok: Record<string, ModelSpec>;
 } = {
   plan: {
-    // 套餐模式统一 565K（产品口径）：上游目录不给窗口，按同一个数字收口，
-    // 免得每个模型各写一个没人验证过的值。
-    "gpt-6.1-sol": { displayName: "GPT-6.1 Sol", contextWindow: 565_000, efforts: PLAN_EFFORTS },
-    "gpt-6-astra": { displayName: "GPT-6-Astra", contextWindow: 565_000, efforts: PLAN_EFFORTS },
-    "gpt-6-sol": { displayName: "GPT-6-Sol", contextWindow: 565_000, efforts: PLAN_EFFORTS },
-    "gpt-6-luna": { displayName: "GPT-6-Luna", contextWindow: 565_000, efforts: PLAN_EFFORTS },
-    "gpt-5.6-sol": { displayName: "GPT-5.6-Sol", contextWindow: 565_000, efforts: PLAN_EFFORTS },
-    "gpt-5.6-terra": { displayName: "GPT-5.6-Terra", contextWindow: 565_000, efforts: PLAN_EFFORTS },
-    "gpt-5.6-luna": { displayName: "GPT-5.6-Luna", contextWindow: 565_000, efforts: PLAN_EFFORTS },
+    "gpt-6.1-sol": { displayName: "GPT-6.1 Sol", efforts: PLAN_EFFORTS },
+    "gpt-6-astra": { displayName: "GPT-6-Astra", efforts: PLAN_EFFORTS },
+    "gpt-6-sol": { displayName: "GPT-6-Sol", efforts: PLAN_EFFORTS },
+    "gpt-6-luna": { displayName: "GPT-6-Luna", efforts: PLAN_EFFORTS },
+    "gpt-5.6-sol": { displayName: "GPT-5.6-Sol", efforts: PLAN_EFFORTS },
+    "gpt-5.6-terra": { displayName: "GPT-5.6-Terra", efforts: PLAN_EFFORTS },
+    "gpt-5.6-luna": { displayName: "GPT-5.6-Luna", efforts: PLAN_EFFORTS },
   },
   // BYOK：空是有意的。收录一条就必须能说出它的差异；说不出就别写。
   byok: {},
   /*
    * DeepSeek 账号（`deepseek_account`）：**实测**（2026-10-14，
    * `GET https://api.deepseek.com/models` 带账号凭据；`examples/probe_models.rs`
-   * 复核）。平台每条给的是：`context_window: 1048576`、`max_output_tokens: 393216`、
-   * `effort.default_level: "high"`、`input_modalities` 见下、以及
+   * 复核）。平台每条给 `effort.default_level: "high"`、`input_modalities` 及
    * `api_capabilities.anthropic_messages.system_prompt_update`（flash = `in-history`，
    * pro = `leading-only`——和参照实现声明的模型能力对得上）。
    *
@@ -113,19 +103,13 @@ export const MODEL_SPECS: {
   account: {
     "deepseek-flash": {
       displayName: "DeepSeek-V4.1-Flash",
-      contextWindow: 1_048_576,
       efforts: ["low", "high", "max"],
       defaultEffort: "high",
-      notes:
-        "实测：context_window 1048576 / max_output_tokens 393216 / input_modalities 含 image（多模态）；平台档位 low|high|max（原样收，含 max）",
     },
     "deepseek-v4-pro": {
       displayName: "DeepSeek-V4-Pro",
-      contextWindow: 1_048_576,
       efforts: ["low", "high", "max"],
       defaultEffort: "high",
-      notes:
-        "实测：context_window 1048576 / max_output_tokens 393216 / 纯文本（input_modalities 只有 text）；档位同 flash",
     },
   },
 };
@@ -135,7 +119,7 @@ export type SpecBucket = "plan" | "account" | "byok";
 
 export type ModelSpecLookup = {
   spec: ModelSpec;
-  /** `false` = 合集里没有这条，字段全是保守缺省（UI 该据此标「未收录」）。 */
+  /** `false` = 合集里没有这条，UI 据此标「未收录」。 */
   known: boolean;
 };
 
@@ -158,11 +142,6 @@ export function modelDefaultEffort(spec: ModelSpec): ReasoningTier {
   const allowed = modelEfforts(spec);
   if (spec.defaultEffort != null && allowed.includes(spec.defaultEffort)) return spec.defaultEffort;
   return allowed[0] ?? DEFAULT_EFFORT;
-}
-
-/** 该模型的上下文窗口（缺省 = 保守值，不是"很大"）。 */
-export function modelContextWindow(spec: ModelSpec): number {
-  return spec.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 }
 
 /**

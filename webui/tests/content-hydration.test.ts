@@ -3,6 +3,7 @@ import { transport, desktopHostSurface, type StreamHandlers } from "../src/lib/t
 import { SessionStore } from "../src/session/store";
 import { ContentLoader } from "../src/session/content-loader";
 import type { ContentValue } from "../src/api/qaqh/ContentValue";
+import type { ExecSessionView } from "../src/api/qaqh/ExecSessionView";
 import type { SessionBootstrap } from "../src/api/qaqh/SessionBootstrap";
 import type { TimelineEntry } from "../src/api/qaqh/TimelineEntry";
 import { contentRef, inline, sessionBootstrap } from "./session-fixtures";
@@ -38,8 +39,9 @@ function snapshot(sessionId = "content-session"): SessionBootstrap {
     turns: [{ turn_id: "t1", input_id: "in1", mode: "normal", outcome: null }],
     timeline,
     tools: [{
-      call_id: "call1", turn_id: "t1", tool_name: "read", args: { path: "README.md" }, status: "finished",
-      output: contentRef(refs[3]!), output_truncated: false, error: null, metrics: null,
+      call_id: "call1", turn_id: "t1", tool_name: "read", args: { path: "README.md" },
+      state: { kind: "finished", outcome: { kind: "completed" } },
+      output: contentRef(refs[3]!), output_truncated: false, metrics: null,
     }],
   });
 }
@@ -79,6 +81,34 @@ test("flat bootstrap and cursor arrive together; referenced content hydrates on 
   await store.loadBootstrap();
   expect(store.state[0].turns.t1?.answer?.text).toBe(bodies[2]);
   expect(read).toHaveBeenCalledTimes(4);
+});
+
+test("completed exec session output references hydrate from bootstrap", async () => {
+  const initial = sessionBootstrap("exec-content-session");
+  const execSession: ExecSessionView = {
+    id: "exec-1",
+    owner_session_id: initial.session_id,
+    origin_turn_id: "turn-1",
+    origin_call_id: "call-1",
+    state: { kind: "finished", outcome: { kind: "exited", exit_code: 0 } },
+    tty: false,
+    command: "printf output",
+    started_at_ms: 1,
+    finished_at_ms: 2,
+    next_offset: 6,
+    output_preview: "output",
+    preview_start_offset: 0,
+    output_complete: true,
+    capture_omitted_bytes: 0,
+    stream_dropped_bytes: 0,
+    output: contentRef(refs[3]!),
+  };
+  initial.state.exec_sessions = [execSession];
+  const { store, read } = fixture(initial);
+
+  await store.activate();
+  await vi.waitFor(() => expect(store.state[0].execSessions[execSession.id]?.output).toEqual(inline(bodies[3]!)));
+  expect(read).toHaveBeenCalledTimes(1);
 });
 
 test("a replaced live content reference cannot be overwritten by its older download", async () => {

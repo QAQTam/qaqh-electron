@@ -11,13 +11,10 @@ type Tab = { id: string; seed: string; store: SessionStore };
 const Dot: Component<{ store: SessionStore; active: boolean }> = (props) => {
   const kind = (): { cls: string; label: string } | null => {
     const activity = props.store.activity[0]();
-    // 当前需要用户处理的状态优先于普通的新回复提示；历史失败轮次不代表 session 仍处于失败态。
+    // 当前需要用户处理的状态优先于普通的新回复提示。
     if (activity === "waiting_user" || props.store.pending[0]().length > 0) return { cls: "warn", label: STR.waitingYou };
-    if (activity === "failed") {
-      return { cls: "err", label: STR.error };
-    }
     if (activity === "disconnected") return { cls: "off", label: STR.disconnected };
-    if (activity === "working") return { cls: "run", label: STR.running };
+    if (activity === "working" || activity === "cancelling") return { cls: "run", label: STR.running };
     if (!props.active && props.store.hasNewReply[0]()) return { cls: "new", label: STR.hasNewReply };
     if (activity === "interrupted") return { cls: "paused", label: STR.interrupted };
     if (activity === "idle") return { cls: "done", label: STR.idle };

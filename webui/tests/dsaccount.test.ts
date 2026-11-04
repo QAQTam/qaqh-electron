@@ -17,7 +17,7 @@ import {
   type DsAccountStatus,
 } from "../src/dsaccount/state";
 import { runDeepSeekSignIn, type DsSignInDeps } from "../src/dsaccount/flow";
-import { modelContextWindow, modelEfforts, modelSpec } from "../src/models/specs";
+import { modelEfforts, modelSpec } from "../src/models/specs";
 
 describe("远端撤销的提示", () => {
   it("只有最终没成功才说话：成功 / 进行中 / 从未登出都不出字", () => {
@@ -300,15 +300,13 @@ describe("DeepSeek 账号的模型特判", () => {
     // 平台声明的是 low|high|max，我们阶梯里本来就有同名的 `max`（后端第五档），
     // 所以原样放它；**不**用我们的 `ultra` 顶替（那是 Codex 的说法，平台不认）。
     expect(modelEfforts(flash.spec)).toEqual(["low", "high", "max"]);
-    // 平台自报的是 1048576（1 MiB），不是四舍五入的 1,000,000。
-    expect(modelContextWindow(flash.spec)).toBe(1_048_576);
     expect(modelSpec("account", "deepseek-v4-pro").known).toBe(true);
   });
 
-  it("未收录的模型走保守缺省：窗口不许猜大", () => {
+  it("未收录的模型走通用推理档位", () => {
     const unknown = modelSpec("account", "deepseek-next");
     expect(unknown.known).toBe(false);
-    expect(modelContextWindow(unknown.spec)).toBe(128_000);
+    expect(modelEfforts(unknown.spec)).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
   });
 
   it("桶是分开的：两家的 slug 互不串门", () => {

@@ -11,4 +11,4 @@
  * 驻留语义：`canceled` / `error` 是**最近一个回合的终态**，驻留到下一回合
  * 开始（`TurnStarted` 后进入 `working`）；`idle` 表示 loop 空闲等待输入。
  */
-export type SessionRunStatus = "not_running" | "idle" | "working" | "waiting_permission" | "waiting_ask" | "waiting_plan" | "canceled" | "error";
+export type SessionRunStatus = "not_running" | "idle" | "running" | "waiting_user" | "cancelling";

@@ -1,10 +1,8 @@
 /**
  * 会话「需要人类响应」的呈现映射 —— 纯函数,无 Solid / 无 DOM。
  *
- * 后端 `SessionRunStatus`(8 态,`src/api/qaqh/SessionRunStatus.ts`)里,有三态
- * 的语义就是「球在用户这边」:等工具授权、等回答、等计划评审。侧栏给这三态
- * 弹一张卡,其余五态(`not_running` / `idle` / `working` / `canceled` / `error`)
- * 一律不弹——`canceled`/`error` 是上一回合的终态驻留,不是待办。
+ * `SessionRunStatus` 只告诉我们是否在等人,不再编码交互种类。活动挑战在内存中
+ * 时用它显示具体卡片;否则用统一的「等待响应」文案。
  *
  * 判据与宿主 `session_is_busy`(`qaqh-electron/src/main/ipc-handlers.ts:155`)同源但**不等价**:
  * 那边多算一个 `working`(「还挂着事」),这边只取要人动手的三个。
@@ -14,7 +12,7 @@ import type { SidebarSession } from "../tabs/store";
 import type { ApprovalView } from "../lib/transport";
 import { STR } from "../lib/strings";
 
-export type PendingKind = "permission" | "ask" | "plan";
+export type PendingKind = "permission" | "ask" | "plan" | "interaction";
 
 /** 卡片形态:`pending` = 待人响应;`working` = 回合在跑(沿用旧状态点)。 */
 export type PendingPhase = "pending" | "working";
@@ -37,7 +35,7 @@ export interface PendingPresentation {
  */
 export function runStatusOf(session: Pick<SidebarSession, "status" | "busy">): SessionRunStatus {
   if (session.status != null) return session.status;
-  return session.busy === true ? "working" : "idle";
+  return session.busy === true ? "running" : "idle";
 }
 
 /** `status` 或本地实时审批(fast path) → 待响应呈现;非待人态返回 null。 */
@@ -56,16 +54,9 @@ export function pendingPresentation(
         return { kind: "plan", label: STR.pendingPlan, ariaLabel: `${title}:${STR.pendingPlan}`, phase: "pending" };
     }
   }
-  switch (runStatusOf(session)) {
-    case "waiting_permission":
-      return { kind: "permission", label: STR.pendingPermission, ariaLabel: `${title}:${STR.pendingPermission}`, phase: "pending" };
-    case "waiting_ask":
-      return { kind: "ask", label: STR.pendingAsk, ariaLabel: `${title}:${STR.pendingAsk}`, phase: "pending" };
-    case "waiting_plan":
-      return { kind: "plan", label: STR.pendingPlan, ariaLabel: `${title}:${STR.pendingPlan}`, phase: "pending" };
-    default:
-      return null;
-  }
+  return runStatusOf(session) === "waiting_user"
+    ? { kind: "interaction", label: STR.pendingInteraction, ariaLabel: `${title}:${STR.pendingInteraction}`, phase: "pending" }
+    : null;
 }
 
 /**
@@ -79,5 +70,6 @@ export function workingOnly(
   hasFastPending = false,
 ): boolean {
   if (hasFastPending) return false;
-  return runStatusOf(session) === "working";
+  const status = runStatusOf(session);
+  return status === "running" || status === "cancelling";
 }

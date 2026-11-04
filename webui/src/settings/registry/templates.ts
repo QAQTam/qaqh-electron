@@ -11,8 +11,6 @@ export interface ProviderTemplate {
   badge: string;
   baseUrl: string;
   wire: string;
-  defaultContextLength: number;
-  defaultMaxTokens: number;
   keyHint: string;
   keyRequired: boolean;
   models: ModelOption[];
@@ -26,8 +24,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     badge: "官方端点",
     baseUrl: "https://api.deepseek.com",
     wire: "chat",
-    defaultContextLength: 128000,
-    defaultMaxTokens: 8192,
     keyHint: "sk-...",
     keyRequired: true,
     modelPlaceholder: "输入模型代号（如 deepseek-flash / deepseek-v4-pro）",
@@ -39,8 +35,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     badge: "Claude 官方",
     baseUrl: "https://api.anthropic.com",
     wire: "messages",
-    defaultContextLength: 200000,
-    defaultMaxTokens: 8192,
     keyHint: "sk-ant-...",
     keyRequired: true,
     modelPlaceholder: "输入模型代号（如 opus5 / fable5 / claude-3-7-sonnet）",
@@ -52,8 +46,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     badge: "官方端点",
     baseUrl: "https://api.openai.com/v1",
     wire: "chat",
-    defaultContextLength: 128000,
-    defaultMaxTokens: 16384,
     keyHint: "sk-proj-...",
     keyRequired: true,
     modelPlaceholder: "输入模型代号（如 gpt-6-sol / gpt-4o / o3-mini）",
@@ -65,8 +57,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     badge: "官方端点",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     wire: "gemini",
-    defaultContextLength: 1048576,
-    defaultMaxTokens: 8192,
     keyHint: "AIzaSy...",
     keyRequired: true,
     modelPlaceholder: "输入模型代号（如 gemini-3.8 / gemini-4 / gemini-2.0-flash）",
@@ -78,8 +68,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     badge: "云聚合端点",
     baseUrl: "https://api.siliconflow.cn/v1",
     wire: "chat",
-    defaultContextLength: 64000,
-    defaultMaxTokens: 8192,
     keyHint: "sk-...",
     keyRequired: true,
     modelPlaceholder: "输入模型代号（或填 Key 后点击【探测在线模型】自动获取）",
@@ -91,8 +79,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     badge: "月之暗面",
     baseUrl: "https://api.moonshot.cn/v1",
     wire: "chat",
-    defaultContextLength: 128000,
-    defaultMaxTokens: 8192,
     keyHint: "sk-...",
     keyRequired: true,
     modelPlaceholder: "输入模型代号（如 kimi-latest / moonshot-v1-128k）",
@@ -104,8 +90,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     badge: "开放平台",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     wire: "chat",
-    defaultContextLength: 128000,
-    defaultMaxTokens: 8192,
     keyHint: "key.secret",
     keyRequired: true,
     modelPlaceholder: "输入模型代号（如 glm-4-plus）",
@@ -117,8 +101,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     badge: "本地免密",
     baseUrl: "http://localhost:11434/v1",
     wire: "chat",
-    defaultContextLength: 32768,
-    defaultMaxTokens: 4096,
     keyHint: "本地模型无需填写密钥",
     keyRequired: false,
     modelPlaceholder: "点击【探测在线模型】自动拉取本地已下载模型",
@@ -130,8 +112,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     badge: "通用兼容",
     baseUrl: "https://api.your-provider.com/v1",
     wire: "chat",
-    defaultContextLength: 64000,
-    defaultMaxTokens: 4096,
     keyHint: "API Key",
     keyRequired: false,
     modelPlaceholder: "输入自定义端点的模型标识符",

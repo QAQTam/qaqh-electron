@@ -2,10 +2,9 @@
  * Legacy profile shortcuts. Profile update is not part of the current backend contract,
  * so this view only creates/deletes profiles and changes the global model selection.
  */
-import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js";
+import { createMemo, createSignal, For, Show, type Component } from "solid-js";
 
 import { Field, Section, TextInput } from "./controls";
-import { Select } from "../ui/Select";
 import { toast } from "../ui/toast";
 import {
   credentialLabel,
@@ -19,7 +18,7 @@ import {
   type RegistryProfile,
 } from "./registry";
 
-const optionalPositive = (raw: string): number | null | undefined => {
+const optionalMaxOutput = (raw: string): number | null | undefined => {
   const text = raw.trim();
   if (text === "") return null;
   const value = Number(text);
@@ -28,51 +27,33 @@ const optionalPositive = (raw: string): number | null | undefined => {
 
 const ProfileEditor: Component<{ onClose: () => void }> = (props) => {
   const [name, setName] = createSignal("");
-  const [providerId, setProviderId] = createSignal(registry()?.providers[0]?.id ?? "");
+  const [providerId, setProviderId] = createSignal("");
   const [modelId, setModelId] = createSignal("");
   const [effort, setEffort] = createSignal("");
   const [maxTokens, setMaxTokens] = createSignal("");
   const providers = createMemo(() => registry()?.providers ?? []);
-  const selectedProvider = createMemo(() => providers().find((provider) => provider.id === providerId()));
+  const selectedProvider = createMemo(() => providers().find((provider) => provider.id === providerId().trim()));
   const models = createMemo(() => selectedProvider()?.models.filter((model) => model.definition.enabled) ?? []);
-  const selectedModel = createMemo(() => models().find((model) => model.id === modelId()));
-  const providerOptions = createMemo(() => providers().map((provider) => ({
-    value: provider.id,
-    label: `${provider.name} · ${credentialLabel(provider.credential)}`,
-  })));
-  const modelOptions = createMemo(() => models().map((model) => ({
-    value: model.id,
-    label: model.definition.display_name == null || model.definition.display_name === ""
-      ? model.id
-      : `${model.definition.display_name} · ${model.id}`,
-  })));
-  const effortOptions = createMemo(() => [
-    { value: "", label: "跟随模型默认" },
-    ...(selectedModel()?.definition.reasoning_levels ?? []).map((level) => ({ value: level, label: level })),
-  ]);
-
-  createEffect(models, (available) => {
-    if (!available.some((model) => model.id === modelId())) {
-      setModelId(available[0]?.id ?? "");
-      setEffort("");
-      setMaxTokens("");
-    }
-  });
+  const selectedModel = createMemo(() => models().find((model) => model.id === modelId().trim()));
 
   const save = async (): Promise<void> => {
     const cleanName = name().trim();
-    const provider = selectedProvider();
-    const model = selectedModel();
-    const tokens = optionalPositive(maxTokens());
+    const cleanProviderId = providerId().trim();
+    const cleanModelId = modelId().trim();
+    const cleanEffort = effort().trim();
+    const tokens = optionalMaxOutput(maxTokens());
     if (cleanName === "") { toast("请填写存档名称", "err"); return; }
-    if (provider == null || model == null) { toast("请选择服务商目录中的启用模型", "err"); return; }
-    if (tokens === undefined) { toast("最大输出必须是大于 0 的整数，留空表示跟随模型默认", "err"); return; }
+    if (cleanProviderId === "" || cleanModelId === "") { toast("请填写服务商 ID 和模型 ID", "err"); return; }
+    if (tokens === undefined) {
+      toast("最大输出必须是正整数，留空表示跟随模型默认", "err");
+      return;
+    }
 
     const saved = await saveProfile({
       name: cleanName,
-      provider: provider.id,
-      model: model.id,
-      effort: effort() === "" ? null : effort(),
+      provider: cleanProviderId,
+      model: cleanModelId,
+      effort: cleanEffort === "" ? null : cleanEffort,
       maxTokens: tokens,
     });
     if (saved != null) {
@@ -90,23 +71,23 @@ const ProfileEditor: Component<{ onClose: () => void }> = (props) => {
       <Field label="存档名称" wide>
         <TextInput value={name()} onInput={setName} placeholder="例如：快速审阅" />
       </Field>
-      <Field label="服务商">
-        <Select value={providerId()} options={providerOptions()} onChange={setProviderId} ariaLabel="服务商" />
+      <Field label="服务商 ID" hint="填写服务商目录中已配置的 ID">
+        <TextInput value={providerId()} onInput={setProviderId} />
       </Field>
-      <Field label="模型">
-        <Select value={modelId()} options={modelOptions()} onChange={(value) => { setModelId(value); setEffort(""); setMaxTokens(""); }} ariaLabel="模型" />
+      <Field label="模型 ID" hint="填写该服务商目录中已启用模型的 ID">
+        <TextInput value={modelId()} onInput={setModelId} />
       </Field>
       <Show when={selectedModel()}>
         {(model) => <p class="field-hint settings-row-wide">模型上下文窗口：{model().definition.context_window.toLocaleString()} tokens</p>}
       </Show>
-      <Field label="推理强度">
-        <Select value={effort()} options={effortOptions()} onChange={setEffort} ariaLabel="推理强度" />
+      <Field label="推理强度" hint="留空 = 跟随模型默认">
+        <TextInput value={effort()} onInput={setEffort} placeholder="例如：low、medium、high" />
       </Field>
       <Field label="最大输出 tokens" hint="留空 = 跟随模型默认">
-        <TextInput type="number" value={maxTokens()} onInput={setMaxTokens} placeholder={String(selectedModel()?.definition.defaults.max_output_tokens ?? selectedModel()?.definition.max_output_tokens ?? "")}/>
+        <TextInput type="number" value={maxTokens()} onInput={setMaxTokens} />
       </Field>
       <div class="wizard-actions">
-        <button type="button" class="primary-mini button-primary" disabled={registryBusy() || providers().length === 0 || models().length === 0} onClick={() => void save()}>
+        <button type="button" class="primary-mini button-primary" disabled={registryBusy()} onClick={() => void save()}>
           {registryBusy() ? "保存中…" : "创建存档"}
         </button>
       </div>

@@ -7,7 +7,7 @@
  * - 连接状态来自 projection://status
  */
 import { createSignal, createStore } from "solid-js";
-import { transport, desktopHostSurface, sessionTarget, type ApprovalView, type StreamHandlers, type ProjectionStatusWire, type TodoItemWire } from "../lib/transport";
+import { transport, desktopHostSurface, execSessionTarget, sessionTarget, type ApprovalView, type StreamHandlers, type ProjectionStatusWire, type TodoItemWire } from "../lib/transport";
 import { now } from "../lib/time";
 import { onConfigChanged } from "../lib/config-events";
 import { applySessionBootstrap, applySessionEvent, contentRefsInPayload, emptySession, forceSealTurn, pendingContentRefs, resolveContentRef } from "./reducer";
@@ -541,6 +541,9 @@ export class SessionStore {
         this.activeOutputActiveMs = 0;
         this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
         break;
+      case "turn_phase_changed":
+        this.activity[1](event.phase === "waiting_user" ? "waiting_user" : event.phase === "cancelling" ? "cancelling" : "working");
+        break;
       case "turn_ended": {
         if (event.outcome.kind === "finished" && event.outcome.data.usage) this.updateComposerUsage(event.outcome.data.usage);
         this.clearCancelWatchdog();
@@ -564,6 +567,11 @@ export class SessionStore {
         void this.refreshTodos();
         this.onSessionsChanged?.();
         break;
+      case "exec_session_started":
+      case "exec_session_state_changed":
+      case "exec_session_finished":
+        this.onSessionsChanged?.();
+        break;
       case "interaction_requested":
       case "interaction_resolved":
         this.approvalGeneration++;
@@ -578,7 +586,8 @@ export class SessionStore {
         this.onSessionsChanged?.();
         break;
       case "tool_arguments_delta":
-      case "tool_started":
+      case "tool_state_changed":
+      case "exec_session_output_delta":
       case "tool_output_delta":
       case "message_delta":
       case "subagent_updated":
@@ -953,7 +962,8 @@ export class SessionStore {
   }
 
   private activityIsWorking(): boolean {
-    return this.activity[0]() === "working";
+    const activity = this.activity[0]();
+    return activity === "working" || activity === "cancelling";
   }
 
   /** 0→N 开区间 / N→0 闭区间,挂到当前运行回合(spec D3:已工作扣除等待)。 */
@@ -1003,6 +1013,22 @@ export class SessionStore {
       this.isSending[1](false);
       throw error;
     }
+  }
+
+  async interruptExecSession(id: string): Promise<void> {
+    await transport.command({ type: "exec_session.interrupt" }, execSessionTarget(id));
+  }
+
+  async terminateExecSession(id: string): Promise<void> {
+    await transport.command({ type: "exec_session.terminate" }, execSessionTarget(id));
+  }
+
+  /** Load one evicted source turn for a session-level execution card. */
+  async loadExecSessionOrigin(turnId: string): Promise<void> {
+    if (this.stateGet.originTurns[turnId]) return;
+    const snapshot = await transport.query("session.turn", { session_id: this.seed, turn_id: turnId });
+    this.mutate((draft) => { draft.originTurns[turnId] = snapshot; });
+    this.hydrateContent(contentRefsInPayload(snapshot));
   }
 
   async sendMessage(text: string): Promise<void> {

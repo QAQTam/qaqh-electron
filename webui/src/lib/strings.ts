@@ -94,10 +94,11 @@ export const STR = {
   askRefresh: "重新获取",
   /** 应答失败:challenge 一次性,失败即失效,原因只能走 toast。 */
   approvalRespondFailed: (reason: string) => `应答未生效：${reason}`,
-  /** 侧栏待响应卡文案(§6.2):与后端 `SessionRunStatus` 三态一一对应。 */
+  /** 侧栏待响应卡文案(§6.2):具体种类未知时显示统一等待状态。 */
   pendingPermission: "请求授权",
   pendingAsk: "请求回答",
   pendingPlan: "计划评审",
+  pendingInteraction: "等待响应",
   noSession: "没有可用会话。",
   bootFailed: "连接失败。",
   /** 切换会话/重新激活时,权威快照尚未落地的过渡态(spec:后台标签卸载转录后重建)。 */
@@ -128,10 +129,17 @@ export const STR = {
   netLocal: "本地",
   netLan: "局域网",
 
-  // 侧栏会话行的「…」菜单(只动组织归属,不动会话运行目录)。
+  // 侧栏会话行的「…」菜单。
   sessionActions: "会话操作",
-  moveToWorkspace: "移动到工作区",
-  detachWorkspace: "移出工作区",
+  renameSession: "重命名",
+  deleteSession: "删除",
+  confirmDeleteSession: (title: string) => "确定删除“" + title + "”吗？",
+  deleteSessionWarning: "会话及其本地记录将被永久删除。",
+  cancelAction: "取消",
+  saveAction: "保存",
+  confirmDeleteAction: "删除会话",
+  renameSessionFailed: "重命名会话失败",
+  deleteSessionFailed: "删除会话失败",
   moveSessionFailed: "移动会话失败",
   detachSessionFailed: "移出工作区失败",
   sendDisabledRunning: "回合运行中,等待结束后发送",

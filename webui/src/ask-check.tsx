@@ -26,7 +26,7 @@ const askViews: ApprovalView[] = [
   },
   { challenge_id: "ask-2", kind: "ask", expires_in: Math.max(0, ttl - 52), details: { mode: "batch", questions: [{ id: "q3", question: "第二组问题(尚未展示)", options: ["甲", "乙"] }] } },
 ];
-const permView: ApprovalView = { challenge_id: "perm-1", kind: "tool_permission", expires_in: 0, details: { tool_name: "exec", action_summary: "运行构建", risk: "medium", level: 2, category: "shell", reason: "写 out/ 目录" } };
+const permView: ApprovalView = { challenge_id: "perm-1", kind: "tool_permission", expires_in: 0, details: { tool_name: "exec_command", action_summary: "运行构建", risk: "medium", level: 2, category: "shell", reason: "写 out/ 目录" } };
 
 const [last, setLast] = createSignal("（尚未提交）");
 const [showPerm, setShowPerm] = createSignal(false);

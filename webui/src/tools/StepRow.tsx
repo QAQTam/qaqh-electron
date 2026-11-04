@@ -53,7 +53,8 @@ const ShellText: Component<{ text: string }> = (props) => {
 
 const ExecResult: Component<{ step: ToolStep }> = (props) => {
   const content = createMemo(() => shellContent(props.step));
-  const live = () => ["declared", "awaiting_permission", "running"].includes(props.step.status);
+  const live = () => ["declared", "awaiting_permission", "running", "cancelling"].includes(props.step.status);
+  const yielded = () => props.step.state?.kind === "finished" && props.step.state.outcome.kind === "yielded";
   let scroller: HTMLDivElement | undefined;
   let following = true;
   let frame: number | undefined;
@@ -65,8 +66,8 @@ const ExecResult: Component<{ step: ToolStep }> = (props) => {
   return <>
     <Show when={content().text || content().stderr}>
       <div class="tool-output">
-        <div class="tool-detail-label">{live() ? "运行输出" : "执行结果"}<span class="spacer" /><CopyButton text={() => [content().text, content().stderr].filter(Boolean).join("\n")} /></div>
-        <div ref={scroller} class={{ "tool-shell-output": true, "tool-progress": live() }} tabindex={0} role="region" aria-label={live() ? "运行输出" : "执行结果"}
+        <div class="tool-detail-label">{live() ? "运行输出" : yielded() ? "本次输出" : "执行结果"}<span class="spacer" /><CopyButton text={() => [content().text, content().stderr].filter(Boolean).join("\n")} /></div>
+        <div ref={scroller} class={{ "tool-shell-output": true, "tool-progress": live() }} tabindex={0} role="region" aria-label={live() ? "运行输出" : yielded() ? "本次输出" : "执行结果"}
           onWheel={(event) => { if (event.deltaY < 0) following = false; }}
           onPointerDown={() => { following = false; }} onTouchStart={() => { following = false; }}
           onKeyDown={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key)) following = false; }}
@@ -109,11 +110,27 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
     const toolSteps = (props.turn?.steps ?? []).filter((s) => s.kind === "tool");
     return toolSteps.length > 0 && toolSteps[toolSteps.length - 1]?.id === step().id;
   });
+  const yielded = () => {
+    const state = step().state;
+    return state?.kind === "finished" && state.outcome.kind === "yielded";
+  };
+  const yieldedLabel = () => {
+    const state = step().execSessionState;
+    if (state == null || state.kind === "running") return "后台运行";
+    if (state.kind === "stopping") return "正在停止后台进程";
+    const outcome = state.outcome;
+    if (outcome.kind === "exited") {
+      return outcome.exit_code === 0 ? "后台进程已结束" : `后台进程已退出 · ${outcome.exit_code}`;
+    }
+    if (outcome.kind === "cancelled") return "后台进程已取消";
+    if (outcome.kind === "timed_out") return "后台进程已超时";
+    return "后台进程已中断";
+  };
   const isShimmer = createMemo(() => {
     if (props.isShimmer !== undefined) return props.isShimmer;
     const st = step().status;
     if (st === "failed" || st === "cancelled" || st === "interrupted") return false;
-    const active = isLatest() || st === "running" || st === "declared" || st === "awaiting_permission";
+    const active = (isLatest() && !yielded()) || st === "running" || st === "declared" || st === "awaiting_permission" || st === "cancelling";
     return Boolean(active && (summary() || commandIcon()));
   });
   const hasDetails = () => kind() === "shell"
@@ -128,11 +145,11 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
     return { add: delta.lines_added, del: delta.lines_removed };
   });
   return (
-    <Show when={todoCardData(step())} fallback={<div class={{ "step-row": true, tool: true, [`st-${step().status}`]: true, "is-latest": isLatest() }}>
+    <Show when={todoCardData(step())} fallback={<div data-tool-call-id={step().id} class={{ "step-row": true, tool: true, [`st-${step().status}`]: true, "is-latest": isLatest() }}>
     <button type="button" class="tool-head" disabled={!hasDetails()} aria-expanded={hasDetails() ? open() ? "true" : "false" : undefined} onClick={() => setOverride(!open())}>
       <Switch>
-        <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running"}><span class="tool-icon spin"><IconLoader /></span></Match>
-        <Match when={step().status === "finished"}><span class="tool-icon muted" title="已完成"><Switch fallback={<IconWrench />}>
+        <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running" || step().status === "cancelling"}><span class="tool-icon spin"><IconLoader /></span></Match>
+        <Match when={step().status === "finished"}><span class="tool-icon muted" title={yielded() ? yieldedLabel() : "已完成"}><Switch fallback={<IconWrench />}>
           <Match when={kind() === "shell"}><IconTerminal /></Match><Match when={kind() === "read" || kind() === "skill"}><IconFile /></Match><Match when={kind() === "edit"}><IconEdit /></Match><Match when={kind() === "search"}><IconSearch /></Match>
         </Switch></span></Match>
         <Match when={step().status === "failed"}><span class="tool-icon err"><IconX /></span></Match>
@@ -157,7 +174,8 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
       </span>
       <Show when={stats()}><span class="tool-diffstat"><b class="diff-stat-add">+{stats()!.add}</b><b class="diff-stat-del">−{stats()!.del}</b></span></Show>
       <Switch>
-        <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running"}>
+        <Match when={yielded()}><span class="tool-state">{yieldedLabel()}</span></Match>
+        <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running" || step().status === "cancelling"}>
           <span class="tool-state">{toolPhaseLabel(step())}</span>
           <LiveElapsed startedAt={step().startedAt} />
         </Match>

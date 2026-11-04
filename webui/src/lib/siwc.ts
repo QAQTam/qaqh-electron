@@ -17,6 +17,11 @@ export interface SiwcModelEntry {
   slug: string;
   /** UI 显示用；请求里用 `slug`。 */
   displayName: string;
+  /** 目录明确返回时才填写；没有上游元数据时保持缺省。 */
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  reasoningLevels?: string[];
+  defaultEffort?: string;
 }
 
 export interface SiwcSignInStart {

@@ -68,19 +68,26 @@ export function modelOptions(
   extras: readonly (string | null | undefined)[] = [],
 ): ModelEntry[] {
   const bucket = specBucketOfKind(kind);
-  const bySlug = new Map<string, string>();
-  const push = (slug: string | null | undefined, displayName?: string | null): void => {
-    const key = slug?.trim();
+  const bySlug = new Map<string, ModelEntry>();
+  const push = (entry: ModelEntry): void => {
+    const key = entry.slug.trim();
     if (key == null || key === "" || bySlug.has(key)) return;
-    bySlug.set(key, displayName?.trim() ?? "");
+    bySlug.set(key, entry);
   };
-  for (const entry of catalog) push(entry.slug, entry.displayName);
-  for (const extra of extras) push(extra);
+  for (const entry of catalog) push(entry);
+  for (const extra of extras) {
+    const slug = extra?.trim();
+    if (slug != null && slug !== "") push({ slug, displayName: "" });
+  }
 
   const out: ModelEntry[] = [];
   for (const [slug, fromCatalog] of bySlug) {
     const { spec } = modelSpec(bucket, slug);
-    out.push({ slug, displayName: spec.displayName ?? (fromCatalog === "" ? slug : fromCatalog) });
+    out.push({
+      ...fromCatalog,
+      slug,
+      displayName: spec.displayName ?? (fromCatalog.displayName === "" ? slug : fromCatalog.displayName),
+    });
   }
   return out;
 }

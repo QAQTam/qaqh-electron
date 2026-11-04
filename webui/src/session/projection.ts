@@ -1,20 +1,19 @@
 import type { ActivityState, SessionActivityState } from "@qaqh/sdk/protocol";
 
-export type SessionActivity = "starting" | "idle" | "working" | "waiting_user" | "interrupted" | "failed" | "disconnected";
+export type SessionActivity = "idle" | "working" | "waiting_user" | "cancelling" | "interrupted" | "disconnected";
 
 const ACTIVITY_FROM_RINGING: Record<ActivityState, SessionActivity> = {
   idle: "idle",
   running: "working",
-  interrupted: "interrupted",
+  waiting_user: "waiting_user",
+  cancelling: "cancelling",
 };
 
 const ACTIVITY_FROM_SERVICE: Record<SessionActivityState, SessionActivity> = {
-  starting: "starting",
   idle: "idle",
-  working: "working",
+  running: "working",
   waiting_user: "waiting_user",
-  disconnected: "disconnected",
-  failed: "failed",
+  cancelling: "cancelling",
 };
 
 export function normalizeActivity(state: unknown, source: "projection" | "domain"): SessionActivity | null {

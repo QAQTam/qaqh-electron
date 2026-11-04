@@ -31,33 +31,23 @@ import {
   type RegistryProvider,
 } from "./registry";
 
-const modelTemplate = (): ModelDef => ({
-  enabled: true,
-  display_name: null,
-  context_window: 128_000,
-  max_output_tokens: 8_192,
-  reasoning_levels: [],
-  capabilities: { tool_calls: false, image_input: false, native_web_search: false, reasoning: false },
-  defaults: { max_output_tokens: null, reasoning_effort: null, native_web_search: false },
-});
-
 const ModelEditor: Component<{
   providerId: string;
   model?: RegistryModel;
   onClose: () => void;
 }> = (props) => {
-  const definition = props.model?.definition ?? modelTemplate();
+  const definition = props.model?.definition;
   const [modelId, setModelId] = createSignal(props.model?.id ?? "");
-  const [displayName, setDisplayName] = createSignal(definition.display_name ?? "");
-  const [enabled, setEnabled] = createSignal(definition.enabled);
-  const [contextWindow, setContextWindow] = createSignal(String(definition.context_window));
-  const [maxOutputTokens, setMaxOutputTokens] = createSignal(String(definition.max_output_tokens));
-  const [reasoningLevels, setReasoningLevels] = createSignal(definition.reasoning_levels.join(", "));
-  const [reasoningEffort, setReasoningEffort] = createSignal(definition.defaults.reasoning_effort ?? "");
-  const [toolCalls, setToolCalls] = createSignal(definition.capabilities.tool_calls);
-  const [imageInput, setImageInput] = createSignal(definition.capabilities.image_input);
-  const [nativeWebSearch, setNativeWebSearch] = createSignal(definition.capabilities.native_web_search);
-  const [reasoning, setReasoning] = createSignal(definition.capabilities.reasoning);
+  const [displayName, setDisplayName] = createSignal(definition?.display_name ?? "");
+  const [enabled, setEnabled] = createSignal(definition?.enabled ?? true);
+  const [contextWindow, setContextWindow] = createSignal(definition == null ? "" : String(definition.context_window));
+  const [maxOutputTokens, setMaxOutputTokens] = createSignal(definition == null ? "" : String(definition.max_output_tokens));
+  const [reasoningLevels, setReasoningLevels] = createSignal(definition?.reasoning_levels.join(", ") ?? "");
+  const [reasoningEffort, setReasoningEffort] = createSignal(definition?.defaults.reasoning_effort ?? "");
+  const [toolCalls, setToolCalls] = createSignal(definition?.capabilities.tool_calls ?? false);
+  const [imageInput, setImageInput] = createSignal(definition?.capabilities.image_input ?? false);
+  const [nativeWebSearch, setNativeWebSearch] = createSignal(definition?.capabilities.native_web_search ?? false);
+  const [reasoning, setReasoning] = createSignal(definition?.capabilities.reasoning ?? false);
 
   const save = async (): Promise<void> => {
     const id = modelId().trim();
@@ -67,7 +57,10 @@ const ModelEditor: Component<{
     const defaultEffort = reasoningEffort().trim();
     if (id === "") { toast("模型 ID 不能为空", "err"); return; }
     if (!Number.isSafeInteger(context) || context <= 0) { toast("上下文窗口必须是正整数", "err"); return; }
-    if (!Number.isSafeInteger(output) || output <= 0) { toast("最大输出必须是正整数", "err"); return; }
+    if (!Number.isSafeInteger(output) || output <= 0) {
+      toast("最大输出必须是正整数", "err");
+      return;
+    }
     if (defaultEffort !== "" && !levels.includes(defaultEffort)) { toast("默认推理强度必须出现在支持档位中", "err"); return; }
     const model: ModelDef = {
       enabled: enabled(),
@@ -99,7 +92,9 @@ const ModelEditor: Component<{
       </Field>
       <Field label="显示名称"><TextInput value={displayName()} onInput={setDisplayName} placeholder="可选" /></Field>
       <Field label="上下文窗口"><TextInput type="number" value={contextWindow()} onInput={setContextWindow} /></Field>
-      <Field label="最大输出 tokens"><TextInput type="number" value={maxOutputTokens()} onInput={setMaxOutputTokens} /></Field>
+      <Field label="最大输出 tokens">
+        <TextInput type="number" value={maxOutputTokens()} onInput={setMaxOutputTokens} />
+      </Field>
       <Field label="推理档位" hint="逗号分隔；留空表示不声明推理档位">
         <TextInput value={reasoningLevels()} onInput={setReasoningLevels} placeholder="low, medium, high" />
       </Field>

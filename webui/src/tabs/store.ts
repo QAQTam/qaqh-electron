@@ -45,9 +45,8 @@ export type SidebarSession = {
    */
   busy?: boolean;
   /**
-   * 后端 8 态 `SessionRunStatus` 原样透传(宿主 `commands.rs` 同名镜像)。
-   * 待人响应的三态(`waiting_permission` / `waiting_ask` / `waiting_plan`)由
-   * 它判出——`busy` 折成 bool 后无法区分「在跑」与「等人」,弹卡必须读这个。
+   * 后端 `SessionRunStatus` 原样透传(宿主 `commands.rs` 同名镜像)。
+   * `waiting_user` 标记等待交互;交互类型由活动 approval 快照提供。
    */
   status?: SessionRunStatus;
   /** 会话轮次数:后台标签状态点用它判断「跑过东西但没在跑」(§5.2)。 */
@@ -180,6 +179,19 @@ export const renameLocalSession = (seed: string, title: string): void => {
     String(item.session_id) === seed && !String(item.title ?? "").trim() ? { ...item, title } : item,
   ));
 };
+
+/** 侧栏与标题栏共用 RingingV2 的持久化重命名命令。 */
+export async function renameSession(seed: string, title: string): Promise<void> {
+  const next = title.trim();
+  if (!next) return;
+  renameLocalSession(seed, next);
+  try {
+    await transport.command({ type: "session.rename", title: next }, sessionTarget(seed));
+    await pollSessions();
+  } catch (error) {
+    toast(STR.renameSessionFailed + "：" + (error instanceof Error ? error.message : String(error)), "err");
+  }
+}
 
 /** 侧栏目录投影:后端标题优先,后端缺标题时叠本地覆盖;顺带清理陈旧覆盖条目。 */
 function applySessionList(list: SidebarSession[]): void {
@@ -557,6 +569,17 @@ async function dropSession(seed: string): Promise<void> {
   setSessionCatalog(sessionCatalog().filter((item) => String(item.session_id) !== seed));
   const tab = tabs().find((candidate) => candidate.seed === seed);
   if (tab != null) await closeTab(tab.id);
+}
+
+/** 删除会话并同步关闭本地标签；daemon 同时会广播终态删除事件。 */
+export async function deleteSession(seed: string): Promise<void> {
+  try {
+    await transport.command({ type: "session.delete" }, sessionTarget(seed));
+    await dropSession(seed);
+    await pollSessions();
+  } catch (error) {
+    toast(STR.deleteSessionFailed + "：" + (error instanceof Error ? error.message : String(error)), "err");
+  }
 }
 
 /** 启动:选一个非归档会话(优先运行中)作为第一个标签。 */

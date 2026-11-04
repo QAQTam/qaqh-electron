@@ -133,9 +133,7 @@
   .message-session-more[aria-expanded="true"] { opacity: 1; }
   .message-session-more:hover { background: var(--surface-2); color: var(--text); }
   /* 菜单在流内展开,不用绝对定位:侧栏是 overflow:auto 的滚动容器,浮层会被裁掉。 */
-  /* 侧栏的「移动到工作区」是**内联**展开的(不像首页那样浮在页面之上),所以尺寸
-     直接吃掉会话列表的高度:条目走共用的单行工作区行(`workspace-row-*`),
-     间距压到 1px、圆角收一档,三条工作区约 100px,不再把列表顶下去半屏。 */
+  /* 菜单在流内展开,避免被侧栏滚动容器裁掉。 */
   .message-session-menu {
     display: grid; gap: 1px; margin: 2px 0 4px;
     padding: 4px; border: 1px solid var(--border-strong); border-radius: var(--r-md);
@@ -143,18 +141,28 @@
   }
   .message-session-menu > strong { padding: 1px 5px 3px; color: var(--muted); font-size: 10px; letter-spacing: .04em; }
   .message-session-menu > button {
-    position: relative; display: grid; gap: 1px; width: 100%; padding: 4px 6px;
+    display: flex; align-items: center; width: 100%; min-height: 28px; padding: 4px 6px;
     border-radius: var(--r-sm); color: var(--text); text-align: left;
     font-size: calc(13px * var(--font-scale));
   }
-  /* 选中项的对勾走绝对定位,给它留出右侧空间即可(工作区行自带)。 */
-  .message-session-menu > button[role="menuitemradio"] { padding-right: 22px; }
   .message-session-menu > button:hover, .message-session-menu > button.selected { background: var(--surface-2); }
-  .message-session-menu > button.message-session-menu-detach {
-    margin-top: 1px; padding-top: 6px;
-    border-top: 1px solid var(--border); border-radius: 0;
-    color: var(--muted);
+  .message-session-menu .message-session-menu-danger { color: var(--err); }
+  .message-session-menu-form { display: grid; gap: 6px; padding: 3px; }
+  .message-session-menu-form input {
+    width: 100%; min-width: 0; min-height: 30px; padding: 4px 7px;
+    border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+    background: var(--surface-2); color: var(--text); font-size: calc(13px * var(--font-scale));
   }
+  .message-session-menu-confirm { display: grid; gap: 5px; padding: 4px 5px; }
+  .message-session-menu-confirm p { margin: 0; color: var(--text); font-size: calc(13px * var(--font-scale)); }
+  .message-session-menu-confirm small { color: var(--muted); font-size: 11px; }
+  .message-session-menu-actions { display: flex; justify-content: flex-end; gap: 6px; }
+  .message-session-menu-actions > button {
+    min-height: 26px; padding: 3px 8px; border-radius: var(--r-sm);
+    color: var(--text); font-size: calc(12px * var(--font-scale));
+  }
+  .message-session-menu-actions > button:hover { background: var(--surface-2); }
+  .message-session-menu-actions > button:disabled { opacity: .55; }
   .message-workspace-group { margin-bottom: 6px; }
   .message-workspace-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 0 8px; border-radius: var(--r-sm); color: var(--text); text-align: left; font-size: var(--fs-xs); font-weight: 600; }
   .message-workspace-toggle:hover { background: var(--surface-2); }
@@ -210,7 +218,7 @@
   .message-sidebar-empty { padding: 8px; color: var(--muted); font-size: var(--fs-xs); }
 
   /* ── 会话行「待响应」弹出卡(slide-in/out + 跑马灯)────────────────────
-     触发:`SessionRunStatus` ∈ {waiting_permission, waiting_ask, waiting_plan},
+     触发:`SessionRunStatus` = waiting_user,
      见 `src/app/session-pending.ts`。形态:**整行覆盖**——卡片撑满会话行,
      底下那行标题被玻璃糊开并向右渐隐让位,一眼能看出「这个会话在等我」。 */
   /* 待响应时行内的让步。用 `:has(.session-pending)` 而不是行上的 `is-pending` 类:

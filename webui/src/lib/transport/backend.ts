@@ -53,6 +53,7 @@ export type Ack = RingingV2CommandAck;
 export const globalTarget = (): CommandTarget => ({ kind: "global" });
 export const sessionTarget = (sessionId: string): CommandTarget => ({ kind: "session", session_id: sessionId });
 export const workspaceTarget = (workspaceId: string): CommandTarget => ({ kind: "workspace", workspace_id: workspaceId });
+export const execSessionTarget = (id: string): CommandTarget => ({ kind: "exec_session", id });
 
 export type ApprovalKind = "tool_permission" | "ask" | "plan";
 

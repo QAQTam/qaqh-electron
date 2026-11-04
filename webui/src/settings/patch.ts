@@ -178,8 +178,8 @@ export function validatePatch(patch: ConfigPatchWire): string | null {
   }
   const sub = patch.subagent;
   if (sub != null) {
-    if (sub.maxTokens != null && (sub.maxTokens <= 0 || !Number.isInteger(sub.maxTokens))) {
-      return "subagent.maxTokens 必须是大于 0 的整数";
+    if (sub.maxTokens != null && (!Number.isSafeInteger(sub.maxTokens) || sub.maxTokens <= 0)) {
+      return "subagent.maxTokens 必须是正整数";
     }
     if (sub.timeoutSecs != null && (sub.timeoutSecs <= 0 || !Number.isInteger(sub.timeoutSecs))) {
       return "subagent.timeoutSecs 必须是大于 0 的整数";

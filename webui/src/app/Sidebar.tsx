@@ -40,8 +40,8 @@ export const Sidebar: Component<{
   onCreate?: () => void;
   creating?: boolean;
   canCreate?: boolean;
-  onMove?: (seed: string, workspaceId: string) => void;
-  onDetach?: (seed: string) => void;
+  onRename?: (seed: string, title: string) => Promise<void>;
+  onDelete?: (seed: string) => Promise<void>;
   /** 拖拽调宽:当前宽度(null = 默认,吃 --sidebar-width token)。App 持久化。 */
   width?: number | null;
   /** 松手/键盘提交;width=null 恢复默认;低于收回阈值由 App 判定(等效汉堡)。 */
@@ -140,8 +140,8 @@ export const Sidebar: Component<{
         onCreate={props.onCreate}
         creating={props.creating}
         canCreate={props.canCreate}
-        onMove={props.onMove}
-        onDetach={props.onDetach}
+        onRename={props.onRename}
+        onDelete={props.onDelete}
       />
     </Show>
     {/* 拖拽调宽把手(用户侧需求):dock 展开态才有(App 传 onWidthCommit);

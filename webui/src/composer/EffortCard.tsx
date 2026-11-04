@@ -129,8 +129,8 @@ export const EffortCard: Component<{
       return;
     }
     const next = Number(trimmed);
-    if (!Number.isInteger(next) || next <= 0) {
-      setParamError("参数必须是大于 0 的整数");
+    if (!Number.isSafeInteger(next) || next <= 0) {
+      setParamError("最大输出必须是正整数");
       return;
     }
     setParamError(null);

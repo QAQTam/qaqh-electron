@@ -8,10 +8,7 @@
 import { parseJsonish } from "../session/reducer";
 
 const LABELS: Record<string, string> = {
-  exec: "执行命令",
   exec_command: "执行命令",
-  bash: "执行命令",
-  shell: "执行命令",
   read: "读取文件",
   read_file: "读取文件",
   write: "写入文件",
@@ -57,9 +54,8 @@ function firstString(value: unknown, depth = 0): string | null {
 export function primaryArgFull(argsJson: string | undefined): string {
   const args = parseJsonish(argsJson);
   if (args != null) {
-    if (typeof args.command === "string" && args.command) return args.command;
-    if (Array.isArray(args.argv)) return args.argv.map(String).join(" ");
-    for (const key of ["path", "file_path", "file", "filename", "query", "pattern", "url", "name"]) {
+    if (typeof args.cmd === "string" && args.cmd) return args.cmd;
+    for (const key of ["path", "file_path", "file", "filename", "query", "pattern", "url", "name", "exec_session_id"]) {
       if (typeof args[key] === "string" && args[key]) return args[key];
     }
     if (Array.isArray(args.items) || Array.isArray(args.todos)) {

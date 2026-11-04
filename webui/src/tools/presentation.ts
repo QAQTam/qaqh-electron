@@ -8,7 +8,7 @@ export type ToolPresentation = "shell" | "read" | "edit" | "search" | "todo" | "
 export function toolPresentation(step: Pick<ToolStep, "name">): ToolPresentation {
   if (["todo", "todo_write", "todo_update", "todo_list", "todo_create"].includes(step.name)) return "todo";
   if (["skills", "skill", "skills_list", "skill_list", "skill_read", "skill_resource", "skill_activate", "skill_validate"].includes(step.name)) return "skill";
-  if (["exec", "bash", "shell", "exec_command"].includes(step.name)) return "shell";
+  if (step.name === "exec_command") return "shell";
   if (["read", "read_file"].includes(step.name)) return "read";
   if (["edit", "edit_file", "write", "write_file", "apply_patch"].includes(step.name)) return "edit";
   if (["search", "grep", "glob", "web_search"].includes(step.name)) return "search";
@@ -17,6 +17,7 @@ export function toolPresentation(step: Pick<ToolStep, "name">): ToolPresentation
 
 export function toolPhaseLabel(step: Pick<ToolStep, "status">): string | undefined {
   if (step.status === "awaiting_permission") return "等待授权";
+  if (step.status === "cancelling") return "正在停止";
   if (step.status === "running") return "执行中";
   if (step.status === "declared") return "准备工具调用";
   return undefined;

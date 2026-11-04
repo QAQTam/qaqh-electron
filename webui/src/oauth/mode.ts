@@ -1,9 +1,9 @@
 /**
- * 账号额度的**判定与常量**——接入页、设置页与输入区共用。
+ * 账号额度的判定——接入页、设置页与输入区共用。
  *
  * 凭据来源本身就是配置契约里的 `credential`：`chatgpt_plan` = 本机 ChatGPT 套餐，
- * `deepseek_account` = 本机 DeepSeek 账号余额，`api_key` = BYOK。这里只做归类与
- * 常量，不碰 DOM、store 或写路径。
+ * `deepseek_account` = 本机 DeepSeek 账号余额，`api_key` = BYOK。这里只做归类，
+ * 不碰 DOM、store 或写路径。
  */
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
 
@@ -56,24 +56,3 @@ export function isAccountCredential(
 ): boolean {
   return isPlanMode(config) || isDeepseekAccountMode(config);
 }
-
-/**
- * 套餐模式下的上下文窗口：**统一 565K**（产品口径）。
- *
- * 这是**本地压缩的分母**（决定我们何时压历史），从不发给上游。上游的模型目录
- * 目前不给我们窗口（`siwc.models` 只有 slug/displayName），所以取一个固定值——
- * 比让用户按 BYOK 习惯填一个偏大的数字更安全：填大了会直接撞上游上限。
- * 同一份数字也在 `../models/specs.ts` 的 plan 条目里（那边是按模型给）。
- */
-export const OAUTH_CONTEXT_LENGTH = 565_000;
-
-/**
- * DeepSeek 账号那一家的上下文窗口：**实测**（`GET https://api.deepseek.com/models`
- * 带账号凭据，2026-10-14 与 `examples/probe_models.rs` 复核）平台自报的
- * `context_window: 1048576`（= 1 MiB，不是四舍五入的 1,000,000）。
- *
- * 与套餐那个 565K 不同，这个数字是**端点自己声明的**，所以按它写；它同样是
- * 本地压缩的分母，切到这一家时必须跟着换，否则会沿用上一家的值——从套餐过来
- * 就是 565K，1M 的窗口用到一半就显示满、自动压缩提前触发。
- */
-export const DSACCOUNT_CONTEXT_LENGTH = 1_048_576;

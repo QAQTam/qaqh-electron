@@ -5,17 +5,18 @@ describe("activity state normalization", () => {
   test("flattens the Ringing activity enum", () => {
     expect(normalizeActivity("idle", "projection")).toBe("idle");
     expect(normalizeActivity("running", "projection")).toBe("working");
-    expect(normalizeActivity("interrupted", "projection")).toBe("interrupted");
+    expect(normalizeActivity("waiting_user", "projection")).toBe("waiting_user");
+    expect(normalizeActivity("cancelling", "projection")).toBe("cancelling");
   });
 
-  test("keeps domain activity values, including starting", () => {
-    for (const value of ["starting", "idle", "working", "waiting_user", "disconnected", "failed"]) {
-      expect(normalizeActivity(value, "domain")).toBe(value);
+  test("maps current domain activity values", () => {
+    for (const [value, expected] of [["idle", "idle"], ["running", "working"], ["waiting_user", "waiting_user"], ["cancelling", "cancelling"]]) {
+      expect(normalizeActivity(value, "domain")).toBe(expected);
     }
   });
 
   test("unknown or cross-domain values produce no activity update", () => {
-    expect(normalizeActivity("waiting_user", "projection")).toBeNull();
+    expect(normalizeActivity("interrupted", "projection")).toBeNull();
     expect(normalizeActivity("unknown", "domain")).toBeNull();
     expect(normalizeActivity(null, "projection")).toBeNull();
   });

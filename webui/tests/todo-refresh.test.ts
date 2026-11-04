@@ -28,7 +28,7 @@ test("real host projection dispatch refreshes todos after tool completion withou
   createRoot((dispose) => { store = new SessionStore("todo-session"); void dispose; });
   await store.activate();
   await vi.waitFor(() => expect(store.todos[0]()[0]?.status).toBe("pending"));
-  const event = { seq: 1, type: "tool_finished", call_id: "call-1", status: "finished", output: null, output_truncated: false, error: null, metrics: null } as const;
+  const event = { seq: 1, type: "tool_finished", call_id: "call-1", outcome: { kind: "completed" }, output: null, output_truncated: false, metrics: null } as const;
   query.mockClear();
   handlers.onProjectionEvent("another-session", event);
   expect(query).not.toHaveBeenCalled();

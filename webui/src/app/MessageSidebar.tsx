@@ -7,7 +7,6 @@ import IconPlus from "~icons/lucide/plus";
 import { STR } from "../lib/strings";
 import type { ApprovalView } from "../lib/transport";
 import { sessionCatalog, workspaceCatalog, type SidebarSession, type SidebarWorkspace } from "../tabs/store";
-import { WorkspaceMenuItem } from "../workspace/WorkspaceMenu";
 import { Collapse } from "../ui/Collapse";
 import { SessionPendingCard } from "./SessionPendingCard";
 import { pendingPresentation, workingOnly } from "./session-pending";
@@ -17,17 +16,8 @@ const pathName = (path: string | null | undefined): string => {
   return value.split(/[\\/]/).filter(Boolean).at(-1) ?? "未命名工作区";
 };
 
-const normalizePath = (p: string | null | undefined): string =>
-  (p ?? "").replace(/[\\/]+/g, "/").replace(/\/$/, "").toLowerCase();
-
 const sessionBelongsToWorkspace = (session: SidebarSession, workspace: SidebarWorkspace): boolean => {
-  if (session.workspace_id === workspace.id) return true;
-  if (!session.workspace_id && session.cwd && workspace.path) {
-    const sc = normalizePath(session.cwd);
-    const wp = normalizePath(workspace.path);
-    return sc === wp || sc.startsWith(`${wp}/`);
-  }
-  return false;
+  return session.workspace_id === workspace.id;
 };
 
 const WORKSPACE_COLLAPSED_KEY = "qaqh.sidebar.collapsed";
@@ -53,10 +43,8 @@ export const MessageSidebar: Component<{
   onCreate?: () => void;
   creating?: boolean;
   canCreate?: boolean;
-  /** 移入工作区(`workspace.move_session`);只改组织归属,不动会话运行目录。 */
-  onMove?: (seed: string, workspaceId: string) => void;
-  /** 移出到未分组(`workspace.detach`)。 */
-  onDetach?: (seed: string) => void;
+  onRename?: (seed: string, title: string) => Promise<void>;
+  onDelete?: (seed: string) => Promise<void>;
 }> = (props) => {
   const [collapsed, setCollapsedSignal] = createSignal<Set<string>>(readStoredCollapsed());
   const setCollapsed = (next: Set<string>): void => {
@@ -149,10 +137,54 @@ export const MessageSidebar: Component<{
                   <For each={group().sessions} keyed={(session) => session.session_id}>{(session) => {
                     const active = () => props.activeSeed === session().session_id;
                     const menuOpen = () => menuSeed() === session().session_id;
-                    // 归属看「名录里真有这个工作区」,而不是 workspace_id 非空:
-                    // 工作区被删后 id 仍留在卡片上,那种会话显示在未分组里,
-                    // 再给它「移出」就成了无意义动作。
-                    const grouped = () => allWorkspaces().some((workspace) => sessionBelongsToWorkspace(session(), workspace));
+                    const [editing, setEditing] = createSignal(false);
+                    const [draft, setDraft] = createSignal("");
+                    const [confirmDelete, setConfirmDelete] = createSignal(false);
+                    const [actionBusy, setActionBusy] = createSignal(false);
+                    let renameInput: HTMLInputElement | undefined;
+                    const beginRename = (): void => {
+                      setDraft(sessionName(session()));
+                      setConfirmDelete(false);
+                      setEditing(true);
+                      requestAnimationFrame(() => {
+                        renameInput?.focus();
+                        renameInput?.select();
+                      });
+                    };
+                    const closeMenu = (): void => {
+                      setMenuSeed(null);
+                      setEditing(false);
+                      setConfirmDelete(false);
+                    };
+                    const openMenu = (): void => {
+                      setEditing(false);
+                      setConfirmDelete(false);
+                      setMenuSeed(session().session_id);
+                    };
+                    const commitRename = async (event: SubmitEvent): Promise<void> => {
+                      event.preventDefault();
+                      const title = draft().trim();
+                      if (!title) {
+                        renameInput?.focus();
+                        return;
+                      }
+                      setActionBusy(true);
+                      try {
+                        await props.onRename?.(session().session_id, title);
+                        closeMenu();
+                      } finally {
+                        setActionBusy(false);
+                      }
+                    };
+                    const removeSession = async (): Promise<void> => {
+                      setActionBusy(true);
+                      try {
+                        await props.onDelete?.(session().session_id);
+                        closeMenu();
+                      } finally {
+                        setActionBusy(false);
+                      }
+                    };
                     // 活动会话的待审批快轨 (Fast path):若是当前会话且内存已有待审批挑战，优先取第一项
                     const fastApproval = () => (active() ? props.activePending?.()[0] ?? null : null);
                     // 待人响应:整行让位给弹出卡(卡体 pointer-events:none,点击仍落到会话按钮)。
@@ -164,8 +196,8 @@ export const MessageSidebar: Component<{
                           class={{ "message-session-row": true, active: active() }}
                           onContextMenu={(e) => {
                             e.preventDefault();
-                            if (props.onMove != null && allWorkspaces().length > 0) {
-                              setMenuSeed(session().session_id);
+                            if (props.onRename != null || props.onDelete != null) {
+                              openMenu();
                             }
                           }}
                         >
@@ -190,42 +222,69 @@ export const MessageSidebar: Component<{
                                 而不是「原路滑回去」)。进出场由卡内相位机自己管。 */}
                             <SessionPendingCard session={session()} fastApproval={fastApproval()} />
                           </button>
-                          <Show when={props.onMove != null && allWorkspaces().length > 0}>
+                          <Show when={props.onRename != null || props.onDelete != null}>
                             <button
                               type="button"
                               class="message-session-more"
                               aria-label={`${STR.sessionActions}:${sessionName(session())}`}
                               aria-expanded={menuOpen() ? "true" : "false"}
                               title={STR.sessionActions}
-                              onClick={() => setMenuSeed(menuOpen() ? null : session().session_id)}
+                              onClick={() => menuOpen() ? closeMenu() : openMenu()}
                             >
                               <IconMoreHorizontal />
                             </button>
                           </Show>
                         </div>
                         <Show when={menuOpen()}>
-                          {/* 行样式与首页/输入区的工作区菜单是同一份(`WorkspaceMenuItem`):
-                              单行「目录 + 末段名」比原来的「名字 + 完整路径」两行矮一半,
-                              侧栏里三层工作区一展开就不会把会话列表整个顶下去。 */}
                           <div class="message-session-menu" role="menu">
-                            <strong>{STR.moveToWorkspace}</strong>
-                            <For each={allWorkspaces()}>{(workspace) => (
-                              <WorkspaceMenuItem
-                                workspace={workspace}
-                                selected={session().workspace_id === workspace.id}
-                                compact
-                                onPick={() => { setMenuSeed(null); props.onMove?.(session().session_id, workspace.id); }}
-                              />
-                            )}</For>
-                            <Show when={grouped()}>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                class="message-session-menu-detach"
-                                onClick={() => { setMenuSeed(null); props.onDetach?.(session().session_id); }}
-                              >
-                                <span>{STR.detachWorkspace}</span>
-                              </button>
+                            <strong>{STR.sessionActions}</strong>
+                            <Show when={editing()} fallback={
+                              <Show when={confirmDelete()} fallback={
+                                <>
+                                  <Show when={props.onRename != null}>
+                                    <button type="button" role="menuitem" onClick={beginRename}>{STR.renameSession}</button>
+                                  </Show>
+                                  <Show when={props.onDelete != null}>
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      class="message-session-menu-danger"
+                                      onClick={() => setConfirmDelete(true)}
+                                    >
+                                      {STR.deleteSession}
+                                    </button>
+                                  </Show>
+                                </>
+                              }>
+                                <div class="message-session-menu-confirm">
+                                  <p>{STR.confirmDeleteSession(sessionName(session()))}</p>
+                                  <small>{STR.deleteSessionWarning}</small>
+                                  <div class="message-session-menu-actions">
+                                    <button type="button" disabled={actionBusy()} onClick={closeMenu}>{STR.cancelAction}</button>
+                                    <button
+                                      type="button"
+                                      class="message-session-menu-danger"
+                                      disabled={actionBusy()}
+                                      onClick={() => void removeSession()}
+                                    >
+                                      {STR.confirmDeleteAction}
+                                    </button>
+                                  </div>
+                                </div>
+                              </Show>
+                            }>
+                              <form class="message-session-menu-form" onSubmit={(event) => void commitRename(event)}>
+                                <input
+                                  ref={renameInput}
+                                  aria-label={STR.renameSession}
+                                  value={draft()}
+                                  onInput={(event) => setDraft(event.currentTarget.value)}
+                                />
+                                <div class="message-session-menu-actions">
+                                  <button type="button" disabled={actionBusy()} onClick={closeMenu}>{STR.cancelAction}</button>
+                                  <button type="submit" disabled={actionBusy() || !draft().trim()}>{STR.saveAction}</button>
+                                </div>
+                              </form>
                             </Show>
                           </div>
                         </Show>
