@@ -36,9 +36,10 @@ function verifyLegacyAsar(context, root) {
   if (packagedRenderer.length !== files.length - distEntries) {
     throw new Error("Packaged renderer contains missing/stale files.");
   }
-  const daemon = join(resources, "bin/qaqh-daemon");
-  if (!(statSync(daemon).mode & 0o111) ||
-    digest(readFileSync(daemon)) !== digest(readFileSync(join(root, "resources/bin/qaqh-daemon")))) {
+  const daemonName = context.electronPlatformName === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
+  const daemon = join(resources, "bin", daemonName);
+  if ((!process.platform.startsWith("win") && !(statSync(daemon).mode & 0o111)) ||
+    digest(readFileSync(daemon)) !== digest(readFileSync(join(root, "resources/bin", daemonName)))) {
     throw new Error("Packaged daemon missing, not executable or stale.");
   }
   const pkg = JSON.parse(asar.extractFile(archive, "package.json").toString("utf8"));

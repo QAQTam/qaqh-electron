@@ -64,3 +64,13 @@ deb:
 
 appImage:
   artifactName: ${productName}-${version}-linux-${arch}.${ext}
+
+win:
+  icon: build/icons/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  artifactName: ${productName}-${version}-win-${arch}-setup.${ext}

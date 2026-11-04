@@ -2,8 +2,7 @@ const { existsSync, statSync, readFileSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 const { createHash } = require("node:crypto");
 
-const requiredFiles = ["renderer/index.html", "resources/bin/qaqh-daemon",
-  "dist/main/index.cjs", "dist/preload/index.cjs"];
+const requiredFiles = ["renderer/index.html", "dist/main/index.cjs", "dist/preload/index.cjs"];
 
 function parseArgs(args) {
   const options = { target: "all", skipInstall: false, skipBackend: false, help: false, shell: false };
@@ -13,7 +12,7 @@ function parseArgs(args) {
     else if (arg === "--skip-backend") options.skipBackend = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg === "--shell") options.shell = true;
-    else if (!targetSeen && ["all", "dir", "AppImage", "deb", "tar.gz"].includes(arg)) {
+    else if (!targetSeen && ["all", "dir", "AppImage", "deb", "tar.gz", "nsis"].includes(arg)) {
       options.target = arg;
       targetSeen = true;
     } else throw new Error(`Unknown target/option: ${arg}. Use --help.`);
@@ -60,20 +59,27 @@ function expectedPackageVersion(sourceVersion, env = process.env) {
   return injected || sourceVersion;
 }
 
-function assertInputs(root) {
-  for (const file of requiredFiles) {
+function assertInputs(root, platform = process.platform) {
+  const daemonName = platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
+  for (const file of [...requiredFiles, `resources/bin/${daemonName}`]) {
     const path = join(root, file);
     if (!existsSync(path) || !statSync(path).isFile() || statSync(path).size === 0) {
       throw new Error(`Missing or empty packaging input: ${file}. Run just build dir.`);
     }
   }
-  const daemon = join(root, "resources/bin/qaqh-daemon");
-  if (!(statSync(daemon).mode & 0o111)) throw new Error("qaqh-daemon is not executable.");
-  const header = readFileSync(daemon).subarray(0, 20);
-  // ELF64 + little endian + EM_X86_64，防止把 ARM/Windows sidecar 混入 x64 包。
-  if (header.length < 20 || header.toString("hex", 0, 4) !== "7f454c46" ||
-    header[4] !== 2 || header[5] !== 1 || header.readUInt16LE(18) !== 62) {
-    throw new Error("qaqh-daemon must be a Linux x64 ELF executable.");
+  const daemon = join(root, "resources/bin", daemonName);
+  const header = readFileSync(daemon);
+  if (platform === "win32") {
+    if (header.length < 64 || header.toString("ascii", 0, 2) !== "MZ") {
+      throw new Error("qaqh-daemon.exe must be a Windows PE executable.");
+    }
+  } else {
+    if (!(statSync(daemon).mode & 0o111)) throw new Error("qaqh-daemon is not executable.");
+    // ELF64 + little endian + EM_X86_64，防止把 ARM/Windows sidecar 混入 x64 包。
+    if (header.length < 20 || header.toString("hex", 0, 4) !== "7f454c46" ||
+      header[4] !== 2 || header[5] !== 1 || header.readUInt16LE(18) !== 62) {
+      throw new Error("qaqh-daemon must be a Linux x64 ELF executable.");
+    }
   }
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   if (!pkg.author?.name || !pkg.author?.email || !/^https?:\/\//.test(pkg.homepage || "")) {

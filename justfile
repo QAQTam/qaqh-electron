@@ -28,9 +28,13 @@ info:
     @printf 'short    %s\n' '{{build_short}}'
     @printf 'dirty    %s\n' '{{build_dirty}}'
 
-# 完整打包；target: all|dir|AppImage|deb|tar.gz（默认 all）。
+# 完整打包；Linux: all|dir|AppImage|deb|tar.gz，Windows: nsis。
 build target="all" *options:
     @node scripts/build-all.mjs '{{target}}' {{options}}
+
+# Windows x64 NSIS 安装包；需在 Windows x64 + Bash 环境运行。
+nsis *options:
+    @node scripts/build-all.mjs nsis {{options}}
 
 # 常用目标的短命令，等价于 just build <target>。
 dir *options:

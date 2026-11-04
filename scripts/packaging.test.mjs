@@ -20,7 +20,7 @@ const asar = libRequire("@electron/asar");
 
 test("CLI accepts only explicit targets and known opt-outs", () => {
   assert.equal(parseArgs([]).target, "all");
-  for (const target of ["all", "dir", "AppImage", "deb", "tar.gz"]) {
+  for (const target of ["all", "dir", "AppImage", "deb", "tar.gz", "nsis"]) {
     assert.deepEqual(parseArgs([target, "--skip-install", "--skip-backend"]),
       { target, skipInstall: true, skipBackend: true, help: false, shell: false });
   }

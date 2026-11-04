@@ -13,7 +13,16 @@ const frontend = resolve(root, "webui");
 
 function run(command, args, cwd = root, capture = false, env = process.env) {
   console.log(`\n> ${command} ${args.join(" ")}`);
-  const result = spawnSync(command, args, {
+  // pnpm is a .cmd shim on Windows and must be launched via cmd.exe.
+  const windowsPnpm = process.platform === "win32" && command === "pnpm";
+  const invokedCommand = windowsPnpm ? (process.env.ComSpec || "cmd.exe") : command;
+  const invokedArgs = windowsPnpm
+    ? ["/d", "/s", "/c", ["pnpm.cmd", ...args].map(value => {
+      const text = String(value);
+      return /[\s"&|<>^()]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(" ")]
+    : args;
+  const result = spawnSync(invokedCommand, invokedArgs, {
     cwd,
     env,
     stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
@@ -68,8 +77,8 @@ function checkBackendContract() {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    console.log("Usage: just build [all|dir|AppImage|deb|tar.gz] [--skip-install] [--skip-backend] [--shell]\n" +
-      "Default: full Linux x64 pipeline. --skip-backend explicitly reuses resources/bin/qaqh-daemon.\n" +
+    console.log("Usage: just build [all|dir|AppImage|deb|tar.gz|nsis] [--skip-install] [--skip-backend] [--shell]\n" +
+      "Linux x64 targets: all/dir/AppImage/deb/tar.gz. Windows x64 target: nsis.\n" +
       "--shell: shell 包口径(electron-builder.shell.yml)——plain dir baseline + 双 CLI + 维护脚本,\n" +
       "         仅支持 deb 目标;AppImage/tar.gz 永远是全量口径。\n" +
       "Build identity comes from just (QAQH_BUILD_VERSION / QAQH_BUILD_DATE / QAQH_GIT_COMMIT).");
@@ -81,8 +90,10 @@ async function main() {
   const build = parseBuildIdentity(process.env);
   console.log(`Build identity: ${build.version}+${build.commit.slice(0, 8)}` +
     `${build.dirty ? "-dirty" : ""} (${build.date})`);
-  if (process.platform !== "linux" || process.arch !== "x64") {
-    throw new Error("This pipeline currently supports native Linux x64 only (no implicit cross-compilation).");
+  const windowsBuild = process.platform === "win32" && options.target === "nsis";
+  const linuxBuild = process.platform === "linux" && options.target !== "nsis";
+  if ((!windowsBuild && !linuxBuild) || process.arch !== "x64") {
+    throw new Error("Use native Linux x64 for Linux targets or native Windows x64 for nsis; cross-compilation is not supported.");
   }
   const [major, minor] = process.versions.node.split(".").map(Number);
   if (major < 22 || (major === 22 && minor < 12)) throw new Error("Node.js >=22.12 is required.");
@@ -117,8 +128,9 @@ async function main() {
     const bin = join(root, "resources/bin");
     rmSync(bin, { recursive: true, force: true });
     mkdirSync(bin, { recursive: true });
-    cpSync(artifact.executable, join(bin, "qaqh-daemon"));
-    chmodSync(join(bin, "qaqh-daemon"), 0o755);
+    const daemonName = windowsBuild ? "qaqh-daemon.exe" : "qaqh-daemon";
+    cpSync(artifact.executable, join(bin, daemonName));
+    if (!windowsBuild) chmodSync(join(bin, daemonName), 0o755);
   } else {
     console.warn("Explicit --skip-backend: reusing staged daemon; its source freshness is NOT guaranteed.");
   }
@@ -152,19 +164,20 @@ async function main() {
   const staging = mkdtempSync(join(root, ".tmp/package-"));
   try {
     const targets = options.target === "all" ? [] : [options.target];
-    run("pnpm", ["exec", "electron-builder", "--linux", ...targets, "--x64", "--publish", "never",
+    run("pnpm", ["exec", "electron-builder", windowsBuild ? "--win" : "--linux", ...targets, "--x64", "--publish", "never",
       ...(options.shell ? ["--config", "electron-builder.shell.yml"] : []),
       `--config.extraMetadata.version=${build.version}`,
       `--config.directories.output=${staging}`, `--config.electronDist=${dirname(electronExecutable)}`], root, false,
       { ...process.env, ...(options.shell ? { QAQH_SHELL_PACKAGE: "1" } : {}),
         ELECTRON_BUILDER_COMPRESSION_LEVEL: process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL || "1" });
-    const expected = options.shell
+    const expected = windowsBuild ? ["nsis"] : options.shell
       ? ["deb"]
       : (options.target === "all" ? ["AppImage", "deb", "tar.gz"] : [options.target]);
     const files = readdirSync(staging);
     for (const target of expected) {
-      if (target !== "dir" && !files.some(file => file.endsWith(`.${target}`))) {
-        throw new Error(`electron-builder did not produce a .${target} artifact.`);
+      const extension = target === "nsis" ? ".exe" : `.${target}`;
+      if (target !== "dir" && !files.some(file => file.endsWith(extension))) {
+        throw new Error(`electron-builder did not produce a ${extension} artifact for ${target}.`);
       }
     }
     if (options.shell) {
@@ -174,8 +187,11 @@ async function main() {
       if (existsSync(join(staging, "linux-unpacked/resources/app.asar"))) {
         throw new Error("Shell layout must not contain app.asar.");
       }
-    } else if (!existsSync(join(staging, "linux-unpacked/resources/app.asar"))) {
-      throw new Error("Packaged app.asar missing.");
+    } else {
+      const unpackedDir = windowsBuild ? "win-unpacked" : "linux-unpacked";
+      if (!existsSync(join(staging, unpackedDir, "resources/app.asar"))) {
+        throw new Error(`Packaged app.asar missing from ${unpackedDir}.`);
+      }
     }
     // 成功才替换 release；失败不把旧安装包冒充成本次产物。
     const releaseDir = options.shell ? "release-shell" : "release";
