@@ -39,6 +39,13 @@ jobs:
           ref: main
           path: qaqh-backend
 
+      - name: Checkout backend AI SDK
+        uses: actions/checkout@v4
+        with:
+          repository: qaqtam/mutil-ai
+          ref: main
+          path: mutil-ai
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
