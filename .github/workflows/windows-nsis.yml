@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - .gitattributes
       - justfile
       - electron-builder.yml
       - scripts/build-all.mjs

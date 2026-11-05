@@ -1,0 +1,2 @@
+# Keep the renderer mirror byte-identical to the canonical SDK contract.
+webui/src/api/qaqh/** text eol=lf
