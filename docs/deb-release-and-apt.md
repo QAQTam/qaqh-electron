@@ -70,6 +70,13 @@ publisher. Do not add any signing secrets to the Electron bundle. Pages setup,
 archive creation and key generation are separate deployment work; this change
 does not create or publish the APT repository.
 
+Deploy the generated archive using an Actions Pages artifact (`upload-pages-artifact`
+and `deploy-pages`), rather than committing deb files to a Pages branch. The first
+CI deb is about 119 MB, exceeding GitHub's 100 MiB regular-Git file limit. Keep the
+latest three package revisions in the Pages pool and preserve full history in
+GitHub Releases. Pages limits the published site to 1 GB and has a soft bandwidth
+limit of 100 GB/month; a larger distribution would need a different package host.
+
 After the real repository and key are published, install the verified public key
 at `/etc/apt/keyrings/qaqh.asc` and create `/etc/apt/sources.list.d/qaqh.sources`:
 
@@ -99,3 +106,6 @@ References:
 - [Launchpad source package builds](https://ubuntu.com/docs/launchpad/user/how-to/packaging/build-deb-packages-in-launchpad/)
 - [APT source configuration and file URIs](https://manpages.debian.org/trixie/apt/sources.list.5.en.html)
 - [APT archive signing](https://manpages.debian.org/trixie/apt/apt-secure.8.en.html)
+- [GitHub Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
+- [GitHub large files and binary releases](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github)
+- [Pages artifact deployment](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)
