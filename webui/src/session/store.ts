@@ -879,13 +879,19 @@ export class SessionStore {
   }
 
   private markApprovalsUnverified(revokeChallenges = true): void {
+    const current = this.markApprovalsUnverifiedLocally();
+    if (current.length > 0) {
+      for (const view of current) void transport.invalidateApprovals(this.seed, view.challenge_id, revokeChallenges ? "revoke" : false).catch(() => {});
+    }
+  }
+
+  /** Lock renderer actions without invalidating the host challenge in flight. */
+  private markApprovalsUnverifiedLocally(): ApprovalView[] {
     this.approvalsVerified = false;
     this.approvalsVerifiedState[1](false);
     const current = this.pending[0]();
-    if (current.length > 0) {
-      for (const view of current) void transport.invalidateApprovals(this.seed, view.challenge_id, revokeChallenges ? "revoke" : false).catch(() => {});
-      writeStable(this.pending, current.map((view) => ({ ...view, verified: false })));
-    }
+    if (current.length > 0) writeStable(this.pending, current.map((view) => ({ ...view, verified: false })));
+    return current;
   }
 
   private scheduleApprovalRevalidation(): void {
@@ -990,7 +996,9 @@ export class SessionStore {
     if (this.connection[0]() !== "connected" && decision !== "reject" && decision !== "dismiss") {
       throw new Error("approval_connection_unverified");
     }
-    this.markApprovalsUnverified(false);
+    // Keep the renderer locked during submission, but leave this challenge
+    // verified in the host until respond_approval consumes it.
+    this.markApprovalsUnverifiedLocally();
     try {
       await transport.respondApproval(this.seed, challengeId, decision, payload);
     } finally {

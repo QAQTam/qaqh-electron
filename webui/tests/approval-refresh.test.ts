@@ -54,6 +54,32 @@ test("approval read failure retries automatically and surfaces the pending card"
   store.dispose();
 });
 
+test("responding submits the verified challenge before host invalidation", async () => {
+  const { store } = setup();
+  const calls: string[] = [];
+  vi.spyOn(transport, "approvals")
+    .mockResolvedValueOnce([approval("challenge-submit")] as never)
+    .mockResolvedValueOnce([] as never);
+  vi.spyOn(transport, "invalidateApprovals").mockImplementation(async (_seed, _id, verified) => {
+    calls.push(`invalidate:${String(verified)}`);
+  });
+  vi.spyOn(transport, "respondApproval").mockImplementation(async () => {
+    calls.push("respond");
+    return null;
+  });
+
+  await store.activate();
+  await vi.waitFor(() => expect(store.pending[0]()[0]?.challenge_id).toBe("challenge-submit"));
+  store.connection[1]("connected");
+  calls.length = 0;
+
+  await store.respondApproval("challenge-submit", "approve");
+
+  expect(calls[0]).toBe("respond");
+  expect(store.pending[0]()).toEqual([]);
+  store.dispose();
+});
+
 test("a control invalidation defeats an older approvals response and commits the trailing read", async () => {
   const old = deferred<any[]>();
   const latest = deferred<any[]>();
