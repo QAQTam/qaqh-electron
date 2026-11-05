@@ -65,6 +65,8 @@ const commitFixtureSidebarWidth = (width: number | null): void => {
 };
 /** 阶段5:列态由 #app 实宽 ResizeObserver 驱动;抽屉可由 URL 参数预设(截图场景用)。 */
 const [fixtureCols, setFixtureCols] = createSignal<1 | 2 | 3>(3);
+const [previewSettingsSection, setPreviewSettingsSection] = createSignal<string | undefined>(undefined);
+const [previewSettingsNonce, setPreviewSettingsNonce] = createSignal(0);
 const sidebarDrawerPreview = previewParams.get("sidebarDrawer") === "1";
 const railDrawerPreview = previewParams.get("railDrawer") === "1";
 const TOTAL = isVisualPreview ? 4 : 200;
@@ -1527,6 +1529,8 @@ render(
       <Sidebar
         section={currentView()}
         onNavigate={navigatePreview}
+        settingsSection={previewSettingsSection()}
+        onSettingsSection={(id) => { setPreviewSettingsSection(id); setPreviewSettingsNonce((value) => value + 1); }}
         collapsed={sidebarCollapsed()}
         drawer={fixtureCols() === 1}
         drawerOpen={fixtureCols() === 1 && sidebarDrawerPreview}
@@ -1575,7 +1579,7 @@ render(
                 attachments={() => previewActiveTab().store.pendingAttachments[0]()}
                 onRemoveAttachment={(id) => previewActiveTab().store.removeAttachment(id)}
                 profileView={fixtureProfileView}
-                onProfile={setPreviewProfile}
+                onSelection={(_provider, model) => setPreviewProfile(model)}
                 sessionWorkspace={() => "qaqh"}
                 lanActive={() => false}
               />
@@ -1585,7 +1589,7 @@ render(
         </div>
           </>
         }>
-          <SettingsView />
+          <SettingsView initialSection={previewSettingsSection()} sectionNonce={previewSettingsNonce()} onSectionChange={setPreviewSettingsSection} showSectionPicker={fixtureCols() === 1 || sidebarCollapsed()} />
         </Show>
       </div>
       {/* 与 App 同位(spec §6.3):任务右栏 ≥1280 为第三列,<1280 抽屉按参数预设。 */}

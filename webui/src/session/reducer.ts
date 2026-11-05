@@ -5,6 +5,7 @@ import {
   type Slot,
   type Step,
   type ToolOutput,
+  type ToolProgressStream,
   type Turn,
   type TurnStatus,
 } from "./types";
@@ -17,6 +18,7 @@ import type {
   ToolCallOutcome,
   ToolCallState,
   ToolCallView,
+  ExecSessionView,
   TurnOutcome,
 } from "@qaqh/sdk/protocol";
 import { now } from "../lib/time";
@@ -105,6 +107,7 @@ export function resolveContentRef(draft: SessionState, ref: string, text: string
     for (const session of Object.values(draft.execSessions)) {
       if (session.output?.kind === "ref" && session.output.data.content_ref === ref) {
         session.output = { kind: "inline", data: { text } };
+        syncExecSession(draft, session);
       }
     }
   }
@@ -353,6 +356,9 @@ function upsertToolCall(draft: SessionState, call: ToolCallView, fallbackTurnId?
   };
   if (index >= 0 && turn.steps[index]?.kind === "tool") turn.steps[index] = { ...turn.steps[index] as Extract<Step, { kind: "tool" }>, ...next };
   else turn.steps.push(next);
+  const session = call.exec_session_id ? draft.execSessions[call.exec_session_id]
+    : Object.values(draft.execSessions).find((session) => session.origin_call_id === call.call_id);
+  if (session) syncExecSession(draft, session);
   demoteAnswerIfStale(turn);
   turn.renderVersion = (turn.renderVersion ?? 0) + 1;
 }
@@ -525,6 +531,16 @@ function appendBounded(current: string | undefined, addition: string): { value: 
   return combined.length > limit ? { value: combined.slice(-limit), truncated: true } : { value: combined, truncated: false };
 }
 
+function appendProgressStream(
+  current: ToolProgressStream | undefined,
+  addition: string,
+  initialTail: string | undefined,
+  data: string,
+): ToolProgressStream {
+  const endOffset = (current?.endOffset ?? initialTail?.length ?? 0) + addition.length;
+  return { startOffset: endOffset - data.length, endOffset, data };
+}
+
 function appendUtf8Tail(current: string, addition: string, maxBytes: number): string {
   const combined = current + addition;
   if (new TextEncoder().encode(combined).length <= maxBytes) return combined;
@@ -539,6 +555,19 @@ function appendUtf8Tail(current: string, addition: string, maxBytes: number): st
     start -= 1;
   }
   return chars.slice(start).join("");
+}
+
+/** Pair by protocol identity, including the period before tool_finished supplies an id. */
+function syncExecSession(draft: SessionState, session: ExecSessionView): void {
+  for (const turn of Object.values(draft.turns)) {
+    for (const step of turn.steps) {
+      if (step.kind !== "tool" || (step.id !== session.origin_call_id && step.execSessionId !== session.id)) continue;
+      step.execSessionId = session.id;
+      step.execSessionState = session.state;
+      step.execSession = { ...session };
+      turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+    }
+  }
 }
 
 function turnForEvent(draft: SessionState, turnId: string): Turn {
@@ -623,9 +652,21 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
         const step = turn.steps.find((item) => item.kind === "tool" && item.id === event.call_id);
         if (step?.kind === "tool") {
           const isStderr = event.stream === "stderr";
-          const next = appendBounded(isStderr ? step.progressStderrTail : step.progressTail, event.text);
-          if (isStderr) step.progressStderrTail = next.value;
-          else step.progressTail = next.value;
+          const currentTail = isStderr ? step.progressStderrTail : step.progressTail;
+          const next = appendBounded(currentTail, event.text);
+          const progressStream = appendProgressStream(
+            isStderr ? step.progressStderrStream : step.progressStream,
+            event.text,
+            currentTail,
+            next.value,
+          );
+          if (isStderr) {
+            step.progressStderrTail = next.value;
+            step.progressStderrStream = progressStream;
+          } else {
+            step.progressTail = next.value;
+            step.progressStream = progressStream;
+          }
           step.progressTruncated = step.progressTruncated === true || next.truncated;
           turn.renderVersion = (turn.renderVersion ?? 0) + 1;
           break;
@@ -642,7 +683,7 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
       {
         step.status = toolStatusFromOutcome(event.outcome);
         step.state = { kind: "finished", outcome: event.outcome };
-        step.execSessionId = event.exec_session_id ?? (event.outcome.kind === "yielded" ? event.outcome.exec_session_id : undefined);
+        step.execSessionId = event.exec_session_id ?? (event.outcome.kind === "yielded" ? event.outcome.exec_session_id : step.execSessionId);
         step.execSessionState = step.execSessionId ? draft.execSessions[step.execSessionId]?.state : undefined;
         step.endedAt = event.metrics?.finished_at_ms ?? now();
         step.elapsedMs = event.metrics && event.metrics.finished_at_ms >= event.metrics.started_at_ms
@@ -657,6 +698,8 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
         step.effects = event.effects;
         step.progressTail = undefined;
         step.progressStderrTail = undefined;
+        step.progressStream = undefined;
+        step.progressStderrStream = undefined;
         target.renderVersion = (target.renderVersion ?? 0) + 1;
       }
       break;
@@ -665,16 +708,7 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
     case "exec_session_state_changed":
     case "exec_session_finished": {
       draft.execSessions[event.session.id] = event.session;
-      for (const turn of Object.values(draft.turns)) {
-        let changed = false;
-        for (const step of turn.steps) {
-          if (step.kind === "tool" && step.execSessionId === event.session.id) {
-            step.execSessionState = event.session.state;
-            changed = true;
-          }
-        }
-        if (changed) turn.renderVersion = (turn.renderVersion ?? 0) + 1;
-      }
+      syncExecSession(draft, event.session);
       break;
     }
     case "exec_session_output_delta": {
@@ -685,6 +719,7 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
         session.next_offset = Math.max(session.next_offset, event.end_offset);
         session.preview_start_offset = session.next_offset - new TextEncoder().encode(session.output_preview).length;
         session.stream_dropped_bytes += gap;
+        syncExecSession(draft, session);
       }
       break;
     }

@@ -8,7 +8,9 @@
  * 授权 URL 交给**系统浏览器**打开；daemon 不 spawn 进程、也不内嵌 webview。
  * 自带 API key 的配置统一在「设置 → 存档」维护，这里只展示入口。
  */
-import { createSignal, For, Match, onSettled, Show, Switch, type Component } from "solid-js";
+import { loadConfigSnapshot } from "../lib/config-snapshot";
+
+import { createEffect, createSignal, For, Match, onSettled, Show, Switch, untrack, type Component } from "solid-js";
 import IconChevronDown from "~icons/lucide/chevron-down";
 
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
@@ -37,7 +39,6 @@ import {
   siwcSignOut,
   siwcStatus,
 } from "../lib/siwc";
-import { transport } from "../lib/transport";
 import { isDesktopRuntime } from "../lib/transport/backend";
 import { siwcApiBase, siwcPlanBadgeVisible, type SiwcSessionStatus } from "../siwc/brand";
 import { SiwcConnectionCard } from "../siwc/components/ConnectionCard";
@@ -45,6 +46,7 @@ import { SiwcFirstRunNotice } from "../siwc/components/FirstRunNotice";
 import { SiwcSignInButton } from "../siwc/components/SignInButton";
 import { siwcAccountView } from "../siwc/state";
 import { toast } from "../ui/toast";
+import { ModelList } from "./ModelList";
 import {
   providerKindOfCredential,
 } from "./mode";
@@ -57,8 +59,9 @@ import {
 import {
   ensureAccountProfile,
   refreshRegistry,
-  registry,
   registryError,
+  registryBusy,
+  syncAccountCatalog,
 } from "../settings/registry";
 
 /** 接入页只管理两类账号额度；BYOK 在「设置 → 存档」。 */
@@ -99,39 +102,10 @@ const messageOf = (cause: unknown): string =>
 type QuotaRow = { label: string; value: string; tone?: "ok" | "muted" };
 
 /** 一家目录的读取状态（按**来源**分槽：套餐与 DeepSeek 账号各有各的目录，互不覆盖）。 */
-type CatalogSlot = { entries: ModelEntry[] | null; error: string | null; busy: boolean };
+type CatalogSlot = { entries: ModelEntry[] | null; error: string | null; busy: boolean; fetchedAt: number };
 
-const EMPTY_SLOT: CatalogSlot = { entries: null, error: null, busy: false };
-
-/** 模型 ID 必须由用户填写；登录和目录刷新都不选择模型。 */
-const ModelList: Component<{
-  active: boolean;
-  providerName: string;
-  model: string | null;
-  busy: boolean;
-  error: string | null;
-  onReload: () => void;
-  onPick: (slug: string) => void;
-}> = (props) => {
-  const [modelId, setModelId] = createSignal("");
-  return (
-    <div class="oauth-models">
-      <div class="oauth-models__head">
-        <span class="oauth-models__title">{props.providerName} 模型 ID</span>
-        <button type="button" class="ghost-mini" disabled={props.busy} onClick={props.onReload}>刷新模型信息</button>
-      </div>
-      <Show when={props.model}><p class="oauth-models__note">当前模型：{props.model}</p></Show>
-      <div class="model-picker-row">
-        <input class="field-input" aria-label={`${props.providerName} 模型 ID`}
-          placeholder="填写服务商提供的模型 ID" value={modelId()}
-          onInput={(event) => setModelId(event.currentTarget.value)} />
-        <button type="button" class="ghost-mini" disabled={props.busy || modelId().trim() === ""}
-          onClick={() => props.onPick(modelId().trim())}>使用此模型</button>
-      </div>
-      <Show when={props.error}><p class="oauth-models__note">{props.error}</p></Show>
-    </div>
-  );
-};
+const EMPTY_SLOT: CatalogSlot = { entries: null, error: null, busy: false, fetchedAt: 0 };
+const CATALOG_MAX_AGE_MS = 10 * 60_000;
 
 /**
  * 服务商摘要行：登录与当前来源分别呈现，详情按需展开。
@@ -144,6 +118,7 @@ const ProviderRow: Component<{
   model: string | null;
   /** 这一家的模型目录条目；`null` = 还没拿到。 */
   catalogBusy: boolean;
+  catalogModels: ModelEntry[] | null;
   catalogError: string | null;
   /** 展开 / 点「刷新目录」：按这一家的来源拉一次目录。 */
   onEnsureCatalog: (force?: boolean) => void;
@@ -236,7 +211,7 @@ const ProviderRow: Component<{
         <div class="oauth-provider__identity">
           <div class="oauth-provider__heading">
             <h3>{props.entry.name}</h3>
-            <Show when={props.active}><span class="oauth-provider__active">当前使用</span></Show>
+            <Show when={props.active}><span class="oauth-provider__active">全局默认来源</span></Show>
           </div>
           <p class="oauth-provider__status">{accountLabel()}</p>
           <Show when={!expanded() && (props.entry.kind === "account" ? accountView().error : planView().error)}>
@@ -328,7 +303,11 @@ const ProviderRow: Component<{
           active={props.active}
           providerName={props.entry.name}
           model={props.model}
-          busy={props.catalogBusy}
+          models={props.catalogModels}
+          signedIn={props.entry.kind === "account" ? props.dsStatus?.signedIn === true
+            : props.status?.status === "connected" && siwcPlanBadgeVisible(props.status)}
+          busy={props.catalogBusy || props.busy || props.dsBusy || registryBusy()}
+          refreshing={props.catalogBusy}
           error={props.catalogError}
           onReload={() => props.onEnsureCatalog(true)}
           onPick={(slug) => props.onPickModel(slug)}
@@ -341,6 +320,7 @@ const ProviderRow: Component<{
 
 export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => {
   const available = isDesktopRuntime();
+  let disposed = false;
   /** `config.load` 读投影：用来判断当前默认存档用的是哪家账号、显示模型名。 */
   const [config, setConfig] = createSignal<ConfigDto | null>(null);
   const [status, setStatus] = createSignal<SiwcSessionStatus | null>(null);
@@ -360,55 +340,77 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
    * 文案必须分开，否则用户不知道该去登录还是该来提 bug。
    */
   const [catalogs, setCatalogs] = createSignal<Partial<Record<CatalogKind, CatalogSlot>>>({});
+  const catalogState: Partial<Record<CatalogKind, CatalogSlot>> = {};
 
   const patchSlot = (kind: CatalogKind, next: Partial<CatalogSlot>): void => {
-    const previous = catalogs();
-    const merged: CatalogSlot = { ...EMPTY_SLOT, ...previous[kind], ...next };
-    // 不用 updater 形式：Solid 2 的 setter 在 `Partial<Record<...>>` 上会挑到
-    // 返回 `void` 的重载，写出来是类型噪音而不是安全。读一次再整份替换即可。
-    setCatalogs({ ...previous, [kind]: merged });
+    // Keep request bookkeeping synchronous while Solid publishes the UI projection.
+    catalogState[kind] = { ...EMPTY_SLOT, ...catalogState[kind], ...next };
+    setCatalogs({ ...catalogState });
   };
 
-  /**
-   * 按 provider 类别取一次目录。成功过就不自动重拉（`force` 给「刷新目录」按钮），
-   * 失败**不清空**已有条目：一次网络抖动不该让选择器变空。
-   */
+  const catalogIdentity = (kind: CatalogKind): string | null => {
+    if (kind === "plan") {
+      const current = status();
+      return current?.status === "connected" && current.sharing
+        ? `${current.profileId ?? ""}:${siwcApiBase(current) ?? ""}` : null;
+    }
+    const current = dsStatus();
+    return current?.signedIn === true
+      ? `${current.account?.user_id ?? ""}:${current.account?.saved_at_ms ?? ""}:${current.inferenceOrigin}` : null;
+  };
+  const requests: Partial<Record<CatalogKind, symbol>> = {};
+  const clearCatalog = (kind: CatalogKind): void => {
+    requests[kind] = Symbol();
+    patchSlot(kind, EMPTY_SLOT);
+  };
+
+  /** Refresh on login/expiry; keep the previous listing on transient failures. */
   const ensureCatalog = async (kind: CatalogKind, force = false): Promise<void> => {
-    if (!available) return;
-    const slot = catalogs()[kind];
+    const identity = catalogIdentity(kind);
+    if (!available || disposed || identity == null) return;
+    const slot = catalogState[kind];
     if (slot?.busy === true) return;
-    if (!force && slot?.entries != null) return;
+    if (!force && slot != null && Date.now() - slot.fetchedAt < CATALOG_MAX_AGE_MS) return;
+    const request = Symbol();
+    requests[kind] = request;
+    const isCurrent = () => !disposed && requests[kind] === request && catalogIdentity(kind) === identity;
     patchSlot(kind, { busy: true });
     try {
-      patchSlot(kind, { entries: await fetchModelCatalog(kind), error: null, busy: false });
+      const entries = await fetchModelCatalog(kind);
+      if (!isCurrent()) return;
+      patchSlot(kind, { entries, error: null, fetchedAt: Date.now() });
+      const entry = ACCOUNT_PROVIDERS.find((provider) => provider.kind === kind)!;
+      const baseUrl = accountBaseUrl(entry);
+      if (baseUrl != null && entries.length > 0) {
+        const synced = await syncAccountCatalog({ kind, baseUrl, models: entries, isCurrent });
+        if (synced == null && isCurrent()) throw new Error(registryError() ?? "模型目录同步失败");
+      }
+      if (isCurrent()) patchSlot(kind, { busy: false });
     } catch (cause) {
-      patchSlot(kind, { entries: slot?.entries ?? null, error: messageOf(cause), busy: false });
+      if (isCurrent()) patchSlot(kind, { error: messageOf(cause), busy: false, fetchedAt: Date.now() });
     }
   };
+
+  // Run after the account state commits: Solid 2 setters do not publish immediately.
+  createEffect(
+    () => [catalogIdentity("plan"), catalogIdentity("account")] as const,
+    (identities, previous) => untrack(() => {
+      for (const [index, kind] of (["plan", "account"] as const).entries()) {
+        if (identities[index] !== previous?.[index]) clearCatalog(kind);
+        if (identities[index] != null) void ensureCatalog(kind);
+      }
+    }),
+  );
 
   const slotOf = (entry: AccountEntry): CatalogSlot => {
     const kind = catalogKindOf(entry.kind);
     return kind == null ? EMPTY_SLOT : (catalogs()[kind] ?? EMPTY_SLOT);
   };
 
-  /** 该账号在 profiles.toml 里的规范存档（可能还没创建）。 */
-  const accountProfile = (entry: AccountEntry) =>
-    registry()?.profiles.find((profile) => profile.credential === entry.credential);
-
-  /** 当前默认存档用的是哪家账号；BYOK / 未配置时 null。 */
-  const activeId = (): string | null => {
-    const current = registry();
-    const credential = current?.providers.find((provider) => provider.id === current.defaultSelection?.provider_id)?.credential
-      ?? config()?.credential;
-    if (credential === "chatgpt_plan") return "plan";
-    if (credential === "deepseek_account") return "account";
-    return null;
-  };
-
   const loadConfig = async (): Promise<void> => {
     if (!available) return;
     try {
-      const next = await transport.query("config.load", {});
+      const next = await loadConfigSnapshot();
       setConfig(next);
       setError(null);
       // 生效那一家的模型目录：不拉的话，接入页与输入区都只能显示"空列表"。
@@ -450,8 +452,10 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
       if (flowId() == null) void refreshStatus();
       // 登录进行中由流程驱动自己轮询，页面这边不掺和（免得两个轮询抢状态）。
       if (dsAttempt() == null) void refreshDs();
+      void ensureCatalog("plan");
+      void ensureCatalog("account");
     }, 10_000);
-    return () => window.clearInterval(timer);
+    return () => { disposed = true; window.clearInterval(timer); };
   });
 
   /** 官方端点只从后端取：套餐来自 `siwc.status.apiBase`，DeepSeek 来自账号态。 */
@@ -517,13 +521,10 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
   };
 
   /**
-   * 在接入页选一条模型：写进该账号的规范存档。
-   *
-   * 当前默认就是这家时，`config.load` 的读投影会跟着变；不是这家时只更新存档，
-   * 不动默认指针 —— 不能因为给未启用的账号挑模型就把正在用的来源换掉。
+   * 将账号目录中的模型登记到服务商，供会话选择。
    */
   const pickModel = async (target: AccountEntry, slug: string): Promise<void> => {
-    if (config() == null || busy()) return;
+    if (config() == null || busy() || registryBusy() || catalogIdentity(target.kind) == null) return;
     setBusy(true);
     setError(null);
     try {
@@ -532,13 +533,12 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
         setError(`还没有读到 ${target.name} 的官方端点：请先完成登录`);
         return;
       }
-      await ensureCatalog(target.kind, true);
+      await ensureCatalog(target.kind);
       const result = await ensureAccountProfile({
         kind: target.kind,
         baseUrl,
         model: slug,
         modelMetadata: catalogs()[target.kind]?.entries?.find((item) => item.slug === slug),
-        makeDefault: true,
       });
       if (result == null) {
         setError(registryError() ?? "模型写入失败");
@@ -546,7 +546,7 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
       }
       await loadConfig();
       await refreshRegistry();
-      toast(`已切换模型：${slug}`, "ok", { dedupeKey: "model-switch" });
+      toast(`已添加模型：${slug}，可在会话中选择`, "ok", { dedupeKey: "model-switch" });
     } finally {
       setBusy(false);
     }
@@ -637,22 +637,6 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
           fallback={<p class="field-hint">浏览器预览下不可用：请在桌面壳里打开本页面。</p>}
         >
           <section class="oauth-section">
-            <div class="oauth-mode">
-              <span class="oauth-pill__text">
-                <span class="oauth-pill__title">当前默认存档</span>
-                <span class="oauth-pill__hint">
-                  {config() == null
-                    ? "正在读取配置…"
-                    : activeId() == null
-                      ? "自带 API key（在「设置 → 存档」维护）"
-                      : (ACCOUNT_PROVIDERS.find((entry) => entry.id === activeId())?.name ??
-                        "账号额度")}
-                </span>
-              </span>
-            </div>
-          </section>
-
-          <section class="oauth-section">
             <h2 class="oauth-section-title">服务商</h2>
             <div class="oauth-provider-list">
               <For each={ACCOUNT_PROVIDERS}>
@@ -661,13 +645,10 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
                   return (
                     <ProviderRow
                       entry={entry}
-                      active={activeId() === entry.id}
-                      model={
-                        activeId() === entry.id
-                          ? (registry()?.defaultSelection?.model_id ?? config()?.model ?? null)
-                          : (accountProfile(entry)?.model ?? null)
-                      }
+                      active={false}
+                      model={null}
                       catalogBusy={slot().busy}
+                      catalogModels={slot().entries}
                       catalogError={slot().error}
                       onEnsureCatalog={(force = false) => {
                         const kind = catalogKindOf(entry.kind);
@@ -700,7 +681,7 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
           <section class="oauth-section oauth-byok">
             <div>
               <h2 class="oauth-section-title">API key 与端点</h2>
-              <p>自带 API key 的服务商与存档统一在「设置 → 存档」维护；启用其中一条存档即可切回。</p>
+              <p>API key 与端点在「设置 → 服务商」维护；在「存档」中保存和选择模型与参数组合。</p>
             </div>
             <Show when={props.onOpenSettings}>
               <button type="button" class="ghost-mini" onClick={() => props.onOpenSettings?.()}>管理存档</button>

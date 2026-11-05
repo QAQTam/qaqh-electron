@@ -99,6 +99,7 @@ export interface DsModelEntry {
   maxOutputTokens?: number;
   reasoningLevels?: string[];
   defaultEffort?: string;
+  imageInput?: boolean;
 }
 
 const positiveSafeInteger = (value: unknown): number | undefined =>
@@ -118,13 +119,17 @@ const mapModel = (entry: DsAccountModel): DsModelEntry => {
   const defaultEffort = typeof effort?.["default_level"] === "string" ? effort["default_level"] : undefined;
   const contextWindow = positiveSafeInteger(entry["context_window"]);
   const maxOutputTokens = positiveSafeInteger(entry["max_output_tokens"]);
+  const name = entry["name"];
+  const modalities = entry["input_modalities"];
   return {
     slug: entry.id,
-    displayName: entry.id,
+    displayName: typeof name === "string" && name.trim() !== "" ? name.trim() : entry.id,
     ...(contextWindow == null ? {} : { contextWindow }),
     ...(maxOutputTokens == null ? {} : { maxOutputTokens }),
     ...(reasoningLevels == null ? {} : { reasoningLevels }),
     ...(defaultEffort == null ? {} : { defaultEffort }),
+    ...(Array.isArray(modalities) && modalities.every((value) => typeof value === "string")
+      ? { imageInput: modalities.includes("image") } : {}),
   };
 };
 

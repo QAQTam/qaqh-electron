@@ -27,14 +27,7 @@ const [unavailable, setUnavailable] = createSignal(false);
 const [error, setError] = createSignal<string | null>(null);
 
 function needsSetup(value: Registry): boolean {
-  if (value.profiles.length === 0) return true;
-  if (value.defaultProfile == null) return true;
-  const profile = value.profiles.find((item) => item.id === value.defaultProfile);
-  if (profile == null) return true;
-  if (profile.model.trim() === "") return true;
-  const provider = value.providers.find((item) => item.id === profile.providerId);
-  if (provider == null || provider.baseUrl.trim() === "") return true;
-  return false;
+  return !value.providers.some((provider) => provider.baseUrl.trim() !== "" && provider.models.some((model) => model.definition.enabled));
 }
 
 /** 读一次名录并更新门状态。读取失败不弹引导（可能只是断线，而不是没配置）。 */

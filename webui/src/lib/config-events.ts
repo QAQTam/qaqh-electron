@@ -19,6 +19,8 @@
  *  3. 监听方自己负责退订（`SessionStore.dispose` 里做）。
  */
 
+import { invalidateConfigSnapshot } from "./config-snapshot";
+
 type Listener = () => void;
 
 const listeners = new Set<Listener>();
@@ -33,6 +35,7 @@ export function onConfigChanged(listener: Listener): () => void {
 
 /** 广播「配置已变」。逐个调用，单个监听方抛错不影响其它监听方。 */
 export function notifyConfigChanged(): void {
+  invalidateConfigSnapshot();
   for (const listener of [...listeners]) {
     try {
       listener();

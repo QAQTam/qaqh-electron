@@ -31,19 +31,6 @@
     .session-tabs-region .tab-scroll { width: max-content; }
     .tools-page { padding: 24px 16px; }
     .settings-fields { grid-template-columns: minmax(0, 1fr); }
-    .settings-body { grid-template-columns: minmax(0, 1fr); }
-    .settings-nav {
-      position: sticky; top: 0; z-index: 2;
-      grid-auto-flow: column; grid-auto-columns: max-content;
-      overflow-x: auto; overscroll-behavior-inline: contain;
-      margin: 0 -16px 12px; padding: 8px 16px 10px;
-      background: var(--surface); border-bottom: 1px solid var(--border);
-      scrollbar-width: none;
-    }
-    .settings-nav::-webkit-scrollbar { display: none; }
-    .settings-nav-item { white-space: nowrap; }
-    /* 窄屏导航收成顶部横条,拖宽手柄没有意义,隐藏。 */
-    .settings-nav-resizer { display: none; }
     .settings-section { scroll-margin-top: 68px; }
   }
 

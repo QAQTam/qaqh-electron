@@ -66,7 +66,24 @@ export function toolPaths(step: Pick<ToolStep, "argsJson" | "output">, cwd?: str
   return [...new Set([...(typeof path === "string" ? [path] : []), ...files].filter((p) => p !== "/dev/null").map((p) => absoluteToolPath(p, base)))];
 }
 
-export function shellContent(step: Pick<ToolStep, "status" | "output" | "progressTail" | "progressStderrTail" | "progressTruncated">) {
+export function shellLive(step: Pick<ToolStep, "status" | "execSession">): boolean {
+  return step.execSession != null ? step.execSession.state.kind !== "finished"
+    : ["declared", "awaiting_permission", "running", "cancelling"].includes(step.status);
+}
+
+export function shellContent(step: Pick<ToolStep, "status" | "output" | "progressTail" | "progressStderrTail" | "progressTruncated" | "execSession">) {
+  const session = step.execSession;
+  if (session) {
+    const finalText = session.state.kind === "finished" && session.output?.kind === "inline" ? session.output.data.text : undefined;
+    return {
+      text: finalText ?? session.output_preview,
+      stderr: "",
+      truncated: finalText != null ? session.capture_omitted_bytes > 0
+        : session.preview_start_offset > 0 || session.stream_dropped_bytes > 0,
+      stream: { startOffset: session.preview_start_offset, endOffset: session.next_offset,
+        data: session.output_preview, offsetEncoding: "utf8" as const },
+    };
+  }
   const terminal = ["finished", "failed", "cancelled", "interrupted"].includes(step.status);
   const final = terminal && step.output != null;
   return {

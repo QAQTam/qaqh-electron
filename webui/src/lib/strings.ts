@@ -207,10 +207,10 @@ export const STR = {
   settingsModel: "模型",
   effortPending: "读取中",
   effortUnset: "未设置",
-  effortPendingHint: "推理强度还没从 daemon 配置读到：上面那个词是占位，不是后端真值。",
-  effortUnsetHint: "配置里推理强度为空串：按后端口径会提升成最低思考档（思考不可关），拖一格即可写入明确值。",
+  effortPendingHint: "正在读取推理强度，请稍候。",
+  effortUnsetHint: "尚未设置推理强度，可选择当前模型支持的档位。",
   effortOffLadder: (raw: string) =>
-    `后端现值是「${raw}」，不在当前模型的档位表里：轨道停在首档只是控件位置，不代表后端就是这个值。`,
+    `本会话的强度为「${raw}」，当前模型目录未声明支持此档位。请选择可用档位，或重置为模型默认。`,
   settingsReasoningEffort: "思考强度",
   settingsMaxTokens: "最大输出令牌",
   settingsContextLength: "上下文窗口",

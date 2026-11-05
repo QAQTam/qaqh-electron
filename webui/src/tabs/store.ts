@@ -11,6 +11,7 @@ import { createSignal, createStore } from "solid-js";
 import type { SessionRunStatus } from "../api/qaqh/SessionRunStatus";
 import { withViewTransition } from "../ui/viewTransition";
 import { sessionTarget, transport } from "../lib/transport";
+import { notifyConfigChanged } from "../lib/config-events";
 import { STR } from "../lib/strings";
 import { SessionStore } from "../session/store";
 import { overlayLocalTitles } from "../session/title-override";
@@ -275,6 +276,10 @@ function addTab(seed: string): Tab {
   // 会话元数据变更接给标签层:store 只有已 attach 的那条流,所以这里只管活动
   // 会话的即时刷新,后台会话仍靠 pollSessions 的列表重拉兜底。
   tab.store.onSessionsChanged = () => { void pollSessions(); };
+  tab.store.onConnectionRestored = () => {
+    void refreshWorkspaces();
+    notifyConfigChanged();
+  };
   tab.store.onSessionTitleChanged = (title) => {
     // 后端标题已生成(title_changed):本地覆盖退场(后端优先语义)。
     if (title.trim()) setLocalTitleOf(seed, "");
@@ -382,6 +387,8 @@ export async function createSessionWithCwd(
   if (typeof sessionId !== "string" || sessionId === "") {
     throw new Error("session.create 未返回 session_id");
   }
+  invalidateWorkspaceRefresh();
+  void refreshWorkspaces();
   // 会话已经建出来了：侧栏刷新失败不能再走一次创建，否则会多出一个会话。
   try {
     const list = await transport.sessions();
@@ -396,20 +403,13 @@ export async function createSessionWithCwd(
  * 新建会话：调用原子 session.create，落 SessionMeta 并触发 workspace 归属。
  */
 export async function createSession(cwd?: string | null): Promise<void> {
-  if (creating()) return;
-  setCreating(true);
-  try {
-    const fresh = await createSessionWithCwd(cwd ?? newSessionCwd());
-    await openSession(fresh);
-  } catch (error) {
-    setBootError(String(error instanceof Error ? error.message : error));
-  } finally {
-    setCreating(false);
-  }
+  if (cwd != null) setNewSessionCwd(cwd);
+  setIsStartup(true);
 }
 
 export interface StartupSubmitOptions {
   cwd: string | null;
+  modelSelection: ModelSelection;
   profile?: string | null;
   effort?: string | null;
   text: string;
@@ -429,7 +429,7 @@ export async function submitStartupSession(options: StartupSubmitOptions): Promi
   try {
     const fresh = await createSessionWithCwd({
       cwd: options.cwd,
-      profile: options.profile,
+      modelSelection: options.modelSelection,
       effort: options.effort,
     });
       const uploadedRefs: SessionContentRef[] = [];
@@ -474,7 +474,8 @@ export async function registerWorkspace(path: string): Promise<SidebarWorkspace 
       throw new Error("workspace.create 返回了无效工作区信息");
     }
     const created: SidebarWorkspace = { id: entry.id, path: entry.path, title: entry.title, order: entry.order, missing_dir: false };
-    await pollSessions();
+    invalidateWorkspaceRefresh();
+    await refreshWorkspaces();
     return created;
   } catch (error) {
     toast(`${STR.workspaceRegisterFailed}：${error instanceof Error ? error.message : String(error)}`, "err");
@@ -542,12 +543,8 @@ export function pollSessions(): Promise<void> {
 
 async function pullSessions(): Promise<void> {
   try {
-    const [list, workspaces] = await Promise.all([
-      transport.sessions() as Promise<SidebarSession[]>,
-      transport.query("workspace.list", {}).then((entries) => entries.map(workspaceEntryToSidebar)).catch(() => []),
-    ]);
+    const list = await transport.sessions() as SidebarSession[];
     applySessionList(list);
-    setWorkspaceCatalog(workspaces);
     for (const item of list) {
       const tab = tabs().find((candidate) => candidate.seed === String(item.session_id));
       if (tab == null) continue;
@@ -559,6 +556,25 @@ async function pullSessions(): Promise<void> {
   } catch {
     // 轮询失败静默,下一轮再取。
   }
+}
+
+let workspaceFlight: Promise<void> | null = null;
+let workspaceGeneration = 0;
+function invalidateWorkspaceRefresh(): void {
+  workspaceGeneration += 1;
+  workspaceFlight = null;
+}
+
+/** Workspaces change independently of the periodically refreshed session list. */
+export function refreshWorkspaces(): Promise<void> {
+  if (workspaceFlight != null) return workspaceFlight;
+  const generation = workspaceGeneration;
+  const request = transport.query("workspace.list", {}).then((entries) => {
+    if (generation === workspaceGeneration) setWorkspaceCatalog(entries.map(workspaceEntryToSidebar));
+  }).catch(() => { /* Keep the last known catalog until the next refresh. */ });
+  workspaceFlight = request;
+  void request.finally(() => { if (workspaceFlight === request) workspaceFlight = null; });
+  return request;
 }
 
 /**
@@ -584,12 +600,11 @@ export async function deleteSession(seed: string): Promise<void> {
 
 /** 启动:选一个非归档会话(优先运行中)作为第一个标签。 */
 export async function boot(): Promise<void> {
-  const [list, workspaces] = await Promise.all([
+  const [list] = await Promise.all([
     transport.sessions() as Promise<SidebarSession[]>,
-    transport.query("workspace.list", {}).then((entries) => entries.map(workspaceEntryToSidebar)).catch(() => []),
+    refreshWorkspaces(),
   ]);
   applySessionList(list);
-  setWorkspaceCatalog(workspaces);
   const live = list.find((item) => !item.archived && item.busy) ?? list.find((item) => !item.archived) ?? list[0];
   if (live?.session_id == null) {
     setBootError(null);

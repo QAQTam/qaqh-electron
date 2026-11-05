@@ -1,5 +1,5 @@
 /** 面向用户的工具结果：文件路径/diff、exec 流、待办/skills 语义。 */
-import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch, type Component } from "solid-js";
+import { createEffect, createMemo, createSignal, Match, onCleanup, Show, Switch, type Component } from "solid-js";
 import IconFile from "~icons/lucide/file-text";
 import IconEdit from "~icons/lucide/file-pen-line";
 import IconSearch from "~icons/lucide/search";
@@ -12,15 +12,31 @@ import IconX from "~icons/lucide/x";
 import { Collapse } from "../ui/Collapse";
 import { TextShimmer } from "../ui/TextShimmer";
 import { TodoCard, todoCardData } from "./TodoCard";
-import { parseAnsi } from "../lib/ansi";
-import { parseShellSections } from "../lib/sections";
+import type { ReadOnlyTerminalProps } from "./ReadOnlyTerminal";
 import { STR, formatWorkDuration } from "../lib/strings";
 import { now } from "../lib/time";
 import { DiffList } from "../diff/DiffView";
 import type { ToolStep, Turn } from "../session/types";
 import { primaryArg, toolLabel } from "./registry";
-import { isSkillStep, semanticLabel, shellContent, toolPaths, toolPresentation, toolPhaseLabel } from "./presentation";
+import { isSkillStep, semanticLabel, shellContent, shellLive, toolPaths, toolPresentation, toolPhaseLabel } from "./presentation";
 import { toolCommandIcon } from "./command-icons";
+
+type ReadOnlyTerminalView = Component<ReadOnlyTerminalProps>;
+let readOnlyTerminalPromise: Promise<ReadOnlyTerminalView> | undefined;
+
+function loadReadOnlyTerminal(): Promise<ReadOnlyTerminalView> {
+  readOnlyTerminalPromise ??= import("./ReadOnlyTerminal").then((module) => module.ReadOnlyTerminal);
+  return readOnlyTerminalPromise;
+}
+
+const TerminalSlot: Component<ReadOnlyTerminalProps & { component: ReadOnlyTerminalView | undefined }> = (props) => (
+  <Show when={props.component} fallback={<div class="tool-xterm tool-xterm-loading" aria-hidden="true" />}>
+    {(view) => {
+      const ReadOnlyTerminal = view();
+      return <ReadOnlyTerminal text={props.text} live={props.live} stream={props.stream} tty={props.tty} onWrite={props.onWrite} />;
+    }}
+  </Show>
+);
 
 const CopyButton: Component<{ text: () => string }> = (props) => {
   const [copied, setCopied] = createSignal(false);
@@ -37,43 +53,39 @@ const LiveElapsed: Component<{ startedAt: number | undefined }> = (props) => {
   return <span class="tool-elapsed">{formatWorkDuration(props.startedAt == null ? 0 : Math.max(0, tick() - props.startedAt))}</span>;
 };
 
-const AnsiInline: Component<{ text: string }> = (props) => (
-  <For each={parseAnsi(props.text)} keyed={false}>{(chunk) => <span style={{ color: chunk().color, background: chunk().background, "font-weight": chunk().bold ? "600" : "", "font-style": chunk().italic ? "italic" : "", "text-decoration": chunk().underline ? "underline" : "" }}>{chunk().text}</span>}</For>
-);
-
-/** 普通行走 ANSI 解析;`=== 标题 ===` 分隔行识别成分节样式(原文留在 title)。 */
-const ShellText: Component<{ text: string }> = (props) => {
-  const segments = createMemo(() => parseShellSections(props.text));
-  return (
-    <pre class="tool-text"><For each={segments()}>{(seg) => seg.kind === "section"
-      ? <span class="tool-section-line" title={seg.raw}>{seg.title}</span>
-      : <AnsiInline text={seg.text} />}</For></pre>
-  );
-};
-
 const ExecResult: Component<{ step: ToolStep }> = (props) => {
   const content = createMemo(() => shellContent(props.step));
-  const live = () => ["declared", "awaiting_permission", "running", "cancelling"].includes(props.step.status);
+  const live = () => shellLive(props.step);
   const yielded = () => props.step.state?.kind === "finished" && props.step.state.outcome.kind === "yielded";
+  const [terminalComponent, setTerminalComponent] = createSignal<ReadOnlyTerminalView>();
   let scroller: HTMLDivElement | undefined;
   let following = true;
   let frame: number | undefined;
-  createEffect(() => content(), () => {
+  const followOutput = (): void => {
     if (frame != null) cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => { frame = undefined; if (following && scroller) scroller.scrollTop = scroller.scrollHeight; });
-  });
+    frame = requestAnimationFrame(() => {
+      frame = undefined;
+      if (following && scroller) scroller.scrollTop = scroller.scrollHeight;
+    });
+  };
+  createEffect(() => content(), followOutput);
   onCleanup(() => { if (frame != null) cancelAnimationFrame(frame); });
+  createEffect(
+    () => Boolean(content().text || content().stderr),
+    (hasOutput) => {
+      if (hasOutput) void loadReadOnlyTerminal().then((component) => setTerminalComponent(() => component));
+    },
+  );
   return <>
     <Show when={content().text || content().stderr}>
       <div class="tool-output">
         <div class="tool-detail-label">{live() ? "运行输出" : yielded() ? "本次输出" : "执行结果"}<span class="spacer" /><CopyButton text={() => [content().text, content().stderr].filter(Boolean).join("\n")} /></div>
-        <div ref={scroller} class={{ "tool-shell-output": true, "tool-progress": live() }} tabindex={0} role="region" aria-label={live() ? "运行输出" : yielded() ? "本次输出" : "执行结果"}
+        <div ref={scroller} class={{ "tool-shell-output": true, "tool-progress": live() }}
           onWheel={(event) => { if (event.deltaY < 0) following = false; }}
           onPointerDown={() => { following = false; }} onTouchStart={() => { following = false; }}
-          onKeyDown={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key)) following = false; }}
           onScroll={(event) => { const el = event.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight <= 2) following = true; }}>
-          <Show when={content().text}><ShellText text={content().text} /></Show>
-          <Show when={content().stderr}><div class="tool-detail-label">stderr</div><pre class="tool-text tool-stderr">{content().stderr}</pre></Show>
+          <Show when={content().text}><TerminalSlot text={content().text} live={live()} stream={content().stream ?? props.step.progressStream} tty={props.step.execSession?.tty} onWrite={followOutput} component={terminalComponent()} /></Show>
+          <Show when={content().stderr}><div class="tool-detail-label">stderr</div><TerminalSlot text={content().stderr} live={live()} stream={props.step.progressStderrStream} onWrite={followOutput} component={terminalComponent()} /></Show>
         </div>
       </div>
     </Show>

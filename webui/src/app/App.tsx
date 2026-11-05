@@ -10,6 +10,8 @@
  *  - 设置独立页(spec 第二阶段):Ctrl+, 开关,读写 daemon 全局配置
  *    (`config.load`/`config.save`/`profile.*` 经宿主白名单)。
  */
+import { loadConfigSnapshot } from "../lib/config-snapshot";
+
 import { createEffect, createSignal, For, onSettled, Show, type Component } from "solid-js";
 import { invoke, listen, type UnlistenFn } from "../lib/host";
 import IconArrowLeft from "~icons/lucide/arrow-left";
@@ -43,6 +45,7 @@ import {
   openSession,
   openStartup,
   pollSessions,
+  refreshWorkspaces,
   renameSession,
   setBootError,
   setDraftOf,
@@ -360,9 +363,9 @@ const App: Component = () => {
     });
     const onFocus = (): void => {
       void pollSessions();
+      void refreshWorkspaces();
       // 窗口重新聚焦时重读一次配置:别的端(TUI / 手改 config.toml / 设置页另一台)
       // 可能刚改过 model 与强度,chip 不该继续显示上次那一份。
-      void refreshConfig();
       // 同一份配置还有第二个镜像:上下文百分比的分母(`SessionStore.contextLength`)。
       // 它没有自己的轮询,靠这条广播跟着刷新——否则手改 config.toml 里的
       // context_length 要等下一轮结束才反映到百分比上。
@@ -380,8 +383,7 @@ const App: Component = () => {
     if (stored != null) {
       applyTheme(stored, false);
     } else {
-      void transport
-        .query("config.load", {})
+      void loadConfigSnapshot()
         .then((config) => applyTheme(config.theme, false))
         .catch(() => {});
     }
@@ -649,7 +651,7 @@ const App: Component = () => {
   };
 
   const openProfilesSettings = (): void => {
-    openSettingsAt("section-profiles");
+    openSettingsAt("section-providers");
   };
 
   /** 退出确认对话框:⋯菜单、Ctrl+Q、主进程 quit-requested 三条入口共用这一份。 */
@@ -759,16 +761,9 @@ const App: Component = () => {
     }
   };
 
-  /**
-   * 会话级换 profile(§1.5)。失败必须出声:菜单已关、控件回到旧值,
-   * 不提示就等于「点了没反应」。
-   */
-  const switchProfile = async (tab: Tab, name: string | null): Promise<void> => {
-    try {
-      await tab.store.setSessionProfile(name);
-    } catch (error) {
-      toast(`${STR.profileSwitchFailed}：${String(error instanceof Error ? error.message : error)}`, "err");
-    }
+  const switchSelection = async (tab: Tab, providerId: string, modelId: string): Promise<void> => {
+    try { await tab.store.setSessionSelection(providerId, modelId); }
+    catch (error) { toast(`切换模型失败：${String(error instanceof Error ? error.message : error)}`, "err"); }
   };
 
   const switchEffort = async (tab: Tab, effort: string | null): Promise<void> => {
@@ -889,6 +884,8 @@ const App: Component = () => {
       <Sidebar
         section={settingsOpen() ? "settings" : section()}
         onNavigate={navigateSection}
+        settingsSection={settingsSection()}
+        onSettingsSection={(id) => { setSettingsSection(id); setSettingsSectionNonce((value) => value + 1); if (appCols() === 1) setSidebarDrawerOpen(false); }}
         collapsed={sidebarCollapsed()}
         drawer={appCols() === 1}
         drawerOpen={appCols() === 1 && sidebarDrawerOpen()}
@@ -997,7 +994,7 @@ const App: Component = () => {
                         attachments={() => tab.store.pendingAttachments[0]()}
                         onRemoveAttachment={(id) => tab.store.removeAttachment(id)}
                         profileView={() => tab.store.composerProfile[0]()}
-                        onProfile={(name) => void switchProfile(tab, name)}
+                        onSelection={(providerId, modelId) => void switchSelection(tab, providerId, modelId)}
                         onManageProfiles={openProfilesSettings}
                         modelView={() => tab.store.composerModel[0]()}
                         modelOverridden={() => tab.store.composerModelOverride[0]()}
@@ -1035,6 +1032,8 @@ const App: Component = () => {
           <SettingsView
             initialSection={settingsSection()}
             sectionNonce={settingsSectionNonce()}
+            onSectionChange={setSettingsSection}
+            showSectionPicker={appCols() === 1 || sidebarCollapsed()}
             onOpenOAuth={() => navigateSection("oauth")}
           />
         </Show>
@@ -1129,7 +1128,7 @@ const App: Component = () => {
       <ContextMenuHost />
       <ToastHost />
       <Show when={onboardingVisible()}>
-        <OnboardingView onOpenSettings={() => openSettingsAt("section-profiles")} />
+        <OnboardingView onOpenSettings={() => openSettingsAt("section-providers")} />
       </Show>
     </div>
   );

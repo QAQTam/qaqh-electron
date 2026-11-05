@@ -15,6 +15,7 @@ import {
   registryLoading,
   saveProfile,
   setDefaultProfile,
+  modelSelectionIssue,
   type RegistryProfile,
 } from "./registry";
 
@@ -25,12 +26,12 @@ const optionalMaxOutput = (raw: string): number | null | undefined => {
   return Number.isSafeInteger(value) && value > 0 ? value : undefined;
 };
 
-const ProfileEditor: Component<{ onClose: () => void }> = (props) => {
-  const [name, setName] = createSignal("");
-  const [providerId, setProviderId] = createSignal("");
-  const [modelId, setModelId] = createSignal("");
-  const [effort, setEffort] = createSignal("");
-  const [maxTokens, setMaxTokens] = createSignal("");
+const ProfileEditor: Component<{ initial?: RegistryProfile; onClose: () => void }> = (props) => {
+  const [name, setName] = createSignal(props.initial == null ? "" : `${props.initial.name} 副本`);
+  const [providerId, setProviderId] = createSignal(props.initial?.providerId ?? "");
+  const [modelId, setModelId] = createSignal(props.initial?.model ?? "");
+  const [effort, setEffort] = createSignal(props.initial?.effort ?? "");
+  const [maxTokens, setMaxTokens] = createSignal(props.initial?.maxTokens == null ? "" : String(props.initial.maxTokens));
   const providers = createMemo(() => registry()?.providers ?? []);
   const selectedProvider = createMemo(() => providers().find((provider) => provider.id === providerId().trim()));
   const models = createMemo(() => selectedProvider()?.models.filter((model) => model.definition.enabled) ?? []);
@@ -71,17 +72,37 @@ const ProfileEditor: Component<{ onClose: () => void }> = (props) => {
       <Field label="存档名称" wide>
         <TextInput value={name()} onInput={setName} placeholder="例如：快速审阅" />
       </Field>
-      <Field label="服务商 ID" hint="填写服务商目录中已配置的 ID">
-        <TextInput value={providerId()} onInput={setProviderId} />
+      <Field label="服务商" hint="选择已配置的服务商">
+        <select class="field-input" aria-label="存档服务商" value={providerId()}
+          onChange={(event) => { setProviderId(event.currentTarget.value); setModelId(""); setEffort(""); setMaxTokens(""); }}>
+          <option value="">请选择服务商</option>
+          <For each={providers()}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For>
+        </select>
       </Field>
-      <Field label="模型 ID" hint="填写该服务商目录中已启用模型的 ID">
-        <TextInput value={modelId()} onInput={setModelId} />
+      <Field label="模型" hint="选择该服务商目录中已启用的模型">
+        <select class="field-input" aria-label="存档模型" value={modelId()}
+          onChange={(event) => { setModelId(event.currentTarget.value); setEffort(""); setMaxTokens(""); }}>
+          <option value="">请选择模型</option>
+          <Show when={modelId() !== "" && selectedModel() == null}>
+            <option value={modelId()} disabled>{modelId()}（不可用）</option>
+          </Show>
+          <For each={models()}>{(model) => <option value={model.id}>{model.definition.display_name ?? model.id}</option>}</For>
+        </select>
       </Field>
       <Show when={selectedModel()}>
         {(model) => <p class="field-hint settings-row-wide">模型上下文窗口：{model().definition.context_window.toLocaleString()} tokens</p>}
       </Show>
       <Field label="推理强度" hint="留空 = 跟随模型默认">
-        <TextInput value={effort()} onInput={setEffort} placeholder="例如：low、medium、high" />
+        <select class="field-input" aria-label="存档推理强度" value={effort()}
+          onChange={(event) => setEffort(event.currentTarget.value)}>
+          <option value="">跟随模型默认</option>
+          <Show when={effort() !== "" && !selectedModel()?.definition.reasoning_levels.includes(effort())}>
+            <option value={effort()} disabled>{effort()}（未声明支持）</option>
+          </Show>
+          <For each={selectedModel()?.definition.capabilities.reasoning ? selectedModel()?.definition.reasoning_levels ?? [] : []}>
+            {(level) => <option value={level}>{level}</option>}
+          </For>
+        </select>
       </Field>
       <Field label="最大输出 tokens" hint="留空 = 跟随模型默认">
         <TextInput type="number" value={maxTokens()} onInput={setMaxTokens} />
@@ -95,7 +116,12 @@ const ProfileEditor: Component<{ onClose: () => void }> = (props) => {
   );
 };
 
-const ProfileRow: Component<{ profile: RegistryProfile }> = (props) => {
+const ProfileRow: Component<{ profile: RegistryProfile; onCopy: () => void }> = (props) => {
+  const issue = () => modelSelectionIssue(
+    registry()?.providers.find((provider) => provider.id === props.profile.providerId)
+      ?.models.find((model) => model.id === props.profile.model)?.definition,
+    props.profile.effort, props.profile.maxTokens,
+  );
   const remove = async (): Promise<void> => {
     if (props.profile.isDefault) return;
     if (await deleteProfile(props.profile.id)) toast("存档已删除", "ok");
@@ -104,7 +130,7 @@ const ProfileRow: Component<{ profile: RegistryProfile }> = (props) => {
     if (await setDefaultProfile(props.profile.id)) toast(`已将「${props.profile.name}」设为默认模型`, "ok");
   };
   return (
-    <div class={`profile-row${props.profile.isDefault ? " active" : ""}`}>
+    <div class={`profile-row profile-shortcut-row${props.profile.isDefault ? " active" : ""}`}>
       <span class="profile-name">
         <strong>{props.profile.name}</strong>
         <small class="provider-meta">{props.profile.model}</small>
@@ -112,9 +138,11 @@ const ProfileRow: Component<{ profile: RegistryProfile }> = (props) => {
         <small class="provider-meta">
           {props.profile.effort ?? "跟随模型"} · 上下文 {props.profile.contextLength ?? "模型默认"} · 最大输出 {props.profile.maxTokens ?? "模型默认"}
         </small>
+        <Show when={issue()}>{(message) => <small class="field-hint is-error">{message()}；可复制后修正。</small>}</Show>
       </span>
       <Show when={props.profile.isDefault}><span class="profile-active-tag">● 默认模型</span></Show>
-      <button type="button" class="ghost-mini" disabled={registryBusy() || props.profile.isDefault} onClick={() => void makeDefault()}>设为默认</button>
+      <button type="button" class="ghost-mini" disabled={registryBusy() || props.profile.isDefault || issue() != null} onClick={() => void makeDefault()}>设为默认</button>
+      <button type="button" class="ghost-mini" disabled={registryBusy()} onClick={props.onCopy}>复制并修改</button>
       <button
         type="button"
         class="ghost-mini is-danger"
@@ -128,14 +156,15 @@ const ProfileRow: Component<{ profile: RegistryProfile }> = (props) => {
 
 export const ProfilesSection: Component = () => {
   const [creating, setCreating] = createSignal(false);
+  const [copying, setCopying] = createSignal<RegistryProfile | undefined>(undefined);
   const profiles = () => registry()?.profiles ?? [];
   return (
     <Section
       id="section-profiles"
       title="存档"
-      desc="存档保留服务商、模型和参数快捷组合；修改已有存档暂不支持。默认模型选择即时写入。"
+      desc="存档保存模型与参数组合。可复制后修改并设为全局默认；已有会话仍使用自己的存档与覆盖设置。"
     >
-      <Show when={registryError() != null}>
+      <Show when={registryError()}>
         {(message) => <p class="field-hint is-error settings-row-wide">{message()}</p>}
       </Show>
       <Show when={registryLoading() && registry() == null}><p class="settings-muted settings-row-wide">读取中…</p></Show>
@@ -143,11 +172,12 @@ export const ProfilesSection: Component = () => {
         <p class="settings-muted settings-row-wide">还没有存档。请先到「服务商」添加并启用模型，再创建存档。</p>
       </Show>
       <div class="profile-list">
-        <For each={profiles()}>{(profile) => <ProfileRow profile={profile} />}</For>
+        <For each={profiles()}>{(profile) => <ProfileRow profile={profile} onCopy={() => { setCreating(false); setCopying(profile); }} />}</For>
       </div>
+      <Show when={copying()}>{(profile) => <ProfileEditor initial={profile()} onClose={() => setCopying(undefined)} />}</Show>
       <Show when={creating()} fallback={
         <div class="settings-row-wide">
-          <button type="button" class="ghost-mini provider-cta" disabled={registryBusy()} onClick={() => setCreating(true)}>＋ 新建存档</button>
+          <button type="button" class="ghost-mini provider-cta" disabled={registryBusy()} onClick={() => { setCopying(undefined); setCreating(true); }}>＋ 新建存档</button>
         </div>
       }>
         <ProfileEditor onClose={() => setCreating(false)} />

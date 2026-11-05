@@ -9,6 +9,8 @@
  * 拿全局活跃项那一份会把模型目录与可用档位算到别的 provider 头上。可用档位由
  * 用户登记的模型定义或在线目录给出，不按模型名字推测。
  */
+import { loadConfigSnapshot } from "../lib/config-snapshot";
+
 import { createSignal } from "solid-js";
 
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
@@ -19,7 +21,6 @@ import {
   type CatalogKind,
   type ModelEntry,
 } from "../oauth/model-catalog";
-import { transport } from "../lib/transport";
 import { reasoningTiers, type ReasoningTier } from "../models/reasoning";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 import { refreshRegistry, registry } from "../settings/registry";
@@ -86,19 +87,23 @@ export function availableTiers(kind: ProviderKind, model: string): readonly Reas
   return reasoningTiers(modelMetadata(kind, model)?.reasoningLevels);
 }
 
-function modelMetadata(kind: ProviderKind, model: string): ModelEntry | undefined {
+export function modelMetadata(kind: ProviderKind, model: string): ModelEntry | undefined {
   const current = registry();
   const providers = current?.providers.filter((item) =>
     providerKindOfCredential(item.credential) === kind && item.models.some((entry) => entry.id === model)) ?? [];
   const provider = providers.find((item) => item.id === current?.defaultSelection?.provider_id)
     ?? (providers.length === 1 ? providers[0] : undefined);
   const definition = provider?.models.find((entry) => entry.id === model)?.definition;
+  const online = catalogModels(kind)?.find((entry) => entry.slug === model);
   if (definition != null) return {
     slug: model, displayName: definition.display_name ?? model,
-    reasoningLevels: definition.capabilities.reasoning ? definition.reasoning_levels : [],
+    contextWindow: definition.context_window,
+    maxOutputTokens: definition.max_output_tokens,
+    reasoningLevels: definition.capabilities.reasoning ? definition.reasoning_levels : kind === "byok" ? [] : undefined,
     defaultEffort: definition.defaults.reasoning_effort ?? undefined,
+    ...online,
   };
-  return catalogModels(kind)?.find((entry) => entry.slug === model);
+  return online;
 }
 
 /** 后端那份配置**读到了没有**。没读到就不能对外报任何档名（见 `effortDisplayOf`）。 */
@@ -128,8 +133,7 @@ export function defaultTier(kind: ProviderKind, model: string): ReasoningTier | 
 
 export async function refreshConfig(): Promise<void> {
   try {
-    const next = await transport.query("config.load", {});
-    await refreshRegistry();
+    const [next] = await Promise.all([loadConfigSnapshot(), refreshRegistry()]);
     setConfig(next);
     setError(null);
   } catch (cause) {

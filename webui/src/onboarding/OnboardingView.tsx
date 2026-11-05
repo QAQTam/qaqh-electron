@@ -25,7 +25,6 @@ import {
   refreshRegistry,
   registry,
   registryError,
-  saveProfile,
   saveModel,
   saveProvider,
 } from "../settings/registry";
@@ -198,17 +197,6 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
       setError(registryError() ?? "保存模型目录失败");
       return;
     }
-    const saved = await saveProfile(
-      {
-        name,
-        provider: providerId,
-        model: modelId,
-        effort: null,
-        maxTokens: tokens,
-      },
-      { makeDefault: true },
-    );
-    if (saved == null) setError(registryError() ?? "保存存档失败");
   };
 
   const signIn = (): void => {
@@ -221,7 +209,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
         <header class="onboarding-head">
           <div>
             <h1 id="onboarding-title">开始使用 QAQ-Harness</h1>
-            <p>选一条推理来源。配置会写进 profiles.toml，之后可随时在「设置 → 存档」改。</p>
+            <p>添加服务商和模型，之后可在会话中选择。</p>
           </div>
           <button type="button" class="ghost-mini" onClick={dismissOnboarding}>
             稍后设置

@@ -166,7 +166,7 @@ const ProviderEditor: Component<{
 
       <Show when={props.provider.referencedBy.length > 0}>
         <p class="field-hint is-warn">
-          该服务商被 {props.provider.referencedBy.length} 条存档引用，端点与密钥改动会同时影响它们。
+          端点与密钥改动会影响引用此服务商的存档和全局默认模型。
         </p>
       </Show>
 
@@ -266,10 +266,7 @@ const ProviderRow: Component<{
           <small class="provider-meta">{props.provider.baseUrl}</small>
           <small class="provider-meta">
             {props.provider.wire} · {credentialLabel(props.provider.credential)} ·{" "}
-            {props.provider.apiKeySet ? "密钥已存" : "无密钥"}
-          </small>
-          <small class="provider-meta">
-            {referenced() > 0 ? `被 ${referenced()} 条存档引用` : "未被引用"}
+            {account() ? "账号授权" : props.provider.apiKeySet ? "密钥已存" : "未配置密钥"}
           </small>
         </span>
         <Show
@@ -310,7 +307,7 @@ const ProviderRow: Component<{
       </Show>
       <details class="provider-model-catalog">
         <summary>模型目录 · {props.provider.models.length}</summary>
-        <p class="field-hint">上下文、输出限制和能力位由模型目录维护；profile 只引用已启用的模型。</p>
+        <p class="field-hint">模型目录维护能力和上限；会话中可选择任一启用的模型。账号模型可在接入页刷新目录。</p>
         <For each={props.provider.models}>
           {(model) => (
             <div class="profile-row provider-model-row">
@@ -342,7 +339,6 @@ const ProviderRow: Component<{
 };
 
 export const ProvidersSection: Component<{
-  onOpenProfiles: () => void;
   onOpenOAuth?: () => void;
 }> = (props) => {
   const rows = () => {
@@ -354,9 +350,9 @@ export const ProvidersSection: Component<{
     <Section
       id="section-providers"
       title="服务商"
-      desc="服务商承载端点与凭据；模型目录单独维护能力和限制。修改会立即写入 provider/model catalog。"
+      desc="服务商管理端点与凭据，模型目录管理能力和上限。修改后即时保存。"
     >
-      <Show when={registryError() != null}>
+      <Show when={registryError()}>
         {(message) => <p class="field-hint is-error settings-row-wide">{message()}</p>}
       </Show>
       <Show when={registryLoading() && registry() == null}>
@@ -374,16 +370,6 @@ export const ProvidersSection: Component<{
         </For>
       </div>
 
-      <div class="settings-row-wide">
-        <button
-          type="button"
-          class="ghost-mini provider-cta"
-          disabled={registryBusy()}
-          onClick={props.onOpenProfiles}
-        >
-          ＋ 新建存档…
-        </button>
-      </div>
     </Section>
   );
 };

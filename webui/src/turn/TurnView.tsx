@@ -160,7 +160,7 @@ const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thin
       <Collapse open={open()}>
         <div class="timeline turn-steps">
           <For each={groups()} keyed={(group) => group.key}>{(group) => <div class="work-step-group"><For each={group().steps} keyed={(step) => step.id}>{(step) => <WorkStep step={step} turn={props.turn} thinkingRich={props.thinkingRich} cwd={props.cwd} isLatest={props.latestToolStepId != null && step().id === props.latestToolStepId} />}</For></div>}</For>
-          <For each={waits()}>{(wait) => <div class="timeline-row wait"><span class="timeline-label">{wait.kind === "approval" ? STR.waitApproval(formatWorkDuration(Math.max(0, (wait.to ?? wait.from) - wait.from))) : STR.waitAnswer(formatWorkDuration(Math.max(0, (wait.to ?? wait.from) - wait.from)))}</span></div>}</For>
+          <For each={waits().filter((wait) => wait.kind !== "approval")}>{(wait) => <div class="timeline-row wait"><span class="timeline-label">{STR.waitAnswer(formatWorkDuration(Math.max(0, (wait.to ?? wait.from) - wait.from)))}</span></div>}</For>
         </div>
       </Collapse>
     </div>

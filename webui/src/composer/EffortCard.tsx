@@ -43,6 +43,7 @@ import {
   currentProviderKind,
   defaultTier,
   loadCatalog,
+  modelMetadata,
   refreshConfig,
 } from "./model-config";
 import { catalogKindOf } from "../oauth/model-catalog";
@@ -132,6 +133,11 @@ export const EffortCard: Component<{
       setParamError("最大输出必须是正整数");
       return;
     }
+    const limit = modelMetadata(providerKind(), effectiveModel())?.maxOutputTokens;
+    if (limit != null && next > limit) {
+      setParamError(`最大输出不能超过模型上限 ${limit.toLocaleString()}`);
+      return;
+    }
     setParamError(null);
     if (next !== current) await apply(next);
   };
@@ -139,7 +145,9 @@ export const EffortCard: Component<{
   /**
    * 后端真值的三态判定（`effortDisplayOf`）。
    */
-  const display = (): EffortDisplay => effortDisplayOf(effectiveEffort(), tiers(), configLoaded());
+  const display = (): EffortDisplay => effortDisplayOf(effectiveEffort(), tiers(), props.effort != null || configLoaded());
+  const metadata = () => modelMetadata(providerKind(), effectiveModel());
+  const tone = () => pending() == null && display().kind === "offLadder" ? "warning" : tierTone(trackTier());
 
   /** chip 上的字：预览值 > 后端真值 > 三态里那句老实话（不认识的值原样显示，不冒充第一档）。 */
   const chipLabel = (): string => {
@@ -199,10 +207,10 @@ export const EffortCard: Component<{
         type="button"
         class="composer-tool-button effort-trigger"
         aria-expanded={props.open ? "true" : "false"}
-        title="推理强度与模型"
+        title={display().kind === "offLadder" ? "本会话强度未获当前模型目录支持" : "本会话的推理强度与模型"}
         onClick={() => props.onToggle()}
       >
-        <span class={`effort-tone-${tierTone(trackTier())}`}>{chipLabel()}</span>
+        <span class={`effort-tone-${tone()}`}>{chipLabel()}{display().kind === "offLadder" ? " ⚠" : ""}</span>
         <IconChevronDown />
       </button>
 
@@ -222,18 +230,23 @@ export const EffortCard: Component<{
                 </Match>
               </Switch>
             </span>
-            <strong class={`effort-card__tier effort-tone-${tierTone(trackTier())}`}>
+            <strong class={`effort-card__tier effort-tone-${tone()}`}>
               {chipLabel()}
             </strong>
             <button
               type="button"
               class="icon-btn effort-card__reset"
               title="重置为该模型的默认档"
+              disabled={defaultTier(providerKind(), effectiveModel()) == null}
               onClick={() => void writeEffort(defaultTier(providerKind(), effectiveModel()))}
             >
               <IconRotateCcw />
             </button>
           </div>
+
+          <p class="effort-card__note">
+            本会话 · 模型{props.modelOverridden?.() ? "单独设置" : "跟随存档"} · 强度{props.effortOverridden?.() ? "单独设置" : "跟随存档"}
+          </p>
 
           <Show when={props.effortOverridden?.()}>
             <button
@@ -241,7 +254,7 @@ export const EffortCard: Component<{
               class="ghost-mini effort-card__inherit"
               onClick={() => void writeEffort(null)}
             >
-              强度跟随 Profile
+              强度跟随存档
             </button>
           </Show>
 
@@ -261,7 +274,7 @@ export const EffortCard: Component<{
                 class="ghost-mini"
                 onClick={() => void writeModel(null)}
               >
-                跟随 Profile
+                跟随存档
               </button>
             </Show>
           </div>
@@ -320,11 +333,11 @@ export const EffortCard: Component<{
             <div class="effort-card__params">
               <Show when={props.onMaxTokens != null}>
                 <label>
-                  <span>最大输出</span>
+                  <span>本会话最大输出</span>
                   <input
                     class="field-input"
                     inputmode="numeric"
-                    placeholder={props.maxTokens?.() == null ? "跟随 Profile" : String(props.maxTokens?.())}
+                    placeholder={props.maxTokens?.() == null ? "跟随存档" : String(props.maxTokens?.())}
                     value={maxTokensDraft()}
                     onInput={(event) => setMaxTokensDraft(event.currentTarget.value)}
                     onBlur={() =>
@@ -341,11 +354,22 @@ export const EffortCard: Component<{
               </Show>
             </div>
             <small class="effort-card__note">
-              仅影响本会话；留空 = 跟随 Profile。
+              仅影响本会话；留空 = 跟随存档。
             </small>
+            <Show when={metadata()?.maxOutputTokens != null}>
+              <small class="effort-card__note">模型输出上限：{metadata()?.maxOutputTokens?.toLocaleString()} tokens</small>
+            </Show>
           </Show>
 
-          <Show when={tiers().length > 0} fallback={<p class="effort-card__note">尚未声明推理档位；可在服务商的模型设置中填写。</p>}>
+          <Show when={tiers().length > 0} fallback={
+            <div class="effort-card__note">
+              <p>{metadata()?.reasoningLevels?.length === 0 ? "模型目录未提供可选的推理档位。"
+                : catalogErrorText() != null ? "推理档位获取失败，请刷新模型目录。" : "尚未获取该模型的推理档位。"}</p>
+              <Show when={providerHasCatalog()}>
+                <button type="button" class="ghost-mini" onClick={() => void loadCatalog(providerKind())}>刷新模型目录</button>
+              </Show>
+            </div>
+          }>
             <div
               ref={(node) => {
                 track = node;
@@ -403,7 +427,7 @@ export const EffortCard: Component<{
             但轨道停在首档会让人觉得"后端就是轻度"——那正是这次要修的错觉。
           */}
           <Show when={display().kind === "offLadder"}>
-            <p class="effort-card__note is-error">{STR.effortOffLadder(currentEffort())}</p>
+            <p class="effort-card__note is-error">{STR.effortOffLadder(effectiveEffort())}</p>
           </Show>
           <Show when={display().kind === "pending" || display().kind === "unset"}>
             <p class="effort-card__note">
@@ -414,10 +438,10 @@ export const EffortCard: Component<{
           <Show when={tiers().length > 0}>
             <p class="effort-card__note">拖动或按 ←/→ 选择；松手后应用到本会话。</p>
           </Show>
-          <Show when={configError() != null}>
+          <Show when={configError()}>
             {(message) => <p class="effort-card__note is-error">{message()}</p>}
           </Show>
-          <Show when={paramError() != null}>
+          <Show when={paramError()}>
             {(message) => <p class="effort-card__note is-error">{message()}</p>}
           </Show>
         </div>

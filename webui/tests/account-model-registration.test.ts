@@ -4,7 +4,7 @@ import type { ModelDef, ModelSelection } from "@qaqh/sdk/protocol";
 vi.mock("../src/lib/transport", () => ({
   transport: { command: vi.fn(), query: vi.fn() },
 }));
-vi.mock("../src/lib/config-events", () => ({ notifyConfigChanged: vi.fn() }));
+vi.mock("../src/lib/config-events", () => ({ notifyConfigChanged: vi.fn(), onConfigChanged: vi.fn(() => () => {}) }));
 
 import { transport } from "../src/lib/transport";
 import { ensureAccountProfile } from "../src/settings/registry";

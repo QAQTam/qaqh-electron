@@ -1,3 +1,4 @@
+import { registry } from "../settings/registry";
 /**
  * 输入区(spec §12):1–8 行自动增高,Enter 发送 / Shift+Enter 换行,
  * 输入法组合态(isComposing / keyCode 229)不发送;
@@ -72,7 +73,7 @@ export const Composer: Component<{
    * 只影响本会话,所以档位仍只在设置页经 `config.save` 单写口改。
    */
   profileView?: () => SessionProfileView;
-  onProfile?: (name: string | null) => void;
+  onSelection?: (providerId: string, modelId: string) => void;
   onManageProfiles?: () => void;
   /** 会话解析后的模型；不传则退回全局配置。 */
   modelView?: () => string | null;
@@ -150,15 +151,6 @@ export const Composer: Component<{
     const path = props.workspacePath?.() ?? "";
     return path === "" ? STR.workspaceUngrouped : tailName(path);
   };
-
-  const profile = (): SessionProfileView | null => props.profileView?.() ?? null;
-  /** 优先从 profilesDetail 取真实 model，再退回活跃项 model。 */
-  const profileModel = (name: string): string | null => {
-    const view = profile();
-    return view?.details?.[name]?.model ?? (view != null && name === view.activeProfile ? view.model : null);
-  };
-  const profileLabel = (id: string | null): string | null =>
-    id == null ? null : profile()?.details?.[id]?.name ?? id;
 
   const currentWorkspace = (): string | null => props.sessionWorkspace?.() ?? null;
   const showIdentity = (): boolean =>
@@ -282,81 +274,28 @@ export const Composer: Component<{
                 <IconCamera />
               </button>
             </Show>
-            <Show when={props.onProfile == null ? null : profile()}>
-              {(view) => (
-                <div class="composer-control-wrap composer-profile-wrap">
-                  <button
-                    type="button"
-                    class="composer-tool-button composer-profile-button"
-                    aria-expanded={openMenu() === "profile" ? "true" : "false"}
-                    title={STR.profilePickTitle(view().effective ?? STR.profileFollowGlobal)}
-                    onClick={() => setOpenMenu(openMenu() === "profile" ? null : "profile")}
-                  >
-                    <span>{profileLabel(view().effective) ?? STR.profileFollowGlobal}</span>
-                    <Show when={(props.modelView?.() ?? view().model) != null}>
-                      <span class="composer-profile-model">→ {props.modelView?.() ?? view().model}</span>
-                    </Show>
-                    <IconChevronDown />
-                  </button>
-                  <Show when={openMenu() === "profile"}>
-                    <div class="composer-menu composer-profile-menu" role="menu">
-                      <strong>{STR.profilePickMenu}</strong>
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={view().selected == null ? "true" : "false"}
-                        class={view().selected == null ? "selected" : undefined}
-                        onClick={() => { props.onProfile?.(null); setOpenMenu(null); }}
-                      >
-                        <span>{STR.profileFollowGlobal}</span>
-                        <small>{profileLabel(view().activeProfile) ?? ""}</small>
-                      </button>
-                      <For each={view().catalog}>{(name) => (
-                        <button
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={view().selected === name ? "true" : "false"}
-                          class={view().selected === name ? "selected" : undefined}
-                          onClick={() => { props.onProfile?.(name); setOpenMenu(null); }}
-                        >
-                          <span>{profileLabel(name)}</span>
-                          <small>{profileModel(name) ?? STR.profileModelHidden}</small>
-                        </button>
-                      )}</For>
-                      <Show when={props.onManageProfiles != null}>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          style={{
-                            "font-size": "var(--fs-xs)",
-                            opacity: "0.85",
-                            "text-align": "left",
-                            padding: "6px 10px",
-                            display: "flex",
-                            "align-items": "center",
-                            gap: "6px",
-                            "border-top": "1px solid var(--border)",
-                            "margin-top": "4px",
-                            color: "var(--accent)",
-                            cursor: "pointer",
-                            background: "transparent",
-                            border: "none",
-                            width: "100%",
-                          }}
-                          onClick={() => {
-                            setOpenMenu(null);
-                            props.onManageProfiles?.();
-                          }}
-                        >
-                          <span style={{ "font-weight": "bold" }}>+</span>
-                          <span>管理 / 添加存档…</span>
-                        </button>
-                      </Show>
-                      <small class="composer-menu-note">{STR.profileTakesEffectHint}</small>
-                    </div>
-                  </Show>
-                </div>
-              )}
+            <Show when={props.onSelection != null}>
+              <div class="composer-control-wrap composer-profile-wrap">
+                <button type="button" class="composer-tool-button composer-profile-button"
+                  aria-expanded={openMenu() === "profile" ? "true" : "false"}
+                  onClick={() => setOpenMenu(openMenu() === "profile" ? null : "profile")}>
+                  <span>{props.profileView?.().effective != null ? `${props.profileView?.().effective} · ` : ""}{props.modelView?.() ?? "选择服务商和模型"}</span><IconChevronDown />
+                </button>
+                <Show when={openMenu() === "profile"}>
+                  <div class="composer-menu composer-profile-menu" role="menu">
+                    <strong>选择服务商和模型</strong>
+                    <For each={registry()?.providers ?? []}>{(provider) => <>
+                      <small>{provider.name}</small>
+                      <For each={provider.models.filter((model) => model.definition.enabled)}>{(model) =>
+                        <button type="button" role="menuitem" onClick={() => {
+                          props.onSelection?.(provider.id, model.id); setOpenMenu(null);
+                        }}>{model.definition.display_name || model.id}</button>
+                      }</For>
+                    </>}</For>
+                    <button type="button" onClick={() => { setOpenMenu(null); props.onManageProfiles?.(); }}>管理服务商和模型…</button>
+                  </div>
+                </Show>
+              </div>
             </Show>
             {/* 强度与模型（全局）：与 profile/workspace 共用一个菜单位，同时只开一个。 */}
             <EffortCard

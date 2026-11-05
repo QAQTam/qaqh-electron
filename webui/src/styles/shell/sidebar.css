@@ -66,6 +66,14 @@
   .sidebar-nav-item:hover { color: var(--text); background: var(--surface-2); }
   .sidebar-nav-item.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 
+  .sidebar-settings-nav {
+    display: grid; align-content: start; gap: 2px;
+    min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    padding: 16px 12px 24px;
+  }
+  .sidebar-settings-nav .settings-nav-item { min-height: 36px; }
+  .app-sidebar.collapsed .sidebar-settings-nav { display: none; }
+
   /* 会话列表现在是 .app-sidebar 的第二段(Nav 之下),表面与边框由壳侧栏统一提供。 */
   /* 收起态(汉堡切换,#app.sidebar-collapsed):48px 仅图标导航,会话列表隐藏。
      记忆在 localStorage;<720px 的 160px 窄列被这条 id+class 规则覆盖为 48px。 */

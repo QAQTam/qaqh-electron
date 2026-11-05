@@ -12,6 +12,8 @@
  *  3. 掩码 `"****"` 是读模型对密钥的全部表达(qaqh-config/src/dto.rs:22),
  *     前端永不可能读到明文,也就不可能把它写回。
  */
+import { loadConfigSnapshot } from "../lib/config-snapshot";
+
 import { createMemo, createSignal } from "solid-js";
 import { transport } from "../lib/transport";
 import { applyTheme, storedTheme } from "../lib/theme";
@@ -59,7 +61,7 @@ async function fetchConfig(): Promise<void> {
   setLoading(true);
   setError(null);
   try {
-    const dto = await transport.query("config.load", {});
+    const dto = await loadConfigSnapshot();
     setBaseline(dto);
     setDraft(structuredClone(dto));
     applyTheme(storedTheme());
@@ -180,10 +182,9 @@ export async function save(): Promise<void> {
     if (!isPatchEmpty(next)) {
       await transport.command({ type: "config.save", patch: next as JsonValue });
     }
-    await fetchConfig();
-    // 本页自己的基线刷新了,但**输入区的镜像**(模型芯片、上下文百分比的分母)各有
-    // 一份:广播一次让它们重读,否则「已热载生效」只对了设置页这一半。
     notifyConfigChanged();
+    // 设置草稿与其他消费者共用写入后的在途权威读取。
+    await fetchConfig();
     const count = Object.keys(next).length;
     setNote(`已保存 ${count} 项改动`);
     toast(`配置已保存(${count} 项),已热载生效`, "ok", { dedupeKey: "config-saved" });

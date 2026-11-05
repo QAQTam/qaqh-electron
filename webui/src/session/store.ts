@@ -6,6 +6,8 @@
  * - 实时增量由 applySessionEvent 负责
  * - 连接状态来自 projection://status
  */
+import { loadConfigSnapshot } from "../lib/config-snapshot";
+
 import { createSignal, createStore } from "solid-js";
 import { transport, desktopHostSurface, execSessionTarget, sessionTarget, type ApprovalView, type StreamHandlers, type ProjectionStatusWire, type TodoItemWire } from "../lib/transport";
 import { now } from "../lib/time";
@@ -18,6 +20,7 @@ import { normalizeActivity, type SessionActivity } from "./projection";
 import type { ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch } from "@qaqh/sdk/protocol";
 import type { ProfileSummaryDto } from "../api/qaqh/ProfileSummaryDto";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
+import { registry, refreshRegistry } from "../settings/registry";
 
 function pendingContentRefsFromSnapshot(snapshot: unknown): Set<string> { return contentRefsInPayload(snapshot); }
 
@@ -132,16 +135,7 @@ function toolsSettingPatch(mode: string, customTools: string[]): ToolsSettingPat
 }
 
 /** `config.load` 里与 profile 选择器有关的字段。 */
-type ConfigProfileView = {
-  activeProfile: string;
-  model: string;
-  credential: string;
-  effort: string | null;
-  maxTokens: number | null;
-  contextLength: number | null;
-  profiles: string[];
-  details?: Record<string, ProfileSummaryDto>;
-};
+
 
 function cacheHitPercent(usage: UsageInfo): number | null {
   if (usage.cache_usage_reported !== true) return null;
@@ -206,6 +200,8 @@ export class SessionStore {
    * meta 频道只有已 attach 的会话才有流,后台会话的变更仍要等列表重拉。
    */
   onSessionsChanged: (() => void) | null = null;
+  onConnectionRestored: (() => void) | null = null;
+  private hasBeenLive = false;
   /** 标签层注入的回调：v2 MetaDelta::TitleChanged 到达时就地更新侧栏标题。 */
   onSessionTitleChanged: ((title: string) => void) | null = null;
   /** 标签层注入的回调:`MetaDelta::Deleted` 是权威终态,目录项与标签一起收掉。 */
@@ -252,19 +248,14 @@ export class SessionStore {
   /** 分母:最近一次 `config.load` 读到的窗口。 */
   private contextLength: number | null = null;
   /** `session.meta.profile_id`(会话级选择);null = 跟随全局默认 Profile。 */
-  private metaProfile: string | null = null;
   private metaModelSelection: ModelSelection | null = null;
-  private metaModel: string | null = null;
-  private metaMaxTokens: number | null = null;
   private metaSettingsRevision: number | null = null;
   /** `session.meta.effort`(会话级选择);null = 跟随全局或 profile 默认。 */
-  private metaEffort: string | null = null;
   /** `session.meta.tool_mode`;空串按 standard 归一(后端零迁移语义)。 */
   private metaToolMode = "standard";
   /** `session.meta.custom_tools`(仅 tool_mode === "custom" 时后端消费)。 */
   private metaCustomTools: string[] = [];
   /** 最近一次 `config.load` 的 profile 面:名录 + 活跃项 + 活跃项的 model。 */
-  private configProfile: ConfigProfileView | null = null;
   private profileRefreshId = 0;
   /** 分子:上一轮服务端 usage 的 `prompt_tokens`,即真正发出去的上下文。 */
   private measuredContextTokens: number | null = null;
@@ -446,6 +437,8 @@ export class SessionStore {
             this.markApprovalsUnverified(false);
             void this.refreshApprovals();
             void this.refreshTodos();
+            if (this.hasBeenLive) this.onConnectionRestored?.();
+            this.hasBeenLive = true;
           }
         } else if (status.status === "closed" || status.status === "paused") {
           this.reconnect[1](null);
@@ -645,20 +638,10 @@ export class SessionStore {
     if (this.disposed) return;
     const refreshId = ++this.contextRefreshId;
     try {
-      const config = await transport.query("config.load", {});
+      const config = await loadConfigSnapshot();
       if (this.disposed || refreshId !== this.contextRefreshId) return;
       const length = config?.contextLength;
       if (length != null && Number.isFinite(length) && length > 0) this.contextLength = length;
-      this.configProfile = {
-        activeProfile: config.activeProfile,
-        model: config.model,
-        credential: config.credential,
-        effort: config.reasoningEffort === "" ? null : config.reasoningEffort,
-        maxTokens: config.maxTokens,
-        contextLength: config.contextLength,
-        profiles: [...config.profiles],
-        details: config.profilesDetail,
-      };
       this.publishContextPercent();
       this.publishProfileView();
     } catch {
@@ -668,39 +651,32 @@ export class SessionStore {
 
   /** 三份来源拼一个视图:`session.meta` 的选择 + 全局名录 + profilesDetail。 */
   private publishProfileView(): void {
-    const config = this.configProfile;
-    const selected = this.metaProfile;
-    const effective = selected ?? config?.activeProfile ?? null;
-    const effectiveDetail = effective != null ? config?.details?.[effective] : undefined;
-    const model = effectiveDetail?.model ?? (selected == null || selected === config?.activeProfile ? config?.model ?? null : null);
-    const maxTokens =
-      this.metaMaxTokens ?? effectiveDetail?.maxTokens ?? config?.maxTokens ?? null;
-    const contextLength =
-      effectiveDetail?.contextLength ?? config?.contextLength ?? null;
-    const providerKind = providerKindOfCredential(
-      effectiveDetail?.credential ?? config?.credential,
-    );
-    // 解析优先级与后端 `qaqh_profile::resolve_effective` 同构：
-    // 会话覆写 → 所选 Profile → 全局默认。这里只用于显示，写入仍走 session.settings.patch。
-    this.composerModelOverride[1](this.metaModel != null);
-    this.composerModel[1](this.metaModel ?? model);
-    this.composerEffortOverride[1](this.metaEffort != null);
-    this.composerEffort[1](this.metaEffort ?? effectiveDetail?.effort ?? config?.effort ?? null);
-    this.composerMaxTokens[1](maxTokens);
-    this.composerContextLength[1](contextLength);
-    if (contextLength != null && contextLength > 0) {
-      this.contextLength = contextLength;
-      this.publishContextPercent();
+    const selection = this.metaModelSelection;
+    if (selection != null) {
+      const provider = registry()?.providers.find((item) => item.id === selection.provider_id);
+      const definition = provider?.models.find((item) => item.id === selection.model_id)?.definition;
+      const contextLength = definition?.context_window ?? null;
+      this.composerModelOverride[1](true);
+      this.composerModel[1](selection.model_id);
+      this.composerEffortOverride[1](selection.options.reasoning_effort != null);
+      this.composerEffort[1](selection.options.reasoning_effort ?? definition?.defaults.reasoning_effort ?? null);
+      this.composerMaxTokens[1](selection.options.max_output_tokens ?? definition?.defaults.max_output_tokens ?? definition?.max_output_tokens ?? null);
+      this.composerContextLength[1](contextLength);
+      if (contextLength != null) { this.contextLength = contextLength; this.publishContextPercent(); }
+      this.composerProfile[1]({ selected: null, activeProfile: null, effective: provider?.name ?? selection.provider_id,
+        model: selection.model_id, providerKind: providerKindOfCredential(provider?.credential), catalog: [] });
+      return;
     }
-    this.composerProfile[1]({
-      selected,
-      activeProfile: config?.activeProfile ?? null,
-      effective,
-      model,
-      providerKind,
-      catalog: config?.profiles ?? [],
-      details: config?.details,
-    });
+    this.composerModelOverride[1](false);
+    this.composerModel[1](null);
+    this.composerEffortOverride[1](false);
+    this.composerEffort[1](null);
+    this.composerMaxTokens[1](null);
+    this.composerContextLength[1](null);
+    this.contextLength = null;
+    this.publishContextPercent();
+    this.composerProfile[1]({ selected: null, activeProfile: null, effective: null,
+      model: null, providerKind: providerKindOfCredential(undefined), catalog: [] });
   }
 
   /**
@@ -712,13 +688,10 @@ export class SessionStore {
     const refreshId = ++this.profileRefreshId;
     try {
       const meta = await transport.query("session.meta", { session_id: this.seed }) as SessionMetaWire | null;
+      if (registry() == null) await refreshRegistry();
       if (this.disposed || refreshId !== this.profileRefreshId) return;
-      this.metaProfile = typeof meta?.profile === "string" && meta.profile !== "" ? meta.profile : null;
       this.metaModelSelection = meta?.model_selection ?? null;
-      this.metaModel = this.metaModelSelection?.model_id ?? null;
-      this.metaMaxTokens = this.metaModelSelection?.options.max_output_tokens ?? null;
       this.metaSettingsRevision = typeof meta?.settings_revision === "number" ? meta.settings_revision : null;
-      this.metaEffort = typeof meta?.effort === "string" && meta.effort !== "" ? meta.effort : null;
       // 同一次 RPC 顺带取工具模式:后端 meta 空串 = standard(零迁移),前端
       // 不认识的模式名原样显示(与 effort 的 offLadder 同一取舍),不冒充。
       this.metaToolMode =
@@ -738,14 +711,24 @@ export class SessionStore {
     await this.patchSessionSettings({ profile: profileId ?? "" });
   }
 
+  async setSessionSelection(providerId: string, modelId: string): Promise<void> {
+    await this.patchSessionSettings({ model_selection: { kind: "use", value: {
+      provider_id: providerId, model_id: modelId, options: {},
+    } } });
+  }
+
   /** 会话级换思考强度 effort;`null` = 清除选择、回到跟随 profile 默认。 */
   async setSessionEffort(effort: string | null): Promise<void> {
-    await this.patchSessionSettings({ effort: effort ?? "" });
+    const current = this.metaModelSelection;
+    if (!current) throw new Error("请先选择服务商和模型");
+    await this.patchSessionSettings({ model_selection: { kind: "use", value: {
+      ...current, options: { ...current.options, reasoning_effort: effort },
+    } } });
   }
 
   /** Model selection is a full provider/model pair in the v3 settings patch. */
   async setSessionModel(model: string | null): Promise<void> {
-    if (model == null) return this.patchSessionSettings({ model_selection: { kind: "inherit" } });
+    if (model == null) throw new Error("请选择服务商和模型");
     const current = this.metaModelSelection;
     if (!current) throw new Error("当前会话没有可继承的 provider 选择，请先选择 Profile 或 provider");
     await this.patchSessionSettings({ model_selection: { kind: "use", value: { ...current, model_id: model } } });

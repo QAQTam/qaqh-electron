@@ -23,13 +23,16 @@
   .settings-state.is-error { color: var(--err); }
 
   .settings-body {
-    width: min(1020px, 100%); min-height: 0; margin-inline: auto;
+    width: min(860px, 100%); min-height: 0; margin-inline: auto;
     padding: 24px clamp(20px, 3vw, 36px); overflow: auto;
-    /* 首列宽度走 CSS 变量:拖宽手柄在拖拽期直接改这个变量(rAF 合帧),不走组件状态。 */
-    display: grid; grid-template-columns: var(--settings-nav-w, 168px) minmax(0, 1fr); gap: 0 32px;
   }
-  /* 左侧分区导航:分组标题 + 点击切换;pane 内容超长时仍粘在滚动容器顶部。 */
-  .settings-nav { display: grid; gap: 2px; align-content: start; position: sticky; top: 0; align-self: start; }
+  .settings-section-picker { margin-left: auto; }
+  .settings-section-picker select {
+    max-width: 160px; min-height: 34px; padding: 4px 28px 4px 10px;
+    border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+    background: var(--surface); color: var(--text); font-size: var(--fs-sm);
+  }
+  .settings-section-picker > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   /* 分组标题走「眉题」层级:比选项更淡、加宽字距、右侧一条延伸线——
      三个信号(明度/字距/分隔线)叠加,确保与导航项一眼可分。 */
   .settings-nav-group {
@@ -56,26 +59,6 @@
     color: var(--accent); font-weight: 500;
   }
   .settings-content { position: relative; min-width: 0; max-width: 740px; }
-  /* 导航栏拖宽手柄:绝对定位盖在 nav 与 content 的 32px 列间隙上,
-     pointer capture + rAF 合帧,拖拽期每帧只有一次 grid 重排。 */
-  .settings-nav-resizer {
-    position: absolute; left: -20px; top: -24px; bottom: -24px; width: 8px;
-    cursor: col-resize; touch-action: none; z-index: 3; outline: none;
-  }
-  .settings-nav-resizer::after {
-    content: ""; position: absolute; left: 3px; top: 24px; bottom: 24px; width: 2px;
-    border-radius: 1px; background: transparent;
-    transition: background-color var(--dur-fast) var(--ease);
-  }
-  .settings-nav-resizer:hover::after,
-  .settings-nav-resizer:focus-visible::after,
-  .settings-nav-resizer.is-active::after,
-  body.settings-resizing .settings-nav-resizer::after {
-    background: color-mix(in srgb, var(--accent) 40%, transparent);
-  }
-  /* 拖拽中:全局禁选中、导航项禁 hover,避免途经按钮时的底色闪烁与选区抖动。 */
-  body.settings-resizing { cursor: col-resize; user-select: none; }
-  body.settings-resizing .settings-nav-item { pointer-events: none; }
   .settings-section { padding: 0 0 18px; }
   .settings-section + .settings-section { padding-top: 2px; }
   .settings-section h3 { font-size: var(--fs-md); font-weight: 600; }
@@ -151,6 +134,9 @@
     font-size: var(--fs-sm);
   }
   .profile-row.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+  .profile-shortcut-row { flex-wrap: wrap; }
+  .profile-shortcut-row .profile-name { flex: 1 1 260px; }
+  .profile-shortcut-row > button { flex-shrink: 0; white-space: nowrap; }
   .profile-name { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
   .profile-active-tag { flex: none; font-size: var(--fs-xs); color: var(--accent); font-weight: 500; }
   .profile-row .ghost-mini { margin-left: auto; }

@@ -7,6 +7,7 @@ import { clampSidebarWidth, dragSidebarWidth, SIDEBAR_WIDTH_STEP } from "../lib/
 import { MessageSidebar } from "./MessageSidebar";
 import type { ApprovalView } from "../lib/transport";
 import type { SidebarSession, SidebarWorkspace } from "../tabs/store";
+import { SETTINGS_NAV, SETTINGS_NAV_GROUPS } from "../settings/navigation";
 
 export type GlobalSection = "messages" | "tools" | "oauth" | "settings";
 
@@ -26,6 +27,8 @@ const NAV_ITEMS = [
 export const Sidebar: Component<{
   section: GlobalSection;
   onNavigate: (section: GlobalSection) => void;
+  settingsSection?: string;
+  onSettingsSection?: (section: string) => void;
   /** 汉堡收展(用户侧需求):收起后只剩 48px 图标导航,会话列表隐藏。 */
   collapsed?: boolean;
   /** 阶段5:cols=1 时以抽屉呈现(288 覆盖 Main),App 控制开合。 */
@@ -143,6 +146,18 @@ export const Sidebar: Component<{
         onRename={props.onRename}
         onDelete={props.onDelete}
       />
+    </Show>
+    <Show when={props.section === "settings" && props.onSettingsSection != null}>
+      <nav class="sidebar-settings-nav" aria-label="设置分区">
+        <For each={[...SETTINGS_NAV_GROUPS]}>{(group) => <>
+          <div class="settings-nav-group">{group}</div>
+          <For each={SETTINGS_NAV.filter((item) => item.group === group)}>{(item) =>
+            <button type="button" class={`settings-nav-item${(props.settingsSection ?? SETTINGS_NAV[0].id) === item.id ? " active" : ""}`}
+              aria-current={(props.settingsSection ?? SETTINGS_NAV[0].id) === item.id ? "page" : undefined}
+              data-section-id={item.id} onClick={() => props.onSettingsSection?.(item.id)}>{item.label}</button>
+          }</For>
+        </>}</For>
+      </nav>
     </Show>
     {/* 拖拽调宽把手(用户侧需求):dock 展开态才有(App 传 onWidthCommit);
         收起/抽屉态由 CSS 隐藏。键盘 ←/→ ±16px,Home 恢复默认。 */}

@@ -18,6 +18,9 @@
   .effort-tone-ultra {
     color: #7c3aed;
   }
+  .effort-tone-warning {
+    color: var(--warn, var(--err));
+  }
 
   /* ── 卡片 ─────────────────────────────────────────────────────── */
   /* 复用 `.composer-menu` 的定位（bottom: 100% + 8px / left: 0 / z-index）。 */

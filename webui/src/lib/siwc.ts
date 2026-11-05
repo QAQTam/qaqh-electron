@@ -22,6 +22,7 @@ export interface SiwcModelEntry {
   maxOutputTokens?: number;
   reasoningLevels?: string[];
   defaultEffort?: string;
+  imageInput?: boolean;
 }
 
 export interface SiwcSignInStart {

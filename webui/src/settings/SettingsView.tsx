@@ -72,35 +72,13 @@ import { NumberInput } from "../ui/NumberInput";
 import { PairingSection } from "./PairingSection";
 import { AboutSection } from "./AboutSection";
 import { HostSection } from "./HostSection";
-import { ProfilesSection } from "./ProfilesSection";
 import { ProvidersSection } from "./ProvidersSection";
-import { refreshRegistry, registry as registryState } from "./registry";
-
-/**
- * 左侧分区导航:分组 + 点击切换(切换式单页——点谁渲染谁,不做滚动联动)。
- * `data-section-id` 被 visual-capture.mjs 按 id 点击,改名前先查那边。
- */
-const NAV = [
-  { id: "section-providers", label: "服务商", group: "接入" },
-  { id: "section-profiles", label: "存档", group: "接入" },
-  { id: "section-pairing", label: "设备配对", group: "接入" },
-  { id: "section-permission", label: "权限档位", group: "运行" },
-  { id: "section-context", label: "上下文", group: "运行" },
-  { id: "section-runtime", label: "运行时", group: "运行" },
-  { id: "section-host", label: "桌面壳", group: "运行" },
-  { id: "section-subagent", label: "子代理", group: "运行" },
-  { id: "section-mcp", label: "MCP / LSP", group: "运行" },
-  { id: "section-appearance", label: "外观", group: "界面" },
-  { id: "section-about", label: "关于", group: "关于" },
-] as const;
-
-/** 导航渲染顺序 = 分组 contiguous 排列;pane 渲染与顺序无关(各自 Show)。 */
-const NAV_GROUP_ORDER = ["接入", "运行", "界面", "关于"] as const;
+import { refreshRegistry } from "./registry";
+import { SETTINGS_NAV, SETTINGS_NAV_GROUPS } from "./navigation";
 
 /** 这些分区即时写 profiles.toml，不参与应用设置的草稿/保存流程。 */
 const REGISTRY_SECTIONS: ReadonlySet<string> = new Set([
   "section-providers",
-  "section-profiles",
   "section-pairing",
 ]);
 
@@ -145,6 +123,8 @@ export const SettingsView: Component<{
   /** 同一分区的重复请求也要生效（App 每次打开菜单时递增）。 */
   sectionNonce?: number;
   onOpenOAuth?: () => void;
+  onSectionChange?: (section: string) => void;
+  showSectionPicker?: boolean;
 }> = (props) => {
   // 子代理密钥与工具清单是「只进不出」的本地缓冲:它们的 DOM 文本不等于草稿值
   // (掩码不能回填,逗号串要解析成数组),回填会让用户和输入框互相打架。
@@ -152,7 +132,7 @@ export const SettingsView: Component<{
   const [toolsInput, setToolsInput] = createSignal("");
   const [themeChoice, setThemeChoice] = createSignal(storedTheme() ?? "");
   const [activeSection, setActiveSection] = createSignal<string>(
-    props.initialSection ?? NAV[0].id,
+    props.initialSection ?? SETTINGS_NAV[0].id,
   );
   // 设置页已打开时从菜单/引导跳到指定分区：不能靠 remount，直接跟 prop 走。
   createEffect(
@@ -188,123 +168,38 @@ export const SettingsView: Component<{
 
   const bypassPending = createMemo(() => requireBypass() && needsBypassConfirm(patch()));
 
-  /* ── 导航栏拖宽:平滑优先的实现约束 ──
-   * 拖拽期不走 Solid 信号(pointermove 每帧直接写 .settings-body 上的
-   * `--settings-nav-w` 变量),每帧只有一次 grid 重排、零组件重渲染;
-   * rAF 合帧防高频 pointermove 排队。落手(pointerup)才写 localStorage。
-   * 双击重置;聚焦后左右方向键微调(Shift 加速)。 */
-  const NAV_W_KEY = "settings.navWidth";
-  const NAV_W_MIN = 140;
-  const NAV_W_MAX = 320;
-  let bodyEl: HTMLElement | undefined;
-  let resizerEl: HTMLElement | undefined;
-
-  /** 读当前生效的首列宽(变体默认值 168/220 都由 computed style 解出)。 */
-  const currentNavWidth = (): number => {
-    if (!bodyEl) return 168;
-    return parseFloat(getComputedStyle(bodyEl).gridTemplateColumns) || 168;
-  };
-
-  const applyNavWidth = (px: number): void => {
-    bodyEl?.style.setProperty("--settings-nav-w", `${Math.round(px)}px`);
-  };
-
-  const commitNavWidth = (px: number | null): void => {
-    if (px == null) {
-      bodyEl?.style.removeProperty("--settings-nav-w");
-      window.localStorage.removeItem(NAV_W_KEY);
-      resizerEl?.removeAttribute("aria-valuenow");
-      return;
-    }
-    const clamped = Math.round(Math.min(NAV_W_MAX, Math.max(NAV_W_MIN, px)));
-    applyNavWidth(clamped);
-    window.localStorage.setItem(NAV_W_KEY, String(clamped));
-    resizerEl?.setAttribute("aria-valuenow", String(clamped));
-  };
-
-  onSettled(() => {
-    const stored = Number(window.localStorage.getItem(NAV_W_KEY));
-    if (Number.isFinite(stored) && stored >= NAV_W_MIN && stored <= NAV_W_MAX) applyNavWidth(stored);
-    // 拖拽中断(组件卸载/路由切走)也要摘掉 body 级的拖拽态。
-    return () => document.body.classList.remove("settings-resizing");
-  });
-
-  const startNavResize = (event: PointerEvent): void => {
-    if (!bodyEl) return;
-    event.preventDefault();
-    const handle = event.currentTarget as HTMLElement;
-    handle.setPointerCapture(event.pointerId);
-    document.body.classList.add("settings-resizing");
-    handle.classList.add("is-active");
-    // 起点一次性测量:首列左缘 = body 左缘 + 左内边距;move 里只做一次减法。
-    const bodyRect = bodyEl.getBoundingClientRect();
-    const padLeft = parseFloat(getComputedStyle(bodyEl).paddingLeft) || 0;
-    const origin = bodyRect.left + padLeft;
-    let pending = NaN;
-    let raf = 0;
-    const flush = (): void => {
-      raf = 0;
-      applyNavWidth(pending);
-    };
-    const onMove = (e: PointerEvent): void => {
-      pending = e.clientX - origin;
-      if (raf === 0) raf = requestAnimationFrame(flush);
-    };
-    const end = (): void => {
-      if (raf !== 0) cancelAnimationFrame(raf);
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", end);
-      handle.removeEventListener("pointercancel", end);
-      document.body.classList.remove("settings-resizing");
-      handle.classList.remove("is-active");
-      // 没动过(pending 为 NaN)不提交,避免单击误重置。
-      if (!Number.isNaN(pending)) commitNavWidth(pending);
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", end);
-    handle.addEventListener("pointercancel", end);
-  };
-
-  const nudgeNavWidth = (delta: number): void => {
-    commitNavWidth(currentNavWidth() + delta);
-  };
-
-  const onResizerKeyDown = (event: KeyboardEvent): void => {
-    const step = event.shiftKey ? 24 : 8;
-    if (event.key === "ArrowLeft") { event.preventDefault(); nudgeNavWidth(-step); }
-    else if (event.key === "ArrowRight") { event.preventDefault(); nudgeNavWidth(step); }
-  };
-
   /**
    * 切换式单页:点谁渲染谁。没有滚动联动/锚点跳转,不存在「高亮与视口分家」
    * 这一类 bug;未激活分区不渲染,外观区那排字体下拉也不再常驻。
    * 草稿在 `./store` 的 signal 里,切换分区不丢未保存改动。
    */
   const activeLabel = createMemo(
-    () => NAV.find((item) => item.id === activeSection())?.label ?? "",
+    () => SETTINGS_NAV.find((item) => item.id === activeSection())?.label ?? "",
   );
 
-  const registrySection = (id: string): boolean => REGISTRY_SECTIONS.has(id);
+  const selectSection = (id: string): void => {
+    setActiveSection(id);
+    props.onSectionChange?.(id);
+  };
 
-  /** 页头副标题读 registry 的名录，而不是应用设置草稿里的 activeProfile。 */
-  const defaultProfileName = createMemo(() => {
-    const value = registryState();
-    if (value?.defaultProfile == null) return null;
-    return (
-      value.profiles.find((profile) => profile.id === value.defaultProfile)?.name ??
-      value.defaultProfile
-    );
-  });
+  const registrySection = (id: string): boolean => REGISTRY_SECTIONS.has(id);
 
   return (
     <main class="settings-page" ref={(node) => { page = node; }} aria-labelledby="settings-title">
         <header class="settings-head">
           <div class="settings-title">
             <h1 id="settings-title" tabindex={-1}>{activeLabel() || STR.settings}</h1>
-            <Show when={defaultProfileName()}>
-              {(name) => <span class="settings-sub">默认存档 · {name()}</span>}
-            </Show>
           </div>
+          <Show when={props.showSectionPicker}>
+            <label class="settings-section-picker">
+              <span class="sr-only">设置分区</span>
+              <select value={activeSection()} onChange={(event) => selectSection(event.currentTarget.value)}>
+                <For each={[...SETTINGS_NAV_GROUPS]}>{(group) => <optgroup label={group}>
+                  <For each={SETTINGS_NAV.filter((item) => item.group === group)}>{(item) => <option value={item.id}>{item.label}</option>}</For>
+                </optgroup>}</For>
+              </select>
+            </label>
+          </Show>
           <Show when={dirty()}>
             <span class="settings-dirty-pill">{changedCount()} 项未保存</span>
           </Show>
@@ -322,42 +217,8 @@ export const SettingsView: Component<{
           </div>
         </Show>
 
-              <div class="settings-body" ref={(el) => { bodyEl = el; }}>
-                <nav class="settings-nav" aria-label="设置分区">
-                  <For each={[...NAV_GROUP_ORDER]}>
-                    {(group) => (
-                      <>
-                        <div class="settings-nav-group">{group}</div>
-                        <For each={NAV.filter((item) => item.group === group)}>
-                          {(item) => (
-                            <button
-                              type="button"
-                              class={`settings-nav-item${activeSection() === item.id ? " active" : ""}`}
-                              aria-current={activeSection() === item.id ? "location" : undefined}
-                              data-section-id={item.id}
-                              onClick={() => setActiveSection(item.id)}
-                            >
-                              {item.label}
-                            </button>
-                          )}
-                        </For>
-                      </>
-                    )}
-                  </For>
-                </nav>
+              <div class="settings-body">
                 <div class="settings-content">
-                  {/* 导航栏拖宽手柄:盖在列间隙上;拖动/双击重置/方向键微调。 */}
-                  <div
-                    class="settings-nav-resizer"
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label="调整导航栏宽度(左右拖动,双击重置)"
-                    tabindex={0}
-                    ref={(el) => { resizerEl = el; }}
-                    onPointerDown={startNavResize}
-                    onDblClick={() => commitNavWidth(null)}
-                    onKeyDown={onResizerKeyDown}
-                  />
                   <Show when={reloadPending()}>
                     <div class="settings-confirm" role="alert">
                       <span>重新读取会放弃 {changedCount()} 项未保存的改动。</span>
@@ -371,12 +232,8 @@ export const SettingsView: Component<{
                   <Show when={registrySection(activeSection())}>
                     <Show when={activeSection() === "section-providers"}>
                       <ProvidersSection
-                        onOpenProfiles={() => setActiveSection("section-profiles")}
                         onOpenOAuth={props.onOpenOAuth}
                       />
-                    </Show>
-                    <Show when={activeSection() === "section-profiles"}>
-                      <ProfilesSection />
                     </Show>
                     <Show when={activeSection() === "section-pairing"}>
                       <PairingSection />
@@ -492,7 +349,7 @@ export const SettingsView: Component<{
                   </Show>
 
                   <Show when={activeSection() === "section-host"}>
-                    <HostSection onOpenPairing={() => setActiveSection("section-pairing")} />
+                    <HostSection onOpenPairing={() => selectSection("section-pairing")} />
                   </Show>
 
                   <Show when={activeSection() === "section-appearance"}>

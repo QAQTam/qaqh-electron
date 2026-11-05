@@ -9,8 +9,10 @@
 import { createSignal } from "solid-js";
 
 import type { CredentialSource, ModelDef, ModelSelection, ProviderUpsertDto, Wire } from "@qaqh/sdk/protocol";
-import { notifyConfigChanged } from "../lib/config-events";
+import { notifyConfigChanged, onConfigChanged } from "../lib/config-events";
 import { transport } from "../lib/transport";
+import type { ModelEntry } from "../oauth/model-catalog";
+import { mergeModelMetadata } from "../oauth/model-metadata";
 
 type ProviderWire = {
   name: string;
@@ -126,7 +128,11 @@ function mapRegistry(catalog: ProviderCatalog, legacy: LegacyProfilesDocument): 
     const provider = byId.get(profile.provider);
     const model = provider?.models.find((entry) => entry.id === profile.model)?.definition;
     provider?.referencedBy.push(id);
-    const isDefault = defaultSelection?.provider_id === profile.provider && defaultSelection.model_id === profile.model;
+    const isDefault = defaultSelection?.provider_id === profile.provider && defaultSelection.model_id === profile.model
+      && (defaultSelection.options.reasoning_effort ?? model?.defaults.reasoning_effort ?? null)
+        === (profile.reasoning_effort ?? model?.defaults.reasoning_effort ?? null)
+      && (defaultSelection.options.max_output_tokens ?? model?.defaults.max_output_tokens ?? model?.max_output_tokens ?? null)
+        === (profile.max_tokens ?? model?.defaults.max_output_tokens ?? model?.max_output_tokens ?? null);
     return {
       id,
       name: profile.name !== "" ? profile.name : id,
@@ -135,7 +141,7 @@ function mapRegistry(catalog: ProviderCatalog, legacy: LegacyProfilesDocument): 
       model: profile.model,
       effort: profile.reasoning_effort ?? null,
       contextLength: model?.context_window ?? null,
-      maxTokens: profile.max_tokens ?? model?.defaults.max_output_tokens ?? model?.max_output_tokens ?? null,
+      maxTokens: profile.max_tokens ?? null,
       isDefault,
       credential: provider?.credential ?? legacy.providers?.[profile.provider]?.credential ?? "api_key",
     };
@@ -155,37 +161,38 @@ export function providerRows(value: Registry): ProviderRow[] {
   }));
 }
 
-async function readRegistry(): Promise<Registry> {
-  const [ack, legacySnapshot] = await Promise.all([
-    transport.command({ type: "provider.list" }),
-    transport.query("profile.list", {}),
-  ]);
+let registryFlight: Promise<Registry> | null = null;
+let registryGeneration = 0;
+function invalidateRegistry(): void {
+  registryGeneration += 1;
+  registryFlight = null;
+}
+onConfigChanged(invalidateRegistry);
+
+function readRegistry(): Promise<Registry> {
+  if (registryFlight != null) return registryFlight;
+  const generation = registryGeneration;
+  const request = fetchRegistry().then(
+    (value) => {
+      if (generation !== registryGeneration) return readRegistry();
+      setRegistry(value);
+      return value;
+    },
+    (error: unknown) => { if (generation !== registryGeneration) return readRegistry(); throw error; },
+  );
+  registryFlight = request;
+  void request.finally(() => { if (registryFlight === request) registryFlight = null; }).catch(() => {});
+  return request;
+}
+
+async function fetchRegistry(): Promise<Registry> {
+  const ack = await transport.command({ type: "provider.list" });
   if (ack.status !== "accepted") throw new Error(ack.message ?? ack.code ?? "provider.list was rejected");
   // backend-v3(B08/D3):profile.list 返回 ProfileListSnapshot 摘要(camelCase,
   // 无 provider 引用、无 default 指针);provider 归属按 baseUrl 对回新目录,
   // default 指针在 config 的 activeProfile,不在此文件。
   const catalog = readProviderCatalog(ack.result);
-  const summaries = legacySnapshot?.profiles ?? {};
-  const legacy: LegacyProfilesDocument = {
-    profiles: Object.fromEntries(
-      Object.entries(summaries).map(([id, summary]) => {
-        const providerId =
-          Object.entries(catalog.providers).find(([, provider]) => provider.base_url === summary.baseUrl)?.[0] ?? "";
-        return [
-          id,
-          {
-            name: summary.name,
-            provider: providerId,
-            model: summary.model,
-            reasoning_effort: summary.effort ?? null,
-            max_tokens: summary.maxTokens ?? null,
-          },
-        ];
-      }),
-    ),
-  };
-  const next = mapRegistry(catalog, legacy);
-  setRegistry(next);
+  const next = mapRegistry(catalog, {});
   return next;
 }
 
@@ -197,18 +204,25 @@ export async function refreshRegistry(): Promise<void> {
   finally { setLoading(false); }
 }
 
+let writeQueue: Promise<unknown> = Promise.resolve();
+let pendingWrites = 0;
 async function perform<T>(action: () => Promise<T>): Promise<T | null> {
+  pendingWrites += 1;
   setBusy(true);
-  setError(null);
-  try {
-    const value = await action();
-    await readRegistry();
-    notifyConfigChanged();
-    return value;
-  } catch (cause) {
-    setError(messageOf(cause));
-    return null;
-  } finally { setBusy(false); }
+  const task = writeQueue.then(async () => {
+    setError(null);
+    try {
+      const value = await action();
+      notifyConfigChanged();
+      await readRegistry();
+      return value;
+    } catch (cause) {
+      setError(messageOf(cause));
+      return null;
+    } finally { pendingWrites -= 1; setBusy(pendingWrites > 0); }
+  });
+  writeQueue = task;
+  return task;
 }
 
 async function currentConfigRevision(): Promise<number> {
@@ -228,6 +242,7 @@ function revisionFromAck(ack: Awaited<ReturnType<typeof transport.command>>): nu
 async function configCommand(command: Parameters<typeof transport.command>[0], current?: number): Promise<void> {
   const revision = current ?? await currentConfigRevision();
   const ack = await transport.command(command, undefined, [{ kind: "config_revision", revision }]);
+  if (ack.status !== "accepted") throw new Error(ack.message ?? ack.code ?? "配置更新被拒绝");
   const nextRevision = revisionFromAck(ack);
   if (nextRevision != null && registry() != null) setRegistry((value) => value == null ? value : { ...value, revision: nextRevision });
   else await readRegistry();
@@ -248,6 +263,17 @@ export type ProfileInput = {
   effort: string | null;
   maxTokens: number | null;
 };
+
+export function modelSelectionIssue(model: ModelDef | undefined, effort: string | null, maxTokens: number | null): string | null {
+  if (model == null || !model.enabled) return "引用的模型不在服务商目录中或已停用";
+  if (effort != null && (!model.capabilities.reasoning || !model.reasoning_levels.includes(effort))) {
+    return `模型未声明支持推理强度「${effort}」`;
+  }
+  if (maxTokens != null && (!Number.isSafeInteger(maxTokens) || maxTokens <= 0 || maxTokens > model.max_output_tokens)) {
+    return `最大输出必须在 1 到 ${model.max_output_tokens.toLocaleString()} 之间`;
+  }
+  return null;
+}
 
 export async function saveProvider(id: string, input: ProviderInput): Promise<boolean> {
   const result = await perform(async () => {
@@ -318,7 +344,8 @@ export async function saveProfile(input: ProfileInput, options: { makeDefault?: 
     if (!registry()?.providers.some((provider) => provider.id === input.provider)) throw new Error("所选 Provider 不存在");
     const provider = registry()!.providers.find((item) => item.id === input.provider)!;
     const model = provider.models.find((item) => item.id === input.model);
-    if (model == null || !model.definition.enabled) throw new Error("请先在服务商目录中添加并启用此模型");
+    const issue = modelSelectionIssue(model?.definition, input.effort, input.maxTokens);
+    if (issue != null) throw new Error(issue);
     await transport.command({
       type: "profile.create",
       id,
@@ -341,8 +368,9 @@ export async function setDefaultProfile(id: string): Promise<boolean> {
   const profile = current?.profiles.find((item) => item.id === id);
   if (profile == null) { setError(`profile not found: ${id}`); return false; }
   const model = current?.providers.find((item) => item.id === profile.providerId)?.models.find((item) => item.id === profile.model);
-  if (model == null || !model.definition.enabled) {
-    setError(`存档「${profile.name}」引用的模型不在服务商目录中或已停用`);
+  const issue = modelSelectionIssue(model?.definition, profile.effort, profile.maxTokens);
+  if (issue != null) {
+    setError(`存档「${profile.name}」${issue}`);
     return false;
   }
   const result = await perform(async () => {
@@ -389,60 +417,63 @@ const ACCOUNT_IDENTITY = {
   account: { credential: "deepseek_account", providerId: "deepseek-account", providerName: "DeepSeek 账号" },
 } as const;
 
+/** Discover/import models without changing the global default or saved profiles. */
+export async function syncAccountCatalog(input: {
+  kind: AccountKind;
+  baseUrl: string;
+  models: readonly ModelEntry[];
+  isCurrent?: () => boolean;
+}): Promise<string | null> {
+  return perform(async () => {
+    const current = await readRegistry();
+    if (input.isCurrent?.() === false) return null;
+    const identity = ACCOUNT_IDENTITY[input.kind];
+    const existing = current.providers.find((provider) => provider.credential === identity.credential);
+    const providerId = existing?.id ?? identity.providerId;
+    if (existing == null || existing.baseUrl !== input.baseUrl) {
+      await configCommand({ type: "provider.upsert", id: providerId, provider: {
+        name: existing?.name ?? identity.providerName,
+        base_url: input.baseUrl,
+        wire: (existing?.wire ?? "responses") as Wire,
+        credential: identity.credential,
+        headers: existing?.headers ?? {},
+        compat: (existing?.compat ?? null) as ProviderUpsertDto["compat"],
+        api_key: { operation: "keep" },
+      } });
+    }
+    for (const entry of input.models) {
+      if (input.isCurrent?.() === false) return null;
+      const previous = existing?.models.find((model) => model.id === entry.slug)?.definition;
+      const model = mergeModelMetadata(entry, previous);
+      // A partial listing is still useful in the picker; never invent required limits.
+      if (model == null || JSON.stringify(model) === JSON.stringify(previous)) continue;
+      await configCommand({ type: "provider.model.upsert", provider_id: providerId, model_id: entry.slug, model });
+    }
+    return providerId;
+  });
+}
+
 export async function ensureAccountProfile(input: {
   kind: AccountKind;
   baseUrl: string;
   model: string;
-  modelMetadata?: {
-    contextWindow?: number;
-    maxOutputTokens?: number;
-    reasoningLevels?: string[];
-    defaultEffort?: string;
-  };
+  modelMetadata?: Partial<Omit<ModelEntry, "slug">>;
   makeDefault?: boolean;
 }): Promise<{ providerId: string; modelId: string } | null> {
-  const identity = ACCOUNT_IDENTITY[input.kind];
-  await refreshRegistry();
-  const current = registry();
-  if (current == null) return null;
-  const existing = current.providers.find((provider) => provider.credential === identity.credential);
-  const providerId = existing?.id ?? identity.providerId;
-  if (!await saveProvider(providerId, {
-    name: existing?.name ?? identity.providerName,
-    baseUrl: input.baseUrl,
-    wire: "responses",
-    credential: identity.credential,
-  })) return null;
-
-  const latest = registry();
-  const provider = latest?.providers.find((item) => item.id === providerId);
-  const existingModel = provider?.models.find((item) => item.id === input.model)?.definition;
-  if (existingModel == null) {
-    const contextWindow = input.modelMetadata?.contextWindow;
-    const maxOutputTokens = input.modelMetadata?.maxOutputTokens;
-    if (
-      contextWindow == null || !Number.isSafeInteger(contextWindow) || contextWindow <= 0 ||
-      maxOutputTokens == null || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0
-    ) {
-      setError(`模型目录没有提供 ${input.model} 的上下文窗口和最大输出；请到「设置 → 服务商」手动添加该模型，再回「接入」页启用。`);
-      return null;
-    }
-    const reasoningLevels = input.modelMetadata?.reasoningLevels ?? [];
-    const defaultEffort = input.modelMetadata?.defaultEffort;
-    const model: ModelDef = {
-      enabled: true,
-      display_name: input.model,
-      context_window: contextWindow,
-      max_output_tokens: maxOutputTokens,
-      reasoning_levels: reasoningLevels,
-      capabilities: { tool_calls: false, image_input: false, native_web_search: false, reasoning: reasoningLevels.length > 0 },
-      defaults: {
-        max_output_tokens: maxOutputTokens,
-        reasoning_effort: defaultEffort != null && reasoningLevels.includes(defaultEffort) ? defaultEffort : null,
-        native_web_search: false,
-      },
-    };
-    if (!await saveModel(providerId, input.model, model)) return null;
+  const providerId = await syncAccountCatalog({
+    kind: input.kind, baseUrl: input.baseUrl,
+    models: [{ ...input.modelMetadata, slug: input.model, displayName: input.modelMetadata?.displayName ?? "" }],
+  });
+  if (providerId == null) return null;
+  const model = registry()?.providers.find((provider) => provider.id === providerId)
+    ?.models.find((entry) => entry.id === input.model)?.definition;
+  if (model == null) {
+    setError(`模型目录没有提供 ${input.model} 的上下文窗口和最大输出；请先刷新目录，或到「设置 → 服务商」补充该模型。`);
+    return null;
+  }
+  if (!model.enabled) {
+    setError(`模型 ${input.model} 已停用，请到「设置 → 服务商」启用后再选择。`);
+    return null;
   }
   if (input.makeDefault === true) {
     const selected = await perform(async () => {

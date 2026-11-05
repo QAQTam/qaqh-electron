@@ -286,6 +286,16 @@
     max-height: none; overflow: visible;
     border: 0; border-radius: 0; background: transparent; font-size: var(--fs-xs);
   }
+  .tool-xterm {
+    box-sizing: border-box; width: max-content; min-width: 100%; min-height: 31px;
+    padding: 8px 10px; overflow: hidden;
+    background: var(--surface-code); color: var(--text);
+    font-family: var(--font-terminal); font-size: var(--fs-xs); line-height: 1.25;
+  }
+  /* The parser and inner screen stay 80x24; only the surrounding viewport crops. */
+  .tool-xterm .xterm { width: max-content; height: auto; }
+  .tool-xterm .xterm-viewport { background: var(--surface-code); }
+  .tool-xterm-loading { height: 31px; }
   .tool-shell-output > .tool-detail-label { padding: 4px 10px 0; }
   .tool-stderr { color: var(--err); }
   .tool-text .tool-section-line { display: block; margin: 2px 0 1px; color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }

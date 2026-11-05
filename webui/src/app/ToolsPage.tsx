@@ -8,6 +8,8 @@
  *
  * Skills catalog 只给 metadata；正文需要后续读取能力支持时再接线。
  */
+import { loadConfigSnapshot } from "../lib/config-snapshot";
+
 import { createEffect, createSignal, For, onSettled, Show, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import IconBlocks from "~icons/lucide/blocks";
@@ -23,7 +25,6 @@ import IconUserRound from "~icons/lucide/user-round";
 import { Markdown } from "../markdown/Markdown";
 import { rescanSkills, scanState, type SkillEntry, type SkillIssue } from "../skills/scan";
 import { workspaceCatalog } from "../tabs/store";
-import { transport } from "../lib/transport";
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
 
 /** 一张 skill 卡:头行常显,点开渲染正文。 */
@@ -123,7 +124,7 @@ export const ToolsPage: Component = () => {
   const [configError, setConfigError] = createSignal<string | null>(null);
 
   const loadConfig = (): void => {
-    transport.query("config.load", {})
+    loadConfigSnapshot()
       .then((dto) => { setConfig(dto); setConfigError(null); })
       .catch((cause) => { setConfigError(cause instanceof Error ? cause.message : String(cause)); });
   };
@@ -131,7 +132,7 @@ export const ToolsPage: Component = () => {
   /**
    * 项目级扫描的触发点绑在**工作区注册表的路径集合**上,而不是 onSettled 那一瞬。
    *
-   * 注册表是异步到的(`pollSessions` 拉 `workspace.list`),而工具页可以在它到达
+   * 注册表是异步到的(`refreshWorkspaces` 拉 `workspace.list`),而工具页可以在它到达
    * 之前就挂载(启动即切到工具页)——那一刻扫出来的项目级永远是空的,且不会有
    * 任何后续事件来纠正。判据取路径签名而不是数组引用:`pollSessions` 每轮都换一个
    * 新数组,按引用判会让 15s 一次的轮询带着整轮重扫一起跑。

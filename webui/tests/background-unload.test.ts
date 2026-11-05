@@ -62,3 +62,17 @@ test("explicit bootstrap fallback installs the canonical state while live status
   expect(store.connection[0]()).toBe("connected");
   store.dispose();
 });
+
+test("连接恢复时通知标签刷新全局读模型，初次连接不重复刷新", async () => {
+  const { handlers } = mockHost();
+  const store = new SessionStore("unload-session");
+  const restored = vi.fn();
+  store.onConnectionRestored = restored;
+  await store.activate();
+  handlers().onProjectionStatus?.({ status: "live", session_id: "unload-session" });
+  expect(restored).not.toHaveBeenCalled();
+  handlers().onProjectionStatus?.({ status: "connecting", session_id: "unload-session" });
+  handlers().onProjectionStatus?.({ status: "live", session_id: "unload-session" });
+  expect(restored).toHaveBeenCalledTimes(1);
+  store.dispose();
+});

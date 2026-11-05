@@ -84,6 +84,18 @@ export interface ToolOutput {
   diffText?: string;
 }
 
+/** Bounded raw stream window with monotonic offsets for terminal renderers. */
+export interface ToolProgressStream {
+  /** Exec session offsets count UTF-8 bytes; ordinary tool progress counts UTF-16 units. */
+  offsetEncoding?: "utf8";
+  /** Absolute offset of `data[0]` in the selected encoding (UTF-16 by default). */
+  startOffset: number;
+  /** Absolute offset immediately after the latest received character. */
+  endOffset: number;
+  /** Last 16 KiB of raw output; ANSI and control sequences are preserved. */
+  data: string;
+}
+
 export interface ToolStep {
   kind: "tool";
   id: string;
@@ -98,6 +110,8 @@ export interface ToolStep {
   state?: import("@qaqh/sdk/protocol").ToolCallState;
   execSessionId?: string;
   execSessionState?: import("@qaqh/sdk/protocol").ExecSessionState;
+  /** Execution transcript, including output received before the tool call returns. */
+  execSession?: import("@qaqh/sdk/protocol").ExecSessionView;
   output?: ToolOutput;
   outputRef?: string;
   error?: string;
@@ -105,6 +119,9 @@ export interface ToolStep {
   progressTail?: string;
   /** 运行中 stderr 尾窗(16KB 有界);`tool_output_delta.stream === "stderr"` 才落这里。 */
   progressStderrTail?: string;
+  /** Raw bounded stream windows let xterm consume exact deltas without unbounded storage. */
+  progressStream?: ToolProgressStream;
+  progressStderrStream?: ToolProgressStream;
   progressTruncated?: boolean;
   /** Backend metrics. */
   elapsedMs?: number;

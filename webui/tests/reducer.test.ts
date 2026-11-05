@@ -189,6 +189,25 @@ test("exec output offsets ignore duplicate frames and account for a lost range",
   });
 });
 
+test("bootstrap associates running exec transcripts by origin call before a tool has yielded", () => {
+  const state = emptySession();
+  const bootstrap = sessionBootstrap("s", {
+    tools: [{ call_id: "c", turn_id: "t", tool_name: "exec_command", args: {},
+      state: { kind: "running" }, exec_session_id: null, output: null, output_truncated: false }],
+  });
+  bootstrap.state.exec_sessions = [{
+    id: "e", owner_session_id: "s", origin_turn_id: "t", origin_call_id: "c",
+    state: { kind: "running" }, tty: false, command: "echo", started_at_ms: 1,
+    next_offset: 3, output_preview: "中", preview_start_offset: 0,
+    output_complete: false, capture_omitted_bytes: 0, stream_dropped_bytes: 0,
+  }];
+  applySessionBootstrap(state, bootstrap);
+  expect(state.turns.t!.steps[0]).toMatchObject({ execSessionId: "e", execSession: { output_preview: "中" } });
+  applySessionEvent(state, { seq: 1, type: "tool_finished", call_id: "c", outcome: { kind: "completed" },
+    output: inline("中"), output_truncated: false, metrics: null });
+  expect(state.turns.t!.steps[0]).toMatchObject({ execSessionId: "e", execSession: { output_preview: "中" } });
+});
+
 test("forceSealTurn closes a stuck turn and recomputes the running count", () => {
   const state = emptySession();
   applySessionEvent(state, { seq: 1, type: "turn_started", turn_id: "stuck", input_id: "in1", mode: "normal" });

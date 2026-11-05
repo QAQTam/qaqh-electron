@@ -1,3 +1,5 @@
+import { registry, refreshRegistry } from "../settings/registry";
+import type { ModelSelection } from "@qaqh/sdk/protocol";
 import { createSignal, For, Show, type Component } from "solid-js";
 import IconFolder from "~icons/lucide/folder";
 import IconChevronDown from "~icons/lucide/chevron-down";
@@ -15,7 +17,6 @@ import IconFlask from "~icons/lucide/flask-conical";
 import { transport } from "../lib/transport";
 import { STR } from "../lib/strings";
 import { tailName } from "../composer/identity";
-import type { ProfileSummaryDto } from "../api/qaqh/ProfileSummaryDto";
 import { WorkspaceMenu } from "../workspace/WorkspaceMenu";
 import {
   workspaceCatalog,
@@ -65,30 +66,9 @@ export const StartupView: Component<{
 }> = (props) => {
   let textarea: HTMLTextAreaElement | undefined;
   const [draftText, setDraftText] = createSignal("");
-  const [selectedProfile, setSelectedProfile] = createSignal<string | null>(null);
+  const [selectedModel, setSelectedModel] = createSignal<ModelSelection | null>(null);
   const [openMenu, setOpenMenu] = createSignal<"workspace" | "profile" | null>(null);
-  const [configProfiles, setConfigProfiles] = createSignal<{
-    activeProfile: string;
-    model: string;
-    profiles: string[];
-    details?: Record<string, ProfileSummaryDto>;
-  } | null>(null);
-
-  void (async () => {
-    try {
-      const config = await transport.query("config.load", {});
-      if (config) {
-        setConfigProfiles({
-          activeProfile: config.activeProfile,
-          model: config.model,
-          profiles: config.profiles,
-          details: config.profilesDetail,
-        });
-      }
-    } catch {
-      // 容错: 无配置或离线时回落
-    }
-  })();
+  void refreshRegistry();
 
   const workspaceLabel = (): string => {
     const cwd = newSessionCwd();
@@ -97,13 +77,12 @@ export const StartupView: Component<{
     return found?.title || tailName(cwd);
   };
 
-  const profileLabel = (): string => {
-    const sel = selectedProfile();
-    if (sel) return configProfiles()?.details?.[sel]?.name ?? sel;
-    const conf = configProfiles();
-    if (!conf?.activeProfile) return "跟随默认存档";
-    const name = conf.details?.[conf.activeProfile]?.name ?? conf.activeProfile;
-    return `跟随默认存档 (${name})`;
+  const modelLabel = (): string => {
+    const selected = selectedModel();
+    if (selected == null) return "选择服务商和模型";
+    const provider = registry()?.providers.find((item) => item.id === selected.provider_id);
+    const model = provider?.models.find((item) => item.id === selected.model_id);
+    return `${provider?.name ?? selected.provider_id} · ${model?.definition.display_name ?? selected.model_id}`;
   };
 
   const autoGrow = (): void => {
@@ -136,9 +115,17 @@ export const StartupView: Component<{
   const handleSubmit = async (): Promise<void> => {
     const text = draftText().trim();
     if (!text || creating()) return;
+    const selected = selectedModel();
+    if (selected == null) { toast("请先选择服务商和模型", "err"); return; }
+    const model = registry()?.providers.find((provider) => provider.id === selected.provider_id)
+      ?.models.find((item) => item.id === selected.model_id);
+    if (model == null || !model.definition.enabled) {
+      toast("所选模型不存在或已停用，请重新选择", "err");
+      return;
+    }
     const ok = await submitStartupSession({
       cwd: newSessionCwd(),
-      profile: selectedProfile(),
+      modelSelection: selected,
       text,
       attachmentPaths: startupAttachments(),
     });
@@ -186,92 +173,26 @@ export const StartupView: Component<{
           </Show>
         </div>
 
-        {/* 会话存档选择 */}
         <div class="composer-control-wrap composer-profile-wrap">
-          <button
-            type="button"
-            class="composer-tool-button composer-profile-button"
+          <button type="button" class="composer-tool-button composer-profile-button"
             aria-expanded={openMenu() === "profile" ? "true" : "false"}
-            onClick={() => setOpenMenu(openMenu() === "profile" ? null : "profile")}
-            title="选择会话生效的存档"
-          >
-            <IconSparkles />
-            <span>{profileLabel()}</span>
-            <Show when={selectedProfile() ? configProfiles()?.details?.[selectedProfile()!]?.model : configProfiles()?.model}>
-              {(m) => <span class="composer-profile-model">→ {m()}</span>}
-            </Show>
-            <IconChevronDown />
+            onClick={() => setOpenMenu(openMenu() === "profile" ? null : "profile")}>
+            <IconSparkles /><span>{modelLabel()}</span><IconChevronDown />
           </button>
           <Show when={openMenu() === "profile"}>
             <div class="composer-menu composer-profile-menu composer-menu-below" role="menu">
-              <strong>{STR.profilePickMenu}</strong>
-              <button
-                type="button"
-                role="menuitemradio"
-                class={selectedProfile() == null ? "selected" : undefined}
-                onClick={() => {
-                  setSelectedProfile(null);
-                  setOpenMenu(null);
-                }}
-              >
-                <span>跟随默认存档</span>
-                <small>
-                  {configProfiles()?.details?.[configProfiles()?.activeProfile ?? ""]?.name ??
-                    configProfiles()?.activeProfile ??
-                    ""}
-                </small>
-              </button>
-              <For each={configProfiles()?.profiles ?? []}>
-                {(id) => {
-                  const modelName = () =>
-                    configProfiles()?.details?.[id]?.model ??
-                    (id === configProfiles()?.activeProfile ? configProfiles()?.model : null);
-                  return (
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      class={selectedProfile() === id ? "selected" : undefined}
-                      onClick={() => {
-                        setSelectedProfile(id);
-                        setOpenMenu(null);
-                      }}
-                    >
-                      <span>{configProfiles()?.details?.[id]?.name ?? id}</span>
-                      <Show when={modelName()}>
-                        {(m) => <small>{m()}</small>}
-                      </Show>
-                    </button>
-                  );
-                }}
-              </For>
-              <Show when={props.onManageProfiles != null}>
-                <button
-                  type="button"
-                  style={{
-                    "font-size": "var(--fs-xs)",
-                    opacity: "0.85",
-                    "text-align": "left",
-                    padding: "6px 10px",
-                    display: "flex",
-                    "align-items": "center",
-                    gap: "6px",
-                    "border-top": "1px solid var(--border)",
-                    "margin-top": "4px",
-                    color: "var(--accent)",
-                    cursor: "pointer",
-                    background: "transparent",
-                    border: "none",
-                    width: "100%",
-                  }}
-                  onClick={() => {
-                    setOpenMenu(null);
-                    props.onManageProfiles?.();
-                  }}
-                >
-                  <span style={{ "font-weight": "bold" }}>+</span>
-                  <span>管理 / 添加存档…</span>
-                </button>
-              </Show>
+              <strong>选择服务商和模型</strong>
+              <For each={registry()?.providers ?? []}>{(provider) => <>
+                <small>{provider.name}</small>
+                <For each={provider.models.filter((model) => model.definition.enabled)}>{(model) =>
+                  <button type="button" role="menuitemradio"
+                    aria-checked={selectedModel()?.provider_id === provider.id && selectedModel()?.model_id === model.id ? "true" : "false"}
+                    onClick={() => { setSelectedModel({ provider_id: provider.id, model_id: model.id, options: {} }); setOpenMenu(null); }}>
+                    {model.definition.display_name || model.id}
+                  </button>
+                }</For>
+              </>}</For>
+              <button type="button" onClick={() => { setOpenMenu(null); props.onManageProfiles?.(); }}>管理服务商和模型…</button>
             </div>
           </Show>
         </div>
