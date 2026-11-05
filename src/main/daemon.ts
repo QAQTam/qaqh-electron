@@ -1,11 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { app } from "electron";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
 import { isAlive, resolveCredentials, DiscoveryError } from "@qaqh/sdk/node";
 import { RINGING_V2_VERSION } from "@qaqh/sdk/protocol";
 import type { DaemonDiscovery } from "./types.js";
-import { userComponentRoot } from "./component-paths.js";
 
 export function getDataDir(): string {
   if (process.env.QAQH_DATA_DIR && process.env.QAQH_DATA_DIR.trim() !== "") {
@@ -106,21 +106,13 @@ export async function isEndpointReachable(discovery: DaemonDiscovery): Promise<b
 }
 
 export function resolveDaemonExecutable(): string | null {
+  const binName = process.platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
+  if (app.isPackaged) {
+    const packaged = join(process.resourcesPath, "bin", binName);
+    return existsSync(packaged) ? packaged : null;
+  }
   if (process.env.QAQH_DAEMON_PATH && existsSync(process.env.QAQH_DAEMON_PATH)) {
     return process.env.QAQH_DAEMON_PATH;
-  }
-
-  const binName = process.platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
-
-  // Bootstrap authorizes the reconciled user backend. Presence alone is not
-  // enough: on reconciliation failure use the matching packaged fallback.
-  if (process.env.QAQH_USE_USER_BACKEND === "1") {
-    const activeGeneration = process.env.QAQH_ACTIVE_GENERATION?.trim();
-    const componentRoot = activeGeneration
-      ? join(activeGeneration, "backend")
-      : join(userComponentRoot(), "backend");
-    const overlayPath = join(componentRoot, binName);
-    if (existsSync(overlayPath)) return overlayPath;
   }
 
   // 生产环境打包路径 (resources/bin/qaqh-daemon) —— 单体包/旧布局兼容。
@@ -152,23 +144,50 @@ export function resolveDaemonExecutable(): string | null {
   return null;
 }
 
+/** dpkg can replace an executable without changing its path or version. */
+export function daemonMatchesExecutable(pid: number, executable: string): boolean {
+  try {
+    const running = statSync(`/proc/${pid}/exe`);
+    const installed = statSync(executable);
+    return running.dev === installed.dev && running.ino === installed.ino;
+  } catch {
+    return false;
+  }
+}
+
 export class DaemonManager {
   private spawnedPid: number | null = null;
 
   async ensureDaemonRunning(timeoutMs = 15000): Promise<DaemonDiscovery> {
+    const exe = resolveDaemonExecutable();
     const existing = await readDiscovery();
     if (existing && isAlive(existing.pid) && (await isEndpointReachable(existing))) {
-      console.log(`[daemon] Reusing live daemon (pid: ${existing.pid}, endpoint: ${existing.endpoint})`);
-      return existing;
+      if (!app.isPackaged || process.platform !== "linux" || (exe && daemonMatchesExecutable(existing.pid, exe))) {
+        console.log(`[daemon] Reusing live daemon (pid: ${existing.pid}, endpoint: ${existing.endpoint})`);
+        return existing;
+      }
+      if (!exe) throw new Error("The installed package is missing resources/bin/qaqh-daemon.");
+      const response = await fetch(new URL("/control/v1/stop-if-idle", existing.endpoint), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${existing.token}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (response.status === 409) {
+        throw new Error("旧版 daemon 正在工作；任务结束后重新启动应用，以加载当前 deb 中的后端。");
+      }
+      if (!response.ok) throw new Error(`Stopping obsolete daemon failed (${response.status}).`);
+      const stopDeadline = Date.now() + timeoutMs;
+      while (isAlive(existing.pid) && Date.now() < stopDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (isAlive(existing.pid)) throw new Error("旧版 daemon 未退出，无法启动当前安装包中的后端。");
     }
 
-    const exe = resolveDaemonExecutable();
     if (!exe) {
       throw new Error(
         "Could not find qaqh-daemon executable. "
-        + "Expected one of: QAQH_DAEMON_PATH, ~/.local/share/QAQ-Harness/backend/, "
-        + "the app's resources/bin/, /usr/local/bin or /usr/bin. "
-        + "Install the qaqh-daemon component or build qaqh-backend."
+        + "Expected the app's resources/bin/qaqh-daemon; development builds may use QAQH_DAEMON_PATH. "
+        + "Reinstall the application package or build qaqh-backend."
       );
     }
 

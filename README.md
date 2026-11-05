@@ -71,7 +71,12 @@ just info                 # print the version/date/commit that will be injected
 just check                # Electron/renderer/SDK typecheck and tests
 ```
 
-`just` reads the release version and its date from `package.json`, resolves the git commit once, then exports `QAQH_BUILD_DATE`, `QAQH_BUILD_VERSION`, `QAQH_GIT_COMMIT`, `QAQH_GIT_DIRTY` and `QAQH_BUILD_ID` to every stage. The Node bundles embed that identity, Cargo injects it into the daemon, and electron-builder writes it into the packaged `package.json` via `extraMetadata.version`. There are intentionally no packaging scripts in `package.json`; invoking the pipeline around `just` would bypass this identity injection.
+`just` resolves the source commit and optional version overrides. Before compilation,
+`deb`/`all` reserve a daily `3.0.YYYYMMDD-N` revision in Asia/Shanghai; other targets
+use the manifest version. The resolved identity is exported to Node, Cargo and
+electron-builder. The actual Debian Version is checked after packaging. CI reserves
+globally unique release numbers; local builds keep their own ignored ledger.
+See [release versioning and the planned signed APT repository](docs/deb-release-and-apt.md).
 
 For an explicit build override, keep the date consistent with the full version:
 
@@ -93,30 +98,22 @@ Linux installer/uninstaller/updater fast-release implementation scope and minima
 acceptance checks: [SPEC](docs/spec-install-maintenance-mvp.md). This is a future
 implementation specification, not a claim that those maintenance flows exist today.
 
-## Writable components and deb upgrades
+## Debian packages
 
-`just deb` builds the shell package (`release-shell/`); `just build deb` and
-`just deb-full` build the full package. The shell's system-owned bootstrap acquires
-the single-instance lock and reconciles `resources/baseline/baseline.json` **before**
-loading user application code. Existing `install-state.json` is not a permanent
-skip flag: older components are upgraded, missing entry files are repaired, and
-higher numeric component versions are retained. On reconciliation failure this
-launch uses the packaged app/backend and retries next launch.
+`just deb` and `just build deb` use the standard electron-builder layout and write
+artifacts to `release/`. dpkg owns the application in `/opt/QAQ-Harness`:
+`resources/app.asar` contains main/preload/renderer, and `resources/bin/qaqh-daemon`
+is the only bundled executable component. The package entrypoint is
+`dist/main/index.cjs`.
 
-For equal versions, a changed content-addressed system baseline wins once. A
-`baseline-receipt.json` records that baseline so subsequent same-version hot
-updates survive unchanged-package launches. Without a publication sequence there
-is no chronological ordering between two different same-version builds; use a
-higher `QAQH_BUILD_VERSION` for unambiguous newer hot releases. This is not a
-runtime/protocol compatibility solver or a directory-level atomic update system.
-
-Bootstrap, daemon and updater share `QAQH_COMPONENT_ROOT`, defaulting to
-`${XDG_DATA_HOME:-~/.local/share}/QAQ-Harness`. `QAQH_APP_DIR` is an explicit
-non-managed development override; bootstrap-generated values inherited across
-relaunches do not bypass reconciliation. `QAQH_BASELINE_SEED=0` disables baseline
-writes, not stale-overlay detection. A second instance does not rewrite running
-application files. Existing detached daemons are not forcibly terminated by this
-migration; use the application's controlled daemon restart when needed.
+Startup does not unpack or load programs from `~/.local/share/QAQ-Harness`.
+Old overlays, receipts, and generation pointers are unused. Component hot-update
+controls and baseline installation have been removed; install a new system package
+to update the application. Same-version rebuilds are checked against packaged file
+contents, not a user-directory version cache. After reinstalling, fully exit the
+running desktop application and launch it again. On Linux, startup checks the
+running daemon's executable inode against the bundled binary; an obsolete idle
+daemon is stopped through `stop-if-idle` before the bundled replacement starts.
 
 ## Backend v3 data compatibility
 
@@ -142,3 +139,15 @@ Ask, tool permission requests and plan reviews share the renderer approval surfa
 ## Security notes
 
 The renderer uses context isolation and no Node integration. `app://` responses carry a restrictive CSP; external links are limited to `http(s)` plus the specific macOS screen-recording preference deep link. The preload exposes no raw `ipcRenderer`, arbitrary event channel, or arbitrary invoke API. Main validates the calling frame and service method names.
+
+### SDK 契约同步
+
+打包会逐文件校验当前后端导出的 SDK 契约，包括来源提交信息；失败时列出全部文件差异和清单字段差异，不自动修改源码。后端提交或契约变更后，执行：
+
+```bash
+just sdk-check  # 独立检查，无需开始打包
+just sdk-sync   # 重新生成隔壁 SDK 契约，校验后同步本仓 WebUI DTO 镜像
+just deb
+```
+
+同步会修改 `../qaqh-sdk/src/protocol/generated` 和 `webui/src/api/qaqh`，请审查两处 git diff。后端工作区干净时记录当前提交并启用发布校验；有未提交变更时记录 development/dirty。后端提交后需再次同步来源信息。不要手工编辑生成文件。

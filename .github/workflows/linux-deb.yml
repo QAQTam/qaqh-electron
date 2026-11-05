@@ -1,0 +1,140 @@
+name: Linux deb release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Version allocation and publication share one critical section, including reruns.
+concurrency:
+  group: linux-deb-release
+  cancel-in-progress: false
+
+jobs:
+  deb:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - name: Checkout Electron app
+        uses: actions/checkout@v4
+        with:
+          path: qaqh-electron
+
+      - name: Load pinned source revisions
+        id: sources
+        working-directory: qaqh-electron
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const refs = JSON.parse(readFileSync('build/repositories.json'));
+          for (const [name, sha] of Object.entries(refs)) {
+            if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`Invalid source revision: ${name}`);
+            appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${sha}\n`);
+          }
+          JS
+
+      - name: Checkout SDK
+        uses: actions/checkout@v4
+        with:
+          repository: qaqtam/qaqh-sdk
+          ref: ${{ steps.sources.outputs.sdk }}
+          path: qaqh-sdk
+
+      - name: Checkout backend
+        uses: actions/checkout@v4
+        with:
+          repository: qaqtam/qaqh-backend
+          ref: ${{ steps.sources.outputs.backend }}
+          path: qaqh-backend
+
+      - name: Checkout backend AI SDK
+        uses: actions/checkout@v4
+        with:
+          repository: qaqtam/mutil-ai
+          ref: ${{ steps.sources.outputs.mutil_ai }}
+          path: mutil-ai
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.15.0
+          run_install: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Reserve a new daily Debian revision
+        id: version
+        working-directory: qaqh-electron
+        run: |
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[].tag_name' > "$RUNNER_TEMP/allocated-tags"
+          version=$(node scripts/release-version.mjs "$RUNNER_TEMP/allocated-tags")
+          tag="v$version"
+          printf 'version=%s\ntag=%s\n' "$version" "$tag" >> "$GITHUB_OUTPUT"
+          printf 'QAQH_BUILD_VERSION=%s\n' "$version" >> "$GITHUB_ENV"
+          printf 'QAQH_BUILD_DATE=%s\n' "$(printf '%s' "$version" | cut -d. -f3 | cut -d- -f1)" >> "$GITHUB_ENV"
+          gh release create "$tag" --draft --target "$GITHUB_SHA" --title "QAQ-Harness $version" \
+            --notes "Version reserved by Actions run $GITHUB_RUN_ID. Build not yet published."
+
+      - name: Free build disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h .
+
+      - name: Build standard Debian package
+        working-directory: qaqh-electron
+        run: just deb
+
+      - name: Verify Debian metadata and record source provenance
+        working-directory: qaqh-electron
+        run: |
+          deb=(release/*.deb)
+          test "${#deb[@]}" -eq 1
+          test "$(dpkg-deb -f "${deb[0]}" Package)" = qaqh-electron
+          test "$(dpkg-deb -f "${deb[0]}" Version)" = "$QAQH_BUILD_VERSION"
+          test "$(dpkg-deb -f "${deb[0]}" Architecture)" = amd64
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          const sources = {};
+          for (const name of ['qaqh-electron', 'qaqh-backend', 'qaqh-sdk', 'mutil-ai']) {
+            sources[name] = execFileSync('git', ['-C', `../${name}`, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          }
+          writeFileSync('release/build-provenance.json', JSON.stringify({ version: process.env.QAQH_BUILD_VERSION,
+            run: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`, sources }, null, 2) + '\n');
+          JS
+          (cd release && sha256sum ./*.deb > SHA256SUMS)
+
+      - name: Store verified build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qaqh-deb-${{ steps.version.outputs.version }}
+          if-no-files-found: error
+          path: |
+            qaqh-electron/release/*.deb
+            qaqh-electron/release/SHA256SUMS
+            qaqh-electron/release/build-provenance.json
+
+      - name: Publish reserved release
+        working-directory: qaqh-electron
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release upload "$RELEASE_TAG" release/*.deb release/SHA256SUMS release/build-provenance.json
+          printf 'Standard Debian amd64 package. Install or upgrade with `sudo apt install ./qaqh-electron_*.deb`.\n\nSources are recorded in build-provenance.json. SHA256SUMS verifies the download.\n' > "$RUNNER_TEMP/release-notes.md"
+          gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file "$RUNNER_TEMP/release-notes.md"

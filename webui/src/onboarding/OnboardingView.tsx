@@ -7,23 +7,20 @@
  */
 import { createSignal, For, Show, type Component } from "solid-js";
 
-import { defaultDsSignInDeps, dsaccountStatus, runDeepSeekSignIn } from "../lib/dsaccount";
+import { defaultDsSignInDeps, runDeepSeekSignIn } from "../lib/dsaccount";
 import {
   openExternal,
   runSignInFlow,
   siwcSignInCancel,
   siwcSignInStart,
   siwcSignInStatus,
-  siwcStatus,
 } from "../lib/siwc";
 import { isDesktopRuntime } from "../lib/transport/backend";
-import { fetchModelCatalog } from "../oauth/model-catalog";
 import type { ModelDef } from "@qaqh/sdk/protocol";
 import { Field, TextInput } from "../settings/controls";
 import { Select } from "../ui/Select";
 import { WIRE_LABELS, WIRE_PROTOCOLS } from "../settings/patch";
 import {
-  ensureAccountProfile,
   newId,
   refreshRegistry,
   registry,
@@ -34,7 +31,6 @@ import {
 } from "../settings/registry";
 import { fetchLiveModels } from "../settings/registry/model-fetcher";
 import { PROVIDER_TEMPLATES } from "../settings/registry/templates";
-import { siwcApiBase } from "../siwc/brand";
 import { clearOnboardingError, dismissOnboarding } from "./state";
 
 const messageOf = (cause: unknown): string =>
@@ -68,7 +64,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
     }
   };
 
-  /** 登录后拉一次该账号目录，挑一个模型落成 Provider + 存档。 */
+  /** 账号登录不选择模型；完成后由用户在设置里填写。 */
   const connectPlan = async (): Promise<void> => {
     if (!available) {
       setError("浏览器预览下不可用：请在桌面壳里完成首次设置。");
@@ -89,26 +85,8 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
       if (outcome.kind === "failed") setError(outcome.message);
       return;
     }
-    const status = await siwcStatus();
-    const baseUrl = siwcApiBase(status);
-    if (baseUrl == null) {
-      setError("登录成功但没读到官方端点，请到「接入」页重试。");
-      return;
-    }
-    const catalog = await fetchModelCatalog("plan");
-    const model = catalog[0];
-    if (model == null) {
-      setError("登录成功但模型目录为空，请到「接入」页刷新目录。");
-      return;
-    }
-    const result = await ensureAccountProfile({
-      kind: "plan",
-      baseUrl,
-      model: model.slug,
-      modelMetadata: model,
-      makeDefault: true,
-    });
-    if (result == null) setError(registryError() ?? "写入账号存档失败");
+    dismissOnboarding();
+    props.onOpenSettings?.();
   };
 
   const connectAccount = async (): Promise<void> => {
@@ -121,26 +99,8 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
       if (outcome.kind === "failed") setError(outcome.message);
       return;
     }
-    const status = await dsaccountStatus();
-    const baseUrl = status.inferenceOrigin;
-    if (baseUrl == null || baseUrl === "") {
-      setError("登录成功但没读到推理端点，请到「接入」页重试。");
-      return;
-    }
-    const catalog = await fetchModelCatalog("account");
-    const model = catalog[0];
-    if (model == null) {
-      setError("登录成功但模型目录为空，请到「接入」页刷新目录。");
-      return;
-    }
-    const result = await ensureAccountProfile({
-      kind: "account",
-      baseUrl,
-      model: model.slug,
-      modelMetadata: model,
-      makeDefault: true,
-    });
-    if (result == null) setError(registryError() ?? "写入账号存档失败");
+    dismissOnboarding();
+    props.onOpenSettings?.();
   };
 
   /* ── BYOK ── */
@@ -183,7 +143,6 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
         return;
       }
       setLiveModels(result.models.map((item) => ({ id: item.id, label: item.label })));
-      if (model().trim() === "" && result.models[0] != null) setModel(result.models[0].id);
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -291,8 +250,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
         <Show when={route() !== "byok"}>
           <div class="onboarding-body">
             <p class="onboarding-note">
-              登录会在系统浏览器中完成。完成后会自动建立「{route() === "plan" ? "ChatGPT 套餐" : "DeepSeek 账号"}」
-              服务商与存档，并设为默认。
+              登录会在系统浏览器中完成。登录后请在设置中填写模型 ID 与模型参数，再明确启用。
             </p>
             <div class="onboarding-actions">
               <button
@@ -301,7 +259,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
                 disabled={busy() || !available}
                 onClick={signIn}
               >
-                {busy() ? "等待授权…" : `登录并启用${route() === "plan" ? " ChatGPT 套餐" : " DeepSeek 账号"}`}
+                {busy() ? "等待授权…" : `登录${route() === "plan" ? " ChatGPT 套餐" : " DeepSeek 账号"}`}
               </button>
               <Show when={!available}>
                 <span class="field-hint">浏览器预览下不可用，请在桌面壳里打开。</span>
@@ -358,10 +316,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
                   <TextInput
                     value={model()}
                     onInput={setModel}
-                    placeholder={
-                      PROVIDER_TEMPLATES.find((item) => item.id === templateId())?.modelPlaceholder ??
-                      "输入模型 id"
-                    }
+                    placeholder="填写服务商提供的模型 ID"
                   />
                 </div>
                 <button

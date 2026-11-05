@@ -1,4 +1,4 @@
-import type { ModelOption } from "./templates";
+export interface LiveModelOption { id: string; label: string; desc?: string; }
 
 export interface FetchLiveModelsParams {
   baseUrl: string;
@@ -9,7 +9,7 @@ export interface FetchLiveModelsParams {
 
 export interface FetchLiveModelsResult {
   ok: boolean;
-  models: ModelOption[];
+  models: LiveModelOption[];
   error?: string;
 }
 
@@ -44,11 +44,10 @@ export async function fetchLiveModels(params: FetchLiveModelsParams): Promise<Fe
       }
       const json = await resp.json() as any;
       const list = Array.isArray(json?.data) ? json.data : [];
-      const models: ModelOption[] = list.map((item: any) => ({
+      const models: LiveModelOption[] = list.map((item: any) => ({
         id: String(item.id),
         label: String(item.display_name || item.id),
         desc: "Anthropic 在线拉取",
-        defaultEffort: String(item.id).includes("3-7") ? "high" : undefined,
       }));
       return { ok: true, models };
     }
@@ -63,11 +62,10 @@ export async function fetchLiveModels(params: FetchLiveModelsParams): Promise<Fe
           const json = await resp.json() as any;
           const list = Array.isArray(json?.models) ? json.models : [];
           if (list.length > 0) {
-            const models: ModelOption[] = list.map((item: any) => ({
+            const models: LiveModelOption[] = list.map((item: any) => ({
               id: String(item.name || item.model),
               label: String(item.name || item.model),
               desc: "Ollama 本地已安装",
-              defaultEffort: String(item.name || "").includes("r1") ? "high" : undefined,
             }));
             return { ok: true, models };
           }
@@ -92,16 +90,14 @@ export async function fetchLiveModels(params: FetchLiveModelsParams): Promise<Fe
 
     const json = await resp.json() as any;
     const rawList = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
-    const models: ModelOption[] = rawList
+    const models: LiveModelOption[] = rawList
       .filter((item: any) => item && (item.id || item.name))
       .map((item: any) => {
         const id = String(item.id || item.name);
-        const isReasoner = id.includes("reasoner") || id.includes("r1") || id.includes("o1") || id.includes("o3");
         return {
           id,
           label: id,
           desc: "端点在线同步",
-          defaultEffort: isReasoner ? "high" : undefined,
         };
       });
 

@@ -5,10 +5,10 @@
  * 填充宽度算成拇指中心、键盘步进越过端点……在组件里都只能靠肉眼。这里全是
  * 纯函数，脱浏览器可测（`tests/effort-card.test.ts`）。
  *
- * 档位阶梯本身来自 `../models/specs`（`EFFORT_LADDER`），与 Codex 的
+ * 档位阶梯本身来自 `../models/reasoning`（`EFFORT_LADDER`），与 Codex 的
  * low → medium → high → xhigh → ultra 一致。
  */
-import type { ReasoningTier } from "../models/specs";
+import type { ReasoningTier } from "../models/reasoning";
 
 /** 指针横坐标 → 档位下标。`rect` 是轨道的可视矩形（含 padding 的部分不算）。 */
 export function tierIndexForPointer(

@@ -19,7 +19,8 @@ extraResources:
   - from: resources/bin/
     to: bin/
     filter:
-      - "**/*"
+      - "qaqh-daemon"
+      - "qaqh-daemon.exe"
 
 linux:
   icon: build/icons
@@ -53,14 +54,8 @@ deb:
     - libxtst6
     - libnss3
     - libasound2
-  # 全量口径同样需要 postinst:baseline seeding 部分在缺 baseline 目录时自动跳过,
-  # chrome-sandbox 4755 兜底则两种口径都需要(见 scripts/maint/postinst.sh)。
+  # dpkg 管理所有程序文件;安装钩子只设置 Chromium sandbox 权限。
   afterInstall: scripts/maint/postinst.sh
-  # deb 许可证元数据(DEP-5 copyright + AppStream metainfo),同 shell 口径,
-  # 见 electron-builder.shell.yml 的说明。
-  fpm:
-    - "build/deb/copyright=/usr/share/doc/qaqh-electron/copyright"
-    - "build/deb/com.qaqh.desktop.metainfo.xml=/usr/share/metainfo/com.qaqh.desktop.metainfo.xml"
 
 appImage:
   artifactName: ${productName}-${version}-linux-${arch}.${ext}

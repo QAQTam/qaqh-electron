@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { EFFORT_LADDER } from "../src/models/specs";
+import { EFFORT_LADDER } from "../src/models/reasoning";
 import {
   effortDisplayOf,
   effortFillPercent,

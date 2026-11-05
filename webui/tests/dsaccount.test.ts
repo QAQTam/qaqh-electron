@@ -17,7 +17,6 @@ import {
   type DsAccountStatus,
 } from "../src/dsaccount/state";
 import { runDeepSeekSignIn, type DsSignInDeps } from "../src/dsaccount/flow";
-import { modelEfforts, modelSpec } from "../src/models/specs";
 
 describe("远端撤销的提示", () => {
   it("只有最终没成功才说话：成功 / 进行中 / 从未登出都不出字", () => {
@@ -290,27 +289,5 @@ describe("登录流程驱动", () => {
       await original(ms);
     };
     expect(await runDeepSeekSignIn({ pollMs: 1 }, deps)).toMatchObject({ code: "expired" });
-  });
-});
-
-describe("DeepSeek 账号的模型特判", () => {
-  it("两个实测模型都收录，档位原样收平台声明的 low/high/max", () => {
-    const flash = modelSpec("account", "deepseek-flash");
-    expect(flash.known).toBe(true);
-    // 平台声明的是 low|high|max，我们阶梯里本来就有同名的 `max`（后端第五档），
-    // 所以原样放它；**不**用我们的 `ultra` 顶替（那是 Codex 的说法，平台不认）。
-    expect(modelEfforts(flash.spec)).toEqual(["low", "high", "max"]);
-    expect(modelSpec("account", "deepseek-v4-pro").known).toBe(true);
-  });
-
-  it("未收录的模型走通用推理档位", () => {
-    const unknown = modelSpec("account", "deepseek-next");
-    expect(unknown.known).toBe(false);
-    expect(modelEfforts(unknown.spec)).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
-  });
-
-  it("桶是分开的：两家的 slug 互不串门", () => {
-    expect(modelSpec("account", "gpt-6-sol").known).toBe(false);
-    expect(modelSpec("plan", "deepseek-flash").known).toBe(false);
   });
 });

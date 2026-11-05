@@ -82,7 +82,7 @@ export const Composer: Component<{
   providerKind?: () => ProviderKind;
   effortView?: () => string | null;
   effortOverridden?: () => boolean;
-  onEffort?: (effort: import("../models/specs").ReasoningTier | null) => void;
+  onEffort?: (effort: import("../models/reasoning").ReasoningTier | null) => void;
   maxTokensView?: () => number | null;
   onMaxTokens?: (maxTokens: number | null) => Promise<void> | void;
   /** 会话级工具模式视图 + 写口(§1.5)。不传 `onToolMode` 即不渲染选择器。 */

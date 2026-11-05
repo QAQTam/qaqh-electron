@@ -15,7 +15,6 @@
  */
 import { dsaccountModels } from "../lib/dsaccount";
 import { siwcModels, type SiwcModelEntry } from "../lib/siwc";
-import { modelSpec, type SpecBucket } from "../models/specs";
 import type { ProviderKind } from "./mode";
 
 /** 与 `SiwcModelEntry` / `DsModelEntry` 同形：两家共用一套选择器渲染。 */
@@ -23,13 +22,6 @@ export type ModelEntry = SiwcModelEntry;
 
 /** 有账户级目录的那两类（BYOK 不在内）。 */
 export type CatalogKind = "plan" | "account";
-
-/** provider 类别 → 模型特判桶（展示名与档位都按桶查，两家的 slug 互不串门）。 */
-export function specBucketOfKind(kind: ProviderKind): SpecBucket {
-  if (kind === "plan") return "plan";
-  if (kind === "account") return "account";
-  return "byok";
-}
 
 /** 这一类 provider 的目录来源；BYOK 返回 `null` = 没有账户级目录可拉。 */
 export function catalogKindOf(kind: ProviderKind): CatalogKind | null {
@@ -60,14 +52,12 @@ export function fetchModelCatalog(
  *
  * `extras` 是"目录里没有但用户看得见的事实"：当前生效的模型名、该 provider 槽位
  * 记住的模型名。它们排在目录之后（目录是权威列表），空白与重复都去掉；展示名先取
- * 特判合集（`../models/specs`），再取目录自己给的名字，都没有就用 slug。
+ * 目录返回的展示名，没有展示名时使用用户填写的模型 ID。
  */
 export function modelOptions(
-  kind: ProviderKind,
   catalog: readonly ModelEntry[],
   extras: readonly (string | null | undefined)[] = [],
 ): ModelEntry[] {
-  const bucket = specBucketOfKind(kind);
   const bySlug = new Map<string, ModelEntry>();
   const push = (entry: ModelEntry): void => {
     const key = entry.slug.trim();
@@ -82,34 +72,11 @@ export function modelOptions(
 
   const out: ModelEntry[] = [];
   for (const [slug, fromCatalog] of bySlug) {
-    const { spec } = modelSpec(bucket, slug);
     out.push({
       ...fromCatalog,
       slug,
-      displayName: spec.displayName ?? (fromCatalog.displayName === "" ? slug : fromCatalog.displayName),
+      displayName: fromCatalog.displayName.trim() || slug,
     });
   }
   return out;
-}
-
-/**
- * 切到某一家时该写哪个模型名。优先级：
- * 1. 该 provider 槽位记住的那条（用户上次在这一家亲手选的）；
- * 2. 当前配置里的模型 **且它在这一家的目录里**（ round-trip 切回时不必换掉他正用的）；
- * 3. 目录首条（第一次从 BYOK 切过来：全局 `model` 还是用户自己的端点上的 slug，
- *    留在这儿就等于"切过去了但没有可用模型"）；
- * 4. `null` = 一个都不知道，那就**不发** `model` 字段，让界面提示用户确认。
- */
-export function preferredModel(options: {
-  remembered?: string | null;
-  current?: string | null;
-  catalog: readonly ModelEntry[];
-}): string | null {
-  const remembered = options.remembered?.trim();
-  if (remembered != null && remembered !== "") return remembered;
-  const current = options.current?.trim();
-  if (current != null && current !== "") {
-    if (options.catalog.some((entry) => entry.slug.trim() === current)) return current;
-  }
-  return options.catalog[0]?.slug ?? null;
 }

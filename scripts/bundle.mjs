@@ -64,22 +64,9 @@ async function buildPreload() {
   });
 }
 
-async function buildBootstrap() {
-  console.log("[bundle] Building bootstrap...");
-  await esbuild.build({
-    ...commonOptions,
-    entryPoints: [resolve(root, "src/main/bootstrap.ts")],
-    outfile: resolve(root, "dist/bootstrap.cjs"),
-    format: "cjs",
-  });
-}
-
 async function run() {
   console.log(`[bundle] Build ${build.version || "(source version)"}+${build.commit.slice(0, 8)}` +
     `${build.dirty ? "-dirty" : ""}`);
-  if (mode === "bootstrap" || mode === "all") {
-    await buildBootstrap();
-  }
   if (mode === "main" || mode === "all") {
     await buildMain();
   }

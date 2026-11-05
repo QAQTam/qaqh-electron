@@ -5,13 +5,12 @@ const { createHash } = require("node:crypto");
 const requiredFiles = ["renderer/index.html", "dist/main/index.cjs", "dist/preload/index.cjs"];
 
 function parseArgs(args) {
-  const options = { target: "all", skipInstall: false, skipBackend: false, help: false, shell: false };
+  const options = { target: "all", skipInstall: false, skipBackend: false, help: false };
   let targetSeen = false;
   for (const arg of args) {
     if (arg === "--skip-install") options.skipInstall = true;
     else if (arg === "--skip-backend") options.skipBackend = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
-    else if (arg === "--shell") options.shell = true;
     else if (!targetSeen && ["all", "dir", "AppImage", "deb", "tar.gz", "nsis"].includes(arg)) {
       options.target = arg;
       targetSeen = true;
@@ -21,9 +20,8 @@ function parseArgs(args) {
 }
 
 /**
- * The canonical build identity is produced by `just` once and exported to every
- * stage. Node must not invent its own date/version here: a packaging run that
- * bypasses just would otherwise silently produce a differently-versioned app.
+ * build-all reserves a local Debian version (or accepts CI's reserved version)
+ * before exporting one identity to every Node, Cargo and packaging stage.
  * @param {NodeJS.ProcessEnv} env
  */
 function parseBuildIdentity(env = process.env) {

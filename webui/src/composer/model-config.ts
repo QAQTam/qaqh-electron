@@ -7,8 +7,7 @@
  *
  * 目录与档位按 **provider 类别**参数化：同一时刻不同会话可以选到不同 Profile，
  * 拿全局活跃项那一份会把模型目录与可用档位算到别的 provider 头上。可用档位由
- * 模型特判决定（`../models/specs` 的 `efforts`，缺省 = 全阶梯，后端再按端点
- * compat 钳制）。
+ * 用户登记的模型定义或在线目录给出，不按模型名字推测。
  */
 import { createSignal } from "solid-js";
 
@@ -17,13 +16,13 @@ import {
   catalogKindOf,
   fetchModelCatalog,
   modelOptions,
-  specBucketOfKind,
   type CatalogKind,
   type ModelEntry,
 } from "../oauth/model-catalog";
 import { transport } from "../lib/transport";
-import { modelEfforts, modelSpec, type ReasoningTier } from "../models/specs";
+import { reasoningTiers, type ReasoningTier } from "../models/reasoning";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
+import { refreshRegistry, registry } from "../settings/registry";
 
 /** 已保存事实（`config.load`）。null = 还没读到（或读失败）。 */
 const [config, setConfig] = createSignal<ConfigDto | null>(null);
@@ -39,11 +38,20 @@ const messageOf = (cause: unknown): string =>
 
 /** 全局活跃 provider 的类别；配置未到时按 BYOK（它没有账户级目录）。 */
 export function currentProviderKind(): ProviderKind {
-  return providerKindOfCredential(config()?.credential);
+  const current = registry();
+  const provider = current?.providers.find((item) => item.id === current.defaultSelection?.provider_id);
+  return providerKindOfCredential(provider?.credential ?? config()?.credential);
 }
 
-export const currentModel = (): string => config()?.model ?? "";
-export const currentEffort = (): string => config()?.reasoningEffort ?? "";
+export const currentModel = (): string => registry()?.defaultSelection?.model_id ?? config()?.model ?? "";
+export const currentEffort = (): string => {
+  const current = registry();
+  const selection = current?.defaultSelection;
+  if (selection == null) return config()?.reasoningEffort ?? "";
+  const definition = current?.providers.find((provider) => provider.id === selection.provider_id)
+    ?.models.find((model) => model.id === selection.model_id)?.definition;
+  return selection.options.reasoning_effort ?? definition?.defaults.reasoning_effort ?? "";
+};
 /** 某 provider 类别的目录原样条目；BYOK 恒为 null（没有账户级目录）。 */
 export function catalogModels(kind: ProviderKind): ModelEntry[] | null {
   const ck = catalogKindOf(kind);
@@ -65,17 +73,32 @@ export function catalogError(kind: ProviderKind): string | null {
  */
 export function catalogOptions(kind: ProviderKind, model: string): ModelEntry[] {
   const ck = catalogKindOf(kind);
-  if (ck == null) return modelOptions(kind, [], [model]);
+  if (ck == null) return modelOptions([], [model]);
   // 账号类目录尚未到位时返回空，让调用方显示「目录拿不到」的可操作提示；
   // 只列当前模型会让用户误以为这家只有这一个模型。
   const entries = catalogs()[ck];
   if (entries == null) return [];
-  return modelOptions(kind, entries, [model]);
+  return modelOptions(entries, [model]);
 }
 
 /** 指定 provider 类别下，某模型可用的档位（会话传会话有效模型）。 */
 export function availableTiers(kind: ProviderKind, model: string): readonly ReasoningTier[] {
-  return modelEfforts(modelSpec(specBucketOfKind(kind), model).spec);
+  return reasoningTiers(modelMetadata(kind, model)?.reasoningLevels);
+}
+
+function modelMetadata(kind: ProviderKind, model: string): ModelEntry | undefined {
+  const current = registry();
+  const providers = current?.providers.filter((item) =>
+    providerKindOfCredential(item.credential) === kind && item.models.some((entry) => entry.id === model)) ?? [];
+  const provider = providers.find((item) => item.id === current?.defaultSelection?.provider_id)
+    ?? (providers.length === 1 ? providers[0] : undefined);
+  const definition = provider?.models.find((entry) => entry.id === model)?.definition;
+  if (definition != null) return {
+    slug: model, displayName: definition.display_name ?? model,
+    reasoningLevels: definition.capabilities.reasoning ? definition.reasoning_levels : [],
+    defaultEffort: definition.defaults.reasoning_effort ?? undefined,
+  };
+  return catalogModels(kind)?.find((entry) => entry.slug === model);
 }
 
 /** 后端那份配置**读到了没有**。没读到就不能对外报任何档名（见 `effortDisplayOf`）。 */
@@ -98,16 +121,16 @@ export async function bootModelConfig(): Promise<void> {
 }
 
 /** 指定 provider 类别下，某模型的默认档（重置键用）。 */
-export function defaultTier(kind: ProviderKind, model: string): ReasoningTier {
-  const spec = modelSpec(specBucketOfKind(kind), model).spec;
-  const allowed = modelEfforts(spec);
-  if (spec.defaultEffort != null && allowed.includes(spec.defaultEffort)) return spec.defaultEffort;
-  return allowed[Math.floor(allowed.length / 2)] ?? "medium";
+export function defaultTier(kind: ProviderKind, model: string): ReasoningTier | null {
+  const metadata = modelMetadata(kind, model);
+  return availableTiers(kind, model).find((tier) => tier === metadata?.defaultEffort) ?? null;
 }
 
 export async function refreshConfig(): Promise<void> {
   try {
-    setConfig(await transport.query("config.load", {}));
+    const next = await transport.query("config.load", {});
+    await refreshRegistry();
+    setConfig(next);
     setError(null);
   } catch (cause) {
     setError(messageOf(cause));

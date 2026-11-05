@@ -22,17 +22,15 @@ test("CLI accepts only explicit targets and known opt-outs", () => {
   assert.equal(parseArgs([]).target, "all");
   for (const target of ["all", "dir", "AppImage", "deb", "tar.gz", "nsis"]) {
     assert.deepEqual(parseArgs([target, "--skip-install", "--skip-backend"]),
-      { target, skipInstall: true, skipBackend: true, help: false, shell: false });
+      { target, skipInstall: true, skipBackend: true, help: false });
   }
   for (const args of [["deb; touch /tmp/bad"], ["--linux"], ["deb", "dir"], ["--unknown"]]) {
     assert.throws(() => parseArgs(args), /Unknown target\/option/);
   }
 });
 
-test("--shell selects the shell packaging criteria (plain dir + baseline)", () => {
-  assert.equal(parseArgs(["deb", "--shell"]).shell, true);
-  assert.equal(parseArgs(["deb"]).shell, false);
-  assert.equal(parseArgs(["--shell", "--skip-backend"]).shell, true);
+test("removed shell packaging cannot be selected", () => {
+  assert.throws(() => parseArgs(["deb", "--shell"]), /Unknown target\/option/);
 });
 
 test("just-provided build identity is complete, consistent and injected into the package", () => {
@@ -86,11 +84,10 @@ function fixture(t) {
     writeFileSync(join(root, file), contents);
   };
   put("package.json", JSON.stringify({ name: "fixture",
-    version: process.env.QAQH_BUILD_VERSION || "1.0.0", main: "dist/bootstrap.cjs",
+    version: process.env.QAQH_BUILD_VERSION || "1.0.0", main: "dist/main/index.cjs",
     author: { name: "QAQTam", email: "tsy3minso@gmail.com" }, homepage: "https://example.org" }));
   put("renderer/index.html", '<script src="/assets/app.js"></script>');
   put("renderer/assets/app.js", "console.log('fresh')");
-  put("dist/bootstrap.cjs", "module.exports = {};");
   put("dist/main/index.cjs", "module.exports = {};");
   put("dist/preload/index.cjs", "module.exports = {};");
   const elf = Buffer.alloc(64);
@@ -117,7 +114,7 @@ test("preflight rejects missing author metadata", t => {
   assert.throws(() => assertInputs(root), /author.name/);
 });
 
-test("afterPack validates actual ASAR content and rejects stale renderer/daemon", async t => {
+test("afterPack validates actual ASAR content and rejects stale renderer/daemon at the same version", async t => {
   const { root, put } = fixture(t);
   const appOutDir = join(root, "output");
   put("output/resources/bin/qaqh-daemon", readFileSync(join(root, "resources/bin/qaqh-daemon")));

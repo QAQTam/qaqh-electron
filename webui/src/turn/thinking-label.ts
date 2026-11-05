@@ -11,7 +11,6 @@
  * 等到对应时间线条目到达)一律按「思考」显示——**不猜**。
  */
 import { STR } from "../lib/strings";
-import { isGptFamilyModel } from "../models/specs";
 import type { ReasoningKind } from "../api/qaqh/ReasoningKind";
 
 /** 折叠行标签。 */
@@ -33,5 +32,5 @@ export function thinkingTitle(kind: ReasoningKind | null | undefined): string | 
  * 本身已保证这块内容是服务端摘要——按 kind 再闸一道只会把缺标注的块漏回纯文本。
  */
 export function thinkingRichSummary(oauthPlan: boolean, model: string): boolean {
-  return oauthPlan && isGptFamilyModel(model);
+  return oauthPlan && /^gpt[-_]/i.test(model.trim());
 }

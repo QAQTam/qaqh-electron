@@ -21,9 +21,6 @@ import {
 } from "./native-dialogs.js";
 import { processGroup } from "./process-metrics.js";
 import { readGpuStatus } from "./gpu-info.js";
-import {
-  applyForDaemon, checkForUpdates, spawnApplyOnQuit, stageUpdate, stagedStatus,
-} from "./updater.js";
 import type { ApprovalView, MainServiceMap, MainServiceMethod } from "./types.js";
 
 const DEFAULT_LAN_PORT = 64413;
@@ -428,34 +425,6 @@ async function handleCommand(
       const shortCommit = commit === "unknown" ? "unknown" : commit.slice(0, 8);
       const display = `${version}+${shortCommit}${process.env.QAQH_GIT_DIRTY === "1" ? "-dirty" : ""}`;
       return { display, version, commit };
-    }
-
-    case "updater_check": {
-      return checkForUpdates(typeof args.source === "string" && args.source ? args.source : undefined);
-    }
-
-    case "updater_stage": {
-      return stageUpdate(typeof args.source === "string" && args.source ? args.source : undefined);
-    }
-
-    case "updater_status": {
-      return stagedStatus();
-    }
-
-    case "updater_apply": {
-      const staged = stagedStatus();
-      if (!staged) throw new Error("没有已暂存的更新(先执行 updater_stage)");
-      if (staged.restartPolicy === "daemon") {
-        // 纯 backend:停 daemon → 同步应用(只换 backend/)→ 走既有重连链路,壳不重启。
-        const stopped = await client.stopDaemon(true);
-        if (stopped === "busy") throw new Error("daemon_busy");
-        if (stopped === "unsupported") throw new Error("当前 daemon 不支持安全停止");
-        await applyForDaemon();
-        return restartDaemon(client, daemonMgr, { args: ["run"], wantLan: false, force: true });
-      }
-      // electron 策略:挂 detached updater 等 shell 退出,renderer 随后走 request-quit。
-      spawnApplyOnQuit();
-      return { policy: "electron", quit: true };
     }
 
     case "host_memory": {

@@ -1,10 +1,3 @@
-export interface ModelOption {
-  id: string;
-  label: string;
-  desc?: string;
-  defaultEffort?: string;
-}
-
 export interface ProviderTemplate {
   id: string;
   name: string;
@@ -13,8 +6,6 @@ export interface ProviderTemplate {
   wire: string;
   keyHint: string;
   keyRequired: boolean;
-  models: ModelOption[];
-  modelPlaceholder?: string;
 }
 
 export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
@@ -26,8 +17,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     wire: "chat",
     keyHint: "sk-...",
     keyRequired: true,
-    modelPlaceholder: "输入模型代号（如 deepseek-flash / deepseek-v4-pro）",
-    models: [],
   },
   {
     id: "anthropic",
@@ -37,8 +26,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     wire: "messages",
     keyHint: "sk-ant-...",
     keyRequired: true,
-    modelPlaceholder: "输入模型代号（如 opus5 / fable5 / claude-3-7-sonnet）",
-    models: [],
   },
   {
     id: "openai",
@@ -48,8 +35,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     wire: "chat",
     keyHint: "sk-proj-...",
     keyRequired: true,
-    modelPlaceholder: "输入模型代号（如 gpt-6-sol / gpt-4o / o3-mini）",
-    models: [],
   },
   {
     id: "gemini",
@@ -59,8 +44,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     wire: "gemini",
     keyHint: "AIzaSy...",
     keyRequired: true,
-    modelPlaceholder: "输入模型代号（如 gemini-3.8 / gemini-4 / gemini-2.0-flash）",
-    models: [],
   },
   {
     id: "siliconflow",
@@ -70,8 +53,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     wire: "chat",
     keyHint: "sk-...",
     keyRequired: true,
-    modelPlaceholder: "输入模型代号（或填 Key 后点击【探测在线模型】自动获取）",
-    models: [],
   },
   {
     id: "moonshot",
@@ -81,8 +62,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     wire: "chat",
     keyHint: "sk-...",
     keyRequired: true,
-    modelPlaceholder: "输入模型代号（如 kimi-latest / moonshot-v1-128k）",
-    models: [],
   },
   {
     id: "zhipu",
@@ -92,8 +71,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     wire: "chat",
     keyHint: "key.secret",
     keyRequired: true,
-    modelPlaceholder: "输入模型代号（如 glm-4-plus）",
-    models: [],
   },
   {
     id: "ollama",
@@ -103,18 +80,14 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     wire: "chat",
     keyHint: "本地模型无需填写密钥",
     keyRequired: false,
-    modelPlaceholder: "点击【探测在线模型】自动拉取本地已下载模型",
-    models: [],
   },
   {
     id: "custom",
     name: "自定义 / 其他",
     badge: "通用兼容",
-    baseUrl: "https://api.your-provider.com/v1",
+    baseUrl: "",
     wire: "chat",
     keyHint: "API Key",
     keyRequired: false,
-    modelPlaceholder: "输入自定义端点的模型标识符",
-    models: [],
   },
 ];

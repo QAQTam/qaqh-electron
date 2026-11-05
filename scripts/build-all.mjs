@@ -1,3 +1,5 @@
+import { sdkContract } from "./sdk-contract.mjs";
+import { reserveLocalVersion } from "./release-version.mjs";
 import { spawnSync } from "node:child_process";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,41 +54,31 @@ function assertGeneratedMirror(source, destination) {
   const expected = names(source);
   const actual = names(destination);
   if (JSON.stringify(expected) !== JSON.stringify(actual)) {
-    throw new Error(`Generated protocol file list drift: ${source} != ${destination}`);
+    throw new Error(`Generated protocol file list drift: ${source} != ${destination}; run just sdk-sync`);
   }
   for (const name of expected) {
     if (!readFileSync(join(source, name)).equals(readFileSync(join(destination, name)))) {
-      throw new Error(`Generated protocol file drift: ${name}`);
+      throw new Error(`Generated protocol file drift: ${name}; run just sdk-sync`);
     }
   }
 }
 
-function checkBackendContract() {
-  const revision = run("git", ["rev-parse", "HEAD"], backend, true).trim();
-  const dirty = run("git", ["status", "--porcelain"], backend, true).trim() !== "";
-  const env = {
-    ...process.env,
-    QAQH_SOURCE_REVISION: dirty ? "development" : revision,
-    QAQH_SOURCE_DIRTY: dirty ? "1" : "0",
-  };
-  const args = ["run", "--locked", "-p", "qaqh-contract-export", "--", "check", "--against", join(sdk, "src/protocol/generated")];
-  if (!dirty) args.push("--release");
-  run("cargo", args, backend, false, env);
-}
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    console.log("Usage: just build [all|dir|AppImage|deb|tar.gz|nsis] [--skip-install] [--skip-backend] [--shell]\n" +
+    console.log("Usage: just build [all|dir|AppImage|deb|tar.gz|nsis] [--skip-install] [--skip-backend]\n" +
       "Linux x64 targets: all/dir/AppImage/deb/tar.gz. Windows x64 target: nsis.\n" +
-      "--shell: shell 包口径(electron-builder.shell.yml)——plain dir baseline + 双 CLI + 维护脚本,\n" +
-      "         仅支持 deb 目标;AppImage/tar.gz 永远是全量口径。\n" +
-      "Build identity comes from just (QAQH_BUILD_VERSION / QAQH_BUILD_DATE / QAQH_GIT_COMMIT).");
+      "deb/all reserve a daily revision; explicit QAQH_BUILD_VERSION overrides it. Source identity comes from just.");
     return;
   }
-  if (options.shell && !["all", "deb", "dir"].includes(options.target)) {
-    throw new Error(`shell 口径只支持 deb(dir=调试);${options.target} 请走全量口径(去掉 --shell)。`);
+  const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  if (!process.env.QAQH_BUILD_VERSION) {
+    process.env.QAQH_BUILD_VERSION = ["deb", "all"].includes(options.target)
+      ? reserveLocalVersion(manifest.version, join(root, ".tmp/deb-version.json"))
+      : manifest.version;
   }
+  process.env.QAQH_BUILD_DATE ||= process.env.QAQH_BUILD_VERSION.split(".")[2].split("-")[0];
   const build = parseBuildIdentity(process.env);
   console.log(`Build identity: ${build.version}+${build.commit.slice(0, 8)}` +
     `${build.dirty ? "-dirty" : ""} (${build.date})`);
@@ -106,7 +98,7 @@ async function main() {
   run("cargo", ["--version"]);
 
   console.log("\n[1/5] SDK and dependency preparation");
-  checkBackendContract();
+  sdkContract();
   assertGeneratedMirror(join(sdk, "src/protocol/generated/types/qaqh"), join(frontend, "src/api/qaqh"));
   if (!options.skipInstall) install(sdk);
   run("pnpm", ["run", "build"], sdk);
@@ -150,28 +142,20 @@ async function main() {
   // 复用已安装、与当前依赖版本一致的 Electron，避免 builder 再下载同一份运行时。
   const electronExecutable = require("electron");
   if (!existsSync(electronExecutable)) throw new Error("Installed Electron binary missing; reinstall electron with build scripts enabled.");
-  if (options.shell) {
-    // shell 口径专属产物:更新引擎双 CLI + 出厂基线 zip。
-    run("cargo", ["build", "--locked", "--release", "--manifest-path",
-      join(root, "crates", "qaqh-update", "Cargo.toml"), "--bins"]);
-    for (const bin of ["qaqh-maint", "qaqh-update"]) {
-      cpSync(join(root, "crates", "qaqh-update", "target", "release", bin), join(root, "resources", "bin", bin));
-      chmodSync(join(root, "resources", "bin", bin), 0o755);
-    }
-    run(process.execPath, ["scripts/make-baseline.mjs", "--version", build.version]);
-  }
   mkdirSync(join(root, ".tmp"), { recursive: true });
   const staging = mkdtempSync(join(root, ".tmp/package-"));
   try {
     const targets = options.target === "all" ? [] : [options.target];
     run("pnpm", ["exec", "electron-builder", windowsBuild ? "--win" : "--linux", ...targets, "--x64", "--publish", "never",
-      ...(options.shell ? ["--config", "electron-builder.shell.yml"] : []),
+      // Override semver prerelease sanitization: Debian needs a revision (-N), not ~N.
+      ...(!windowsBuild ? ["--config.deb.fpm=--version", `--config.deb.fpm=${build.version}`,
+        "--config.deb.fpm=build/deb/copyright=/usr/share/doc/qaqh-electron/copyright",
+        "--config.deb.fpm=build/deb/com.qaqh.desktop.metainfo.xml=/usr/share/metainfo/com.qaqh.desktop.metainfo.xml"] : []),
       `--config.extraMetadata.version=${build.version}`,
       `--config.directories.output=${staging}`, `--config.electronDist=${dirname(electronExecutable)}`], root, false,
-      { ...process.env, ...(options.shell ? { QAQH_SHELL_PACKAGE: "1" } : {}),
+      { ...process.env,
         ELECTRON_BUILDER_COMPRESSION_LEVEL: process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL || "1" });
-    const expected = windowsBuild ? ["nsis"] : options.shell
-      ? ["deb"]
+    const expected = windowsBuild ? ["nsis"]
       : (options.target === "all" ? ["AppImage", "deb", "tar.gz"] : [options.target]);
     const files = readdirSync(staging);
     for (const target of expected) {
@@ -180,21 +164,16 @@ async function main() {
         throw new Error(`electron-builder did not produce a ${extension} artifact for ${target}.`);
       }
     }
-    if (options.shell) {
-      if (!existsSync(join(staging, "linux-unpacked/resources/app/dist/bootstrap.cjs"))) {
-        throw new Error("Shell layout broken: plain-dir baseline app missing bootstrap.cjs.");
-      }
-      if (existsSync(join(staging, "linux-unpacked/resources/app.asar"))) {
-        throw new Error("Shell layout must not contain app.asar.");
-      }
-    } else {
-      const unpackedDir = windowsBuild ? "win-unpacked" : "linux-unpacked";
-      if (!existsSync(join(staging, unpackedDir, "resources/app.asar"))) {
-        throw new Error(`Packaged app.asar missing from ${unpackedDir}.`);
-      }
+    for (const file of files.filter(file => file.endsWith(".deb"))) {
+      const version = run("dpkg-deb", ["--field", join(staging, file), "Version"], root, true).trim();
+      if (version !== build.version) throw new Error(`Debian Version mismatch: ${version} != ${build.version}`);
+    }
+    const unpackedDir = windowsBuild ? "win-unpacked" : "linux-unpacked";
+    if (!existsSync(join(staging, unpackedDir, "resources/app.asar"))) {
+      throw new Error(`Packaged app.asar missing from ${unpackedDir}.`);
     }
     // 成功才替换 release；失败不把旧安装包冒充成本次产物。
-    const releaseDir = options.shell ? "release-shell" : "release";
+    const releaseDir = "release";
     rmSync(join(root, releaseDir), { recursive: true, force: true });
     renameSync(staging, join(root, releaseDir));
     console.log(`\nBuild succeeded: ${join(root, releaseDir)}\n${files.join("\n")}`);

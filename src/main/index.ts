@@ -1,7 +1,6 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, powerSaveBlocker, type IpcMainInvokeEvent } from "electron";
 import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { readDiscovery } from "./daemon.js";
 import { pathToFileURL } from "node:url";
 import { DaemonManager } from "./daemon.js";
@@ -321,7 +320,6 @@ function ensureClient(): Promise<RingingClient> {
 async function bootstrapApp(): Promise<void> {
   console.log("[app] Bootstrapping QAQ-Harness Electron shell...");
   loadWindowPrefs();
-  const pendingOperation = process.env.QAQH_PENDING_OPERATION?.trim() || null;
 
   // 0. 注册 app:// 协议处理器，使 /assets 等 SPA 绝对路径无缝映射到本地文件
   registerAppProtocol();
@@ -329,7 +327,6 @@ async function bootstrapApp(): Promise<void> {
   // 1. Start/reuse daemon and establish the SDK client before the renderer loads,
   // so every IPC handler exists before frontend boot invokes anything.
   registerIpcHandlers(ensureClient, daemonMgr, challenges);
-  // System bootstrap already reconciled components before loading this main.
   try {
     await ensureClient();
   } catch (err) {
@@ -338,61 +335,14 @@ async function bootstrapApp(): Promise<void> {
 
   // 2. Create renderer after IPC registration.
   createMainWindow();
-  if (pendingOperation && process.platform === "linux" && process.resourcesPath && process.env.QAQH_COMPONENT_ROOT) {
-    const ready = await new Promise<boolean>((resolveReady) => {
-      const window = mainWindow;
-      if (!window || window.isDestroyed()) return resolveReady(false);
-      const timeout = setTimeout(() => resolveReady(false), 30_000);
-      window.webContents.once("did-finish-load", () => {
-        clearTimeout(timeout);
-        resolveReady(true);
-      });
-      window.webContents.once("did-fail-load", () => {
-        clearTimeout(timeout);
-        resolveReady(false);
-      });
-    });
-    if (!ready || !client) {
-      try {
-        execFileSync(
-          join(process.resourcesPath, "bin", "qaqh-maint"),
-          ["rollback", "--root", process.env.QAQH_COMPONENT_ROOT, "--json"],
-          { stdio: "ignore", timeout: 5_000 },
-        );
-      } catch (error) {
-        console.error("[app] timed-out generation rollback failed:", error);
-      }
-      app.quit();
-      return;
-    }
-    try {
-      execFileSync(
-        join(process.resourcesPath, "bin", "qaqh-maint"),
-        ["confirm", "--root", process.env.QAQH_COMPONENT_ROOT, "--operation", pendingOperation, "--json"],
-        { stdio: "ignore", timeout: 5_000 },
-      );
-    } catch (error) {
-      console.error("[app] generation confirmation failed:", error);
-      app.quit();
-      return;
-    }
-  }
   // 3. Install tray.
   setupTray();
 }
 
 function resolveRendererDir(): string {
-  // 0. 组件根(bootstrap 选中:overlay 或 baseline)。dist 与 renderer 同根,
-  //    保证壳与前端版本永远配对,不会出现"新壳带旧前端"。
-  const componentRoot = process.env.QAQH_APP_DIR?.trim();
-  if (componentRoot) {
-    const componentRenderer = join(componentRoot, "renderer");
-    if (existsSync(componentRenderer)) return componentRenderer;
-  }
-
   // 1. 打包生产环境/asar 内部路径: join(app.getAppPath(), "renderer")
   const asarRenderer = join(app.getAppPath(), "renderer");
-  if (existsSync(asarRenderer)) return asarRenderer;
+  if (app.isPackaged || existsSync(asarRenderer)) return asarRenderer;
 
   // 2. 本地项目 renderer 目录
   const localRenderer = resolve(process.cwd(), "renderer");
@@ -528,7 +478,7 @@ function createMainWindow(): BrowserWindow {
   mainWindow.on("show", sendWindowState);
   mainWindow.on("hide", sendWindowState);
 
-  if (process.env.QAQH_DEV_URL && process.env.QAQH_DEV_URL.trim() !== "") {
+  if (!app.isPackaged && process.env.QAQH_DEV_URL && process.env.QAQH_DEV_URL.trim() !== "") {
     console.log(`[app] Loading renderer from Dev URL: ${process.env.QAQH_DEV_URL}`);
     mainWindow.loadURL(process.env.QAQH_DEV_URL);
   } else {

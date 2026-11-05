@@ -1,12 +1,13 @@
 # Electron is the canonical desktop host and the only supported packaging entry point.
-# `just` resolves build identity once (manifest version/date + git commit) and exports it
-# to Node, Cargo and electron-builder. Do not add packaging entry points to package.json.
+# `just` exports source identity and optional explicit version overrides.
+# build-all reserves a daily deb revision before exporting it to every build stage.
+# Do not add packaging entry points to package.json.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 release_version := `node -p "require('./package.json').version"`
 release_date := `node -p "require('./package.json').version.split('.')[2].split('-')[0]"`
-build_date := env_var_or_default("QAQH_BUILD_DATE", release_date)
-build_version := env_var_or_default("QAQH_BUILD_VERSION", release_version)
+build_date := env_var_or_default("QAQH_BUILD_DATE", "")
+build_version := env_var_or_default("QAQH_BUILD_VERSION", "")
 build_commit := `git rev-parse HEAD`
 build_short := `git rev-parse --short=8 HEAD`
 build_dirty := `if [ -n "$(git status --porcelain)" ]; then printf '1'; else printf '0'; fi`
@@ -22,8 +23,8 @@ default:
 
 # 打印本次构建将注入的版本、日期、提交与脏状态。
 info:
-    @printf 'version  %s\n' '{{build_version}}'
-    @printf 'date     %s\n' '{{build_date}}'
+    @printf 'version  %s\n' '{{if build_version == "" { "automatic for deb/all; " + release_version + " otherwise" } else { build_version }}}'
+    @printf 'date     %s\n' '{{if build_date == "" { "derived from build version" } else { build_date }}}'
     @printf 'commit   %s\n' '{{build_commit}}'
     @printf 'short    %s\n' '{{build_short}}'
     @printf 'dirty    %s\n' '{{build_dirty}}'
@@ -43,34 +44,12 @@ dir *options:
 appimage *options:
     @just build AppImage {{options}}
 
-# shell 口径 deb(定稿架构):系统包装运行时 + plain-dir baseline + 双 CLI,
-# 维护脚本见 scripts/maint/,产物在 release-shell/。
+# 标准 deb:安装目录中的 app.asar + resources/bin/qaqh-daemon,产物在 release/。
 deb *options:
-    @node scripts/build-all.mjs deb --shell {{options}}
-
-# 旧口径全量 deb(asar 单包),shell 口径的对照/退路。
-deb-full *options:
     @node scripts/build-all.mjs deb {{options}}
 
 tarball *options:
     @just build tar.gz {{options}}
-
-# 组件热更新包(不产生系统安装包):前端=app 代码,后端=daemon。
-# 产物在 .qaqh-bundles/<releaseId>/bundles/,由 updater/qaqh-maint 应用到
-# ~/.local/share/QAQ-Harness/{app,backend}(见 scripts/make-bundles.mjs)。
-bundle-frontend *options:
-    @node scripts/make-bundles.mjs --skip-backend {{options}}
-
-bundle-backend *options:
-    @node scripts/make-bundles.mjs --skip-frontend {{options}}
-
-bundle-components *options:
-    @node scripts/make-bundles.mjs {{options}}
-
-# 只从既有 bundle 产物重组 update-source(bundles/ + catalog.json),不重新构建。
-# 产物即 qaqh-update stage 的输入端(--release/--out 可透传)。
-update-source *options:
-    @node scripts/make-update-source.mjs {{options}}
 
 # 兼容隔壁仓的常用命令名。
 alias desktop-build := build
@@ -92,3 +71,11 @@ check:
     pnpm --dir ../qaqh-sdk test
     pnpm --dir webui run typecheck
     pnpm --dir webui run test
+
+# 显式重新生成 SDK 契约并同步 WebUI DTO；打包只检查，不修改源码。
+sdk-sync:
+    @node scripts/sdk-contract.mjs sync
+
+# 单独运行打包前的 SDK 契约校验。
+sdk-check:
+    @node scripts/sdk-contract.mjs check

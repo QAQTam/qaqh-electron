@@ -435,7 +435,7 @@ export async function ensureAccountProfile(input: {
       context_window: contextWindow,
       max_output_tokens: maxOutputTokens,
       reasoning_levels: reasoningLevels,
-      capabilities: { tool_calls: false, image_input: false, native_web_search: false, reasoning: false },
+      capabilities: { tool_calls: false, image_input: false, native_web_search: false, reasoning: reasoningLevels.length > 0 },
       defaults: {
         max_output_tokens: maxOutputTokens,
         reasoning_effort: defaultEffort != null && reasoningLevels.includes(defaultEffort) ? defaultEffort : null,
@@ -444,7 +444,7 @@ export async function ensureAccountProfile(input: {
     };
     if (!await saveModel(providerId, input.model, model)) return null;
   }
-  if (input.makeDefault === true || latest?.defaultSelection == null) {
+  if (input.makeDefault === true) {
     const selected = await perform(async () => {
       await setDefaultSelection({ provider_id: providerId, model_id: input.model, options: {} });
       return true;

@@ -35,11 +35,7 @@ export type HostCommand =
   | "device_revoke"
   | "daemon_lan_status"
   | "daemon_lan_enable"
-  | "daemon_lan_disable"
-  | "updater_check"
-  | "updater_stage"
-  | "updater_status"
-  | "updater_apply";
+  | "daemon_lan_disable";
 
 export type HostEvent =
   | "projection://status"

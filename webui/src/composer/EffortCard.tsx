@@ -5,8 +5,7 @@
  * **读全局、写会话**：卡片显示的是本会话解析后的有效值（会话覆写 → 所选
  * Profile → 全局默认），写入走 `session.settings.patch`，因此改这一张卡不会
  * 影响别的会话。目录与可用档位按**本会话有效 Profile 的 provider 类别**计算
- * （`providerKind`），由模型特判（`../models/specs`）决定，缺省是全阶梯
- * （low→medium→high→xhigh→max→ultra），后端再按端点 compat 钳制。
+ * （`providerKind`），只使用用户登记或在线目录明确声明的档位。
  *
  * 复刻上的三处取舍，都写在明处：
  * - **档位图标**按 Codex 的"几档共用图标"来分（低档闪电 / 高档脑 / Ultra 星），
@@ -23,7 +22,7 @@ import IconRotateCcw from "~icons/lucide/rotate-ccw";
 import IconSparkles from "~icons/lucide/sparkles";
 import IconZap from "~icons/lucide/zap";
 
-import { modelSpec, type ReasoningTier } from "../models/specs";
+import type { ReasoningTier } from "../models/reasoning";
 import { STR } from "../lib/strings";
 import {
   effortDisplayOf,
@@ -46,7 +45,7 @@ import {
   loadCatalog,
   refreshConfig,
 } from "./model-config";
-import { catalogKindOf, specBucketOfKind } from "../oauth/model-catalog";
+import { catalogKindOf } from "../oauth/model-catalog";
 import type { ProviderKind } from "../oauth/mode";
 
 /** 档位中文名：与 Codex 的中文词条一致（轻度 / 中 / 高 / 极高 / Ultra）。 */
@@ -170,10 +169,7 @@ export const EffortCard: Component<{
   const modelLabel = (): string => {
     const model = effectiveModel();
     if (model === "") return "未设置模型";
-    const { spec, known } = modelSpec(specBucketOfKind(providerKind()), model);
-    const name = spec.displayName ?? model;
-    const base = name === model ? name : `${name}（${model}）`;
-    return known ? base : `${base} · 未收录`;
+    return model;
   };
 
   /**
@@ -272,6 +268,14 @@ export const EffortCard: Component<{
 
           <Show when={pickingModel()}>
             <div class="effort-card__models" role="menu">
+              <div class="effort-card__custom">
+                <input class="field-input" value={customModel()} placeholder="输入模型 ID"
+                  onInput={(event) => setCustomModel(event.currentTarget.value)} />
+                <button type="button" class="ghost-mini" disabled={customModel().trim() === ""}
+                  onClick={() => void writeModel(customModel().trim()).then(() => setPickingModel(false))}>
+                  使用
+                </button>
+              </div>
               <Show
                 when={providerHasCatalog() && modelRows().length > 0}
                 fallback={
@@ -289,25 +293,6 @@ export const EffortCard: Component<{
                           "模型目录为空：完成登录或到接入页「刷新目录」后重试；也可以直接填模型 id。"}
                       </small>
                     </Show>
-                    <div class="effort-card__custom">
-                      <input
-                        class="field-input"
-                        value={customModel()}
-                        placeholder="模型 id（目录拿不到时自己填）"
-                        onInput={(event) => setCustomModel(event.currentTarget.value)}
-                      />
-                      <button
-                        type="button"
-                        class="ghost-mini"
-                        disabled={customModel().trim() === ""}
-                        onClick={() => {
-                          const next = customModel().trim();
-                          if (next !== "") void writeModel(next).then(() => setPickingModel(false));
-                        }}
-                      >
-                        使用
-                      </button>
-                    </div>
                   </>
                 }
               >
@@ -360,55 +345,58 @@ export const EffortCard: Component<{
             </small>
           </Show>
 
-          <div
-            ref={(node) => {
-              track = node;
-            }}
-            class={`effort-track effort-tone-${tierTone(trackTier())}${dragging() ? " is-dragging" : ""}`}
-            role="slider"
-            tabindex="0"
-            aria-valuemin={0}
-            aria-valuemax={tiers().length - 1}
-            aria-valuenow={index()}
-            aria-valuetext={chipLabel()}
-            onPointerDown={(event) => {
-              setDragging(true);
-              event.currentTarget.setPointerCapture(event.pointerId);
-              applyPointer(event.clientX);
-            }}
-            onPointerMove={(event) => {
-              if (dragging()) applyPointer(event.clientX);
-            }}
-            onPointerUp={(event) => {
-              setDragging(false);
-              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                event.currentTarget.releasePointerCapture(event.pointerId);
-              }
-              void commitPending();
-            }}
-            onPointerCancel={() => {
-              setDragging(false);
-              setPending(null);
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-              event.preventDefault();
-              const delta = event.key === "ArrowRight" ? 1 : -1;
-              void writeEffort(stepTier(tiers(), trackTier(), delta));
-            }}
-          >
-            <span class="effort-track__fill" style={{ width: `${fill()}%` }} />
-            <For each={tiers()}>
-              {(_, at) => (
-                <span
-                  class="effort-track__dot"
-                  style={{ left: `${effortFillPercent(at(), tiers().length)}%` }}
-                  aria-hidden="true"
-                />
-              )}
-            </For>
-            <span class="effort-track__thumb" style={{ left: `${fill()}%` }} />
-          </div>
+          <Show when={tiers().length > 0} fallback={<p class="effort-card__note">尚未声明推理档位；可在服务商的模型设置中填写。</p>}>
+            <div
+              ref={(node) => {
+                track = node;
+              }}
+              class={`effort-track effort-tone-${tierTone(trackTier())}${dragging() ? " is-dragging" : ""}`}
+              role="slider"
+              tabindex="0"
+              aria-valuemin={0}
+              aria-valuemax={tiers().length - 1}
+              aria-valuenow={index()}
+              aria-valuetext={chipLabel()}
+              onPointerDown={(event) => {
+                setDragging(true);
+                event.currentTarget.setPointerCapture(event.pointerId);
+                applyPointer(event.clientX);
+              }}
+              onPointerMove={(event) => {
+                if (dragging()) applyPointer(event.clientX);
+              }}
+              onPointerUp={(event) => {
+                setDragging(false);
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+                void commitPending();
+              }}
+              onPointerCancel={() => {
+                setDragging(false);
+                setPending(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                event.preventDefault();
+                const delta = event.key === "ArrowRight" ? 1 : -1;
+                void writeEffort(stepTier(tiers(), trackTier(), delta));
+              }}
+            >
+              <span class="effort-track__fill" style={{ width: `${fill()}%` }} />
+              <For each={tiers()}>
+                {(_, at) => (
+                  <span
+                    class="effort-track__dot"
+                    style={{ left: `${effortFillPercent(at(), tiers().length)}%` }}
+                    aria-hidden="true"
+                  />
+                )}
+              </For>
+              <span class="effort-track__thumb" style={{ left: `${fill()}%` }} />
+            </div>
+
+          </Show>
 
           {/*
             三态里那两种"不是后端真值"的状态必须在卡面上交代：chip 的字已经诚实了，
@@ -423,9 +411,9 @@ export const EffortCard: Component<{
             </p>
           </Show>
 
-          <p class="effort-card__note">
-            拖动或按 ←/→ 选择；拖动时预览，松手写入（只写这一个字段）。
-          </p>
+          <Show when={tiers().length > 0}>
+            <p class="effort-card__note">拖动或按 ←/→ 选择；松手后应用到本会话。</p>
+          </Show>
           <Show when={configError() != null}>
             {(message) => <p class="effort-card__note is-error">{message()}</p>}
           </Show>
