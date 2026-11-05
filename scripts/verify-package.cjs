@@ -1,5 +1,5 @@
 const { readFileSync, statSync, existsSync, readdirSync } = require("node:fs");
-const { join } = require("node:path");
+const { join, normalize, sep } = require("node:path");
 const { createRequire } = require("node:module");
 const { assertInputs, expectedPackageVersion, walkFiles, digest } = require("./packaging.cjs");
 
@@ -21,12 +21,12 @@ function verifyAsar(context, root) {
   const files = ["dist/main/index.cjs", "dist/preload/index.cjs",
     ...walkFiles(join(root, "renderer")).map(file => `renderer/${file}`)];
   for (const file of files) {
-    if (digest(readFileSync(join(root, file))) !== digest(asar.extractFile(archive, file))) {
+    if (digest(readFileSync(join(root, file))) !== digest(asar.extractFile(archive, normalize(file)))) {
       throw new Error(`Packaged file differs from current build: ${file}`);
     }
   }
   const packagedRenderer = asar.listPackage(archive).filter(file =>
-    file.startsWith("/renderer/") && !asar.statFile(archive, file.slice(1)).files);
+    file.startsWith(`${sep}renderer${sep}`) && !asar.statFile(archive, file.slice(1)).files);
   // 按清单核对 renderer 文件数量,防止旧 hash 文件进入包。
   const distEntries = files.filter(file => !file.startsWith("renderer/")).length;
   if (packagedRenderer.length !== files.length - distEntries) {
