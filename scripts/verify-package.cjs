@@ -67,11 +67,16 @@ function verifyNativeAddon(context, root, resources) {
       digest(readFileSync(packed)) !== digest(readFileSync(source))) {
     throw new Error(`Packaged native addon missing or stale: app.asar.unpacked/native/${addonName}.`);
   }
-  // asarUnpack 生效时 asar 内不应再有实体副本。
+  // asarUnpack 语义：节点保留在 asar 头清单并标记 unpacked=true，实体在
+  // app.asar.unpacked。节点存在且未标 unpacked = 实体仍在包内。
   const archive = join(resources, "app.asar");
-  const inAsar = asar.listPackage(archive).some(file =>
-    normalize(file) === normalize(`${sep}native${sep}${addonName}`));
-  if (inAsar) {
+  let node = null;
+  try {
+    node = asar.statFile(archive, normalize(`native/${addonName}`), true);
+  } catch {
+    // asar 内无该条目也可以：实体整体在 app.asar.unpacked。
+  }
+  if (node && !node.unpacked) {
     throw new Error("Native addon was packed inside app.asar; asarUnpack did not apply.");
   }
 }
