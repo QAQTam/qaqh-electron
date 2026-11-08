@@ -86,7 +86,7 @@ QAQH_BUILD_DATE=20261031 QAQH_BUILD_VERSION=2.1.20261031-1 just build
 
 The packaging script rejects unsupported host architectures rather than silently cross-compiling. It validates the packaged ASAR content and daemon resources before replacing `release/`. A successful package check is not a GUI smoke test; start the packaged app on each target distribution before publishing.
 
-Windows x64 NSIS builds run on a native Windows host with Bash, just, Node.js, pnpm and Rust/MSVC installed:
+Windows x64 NSIS builds run on a native Windows host with PowerShell 7 (`pwsh`; recipes and backticks run under pwsh via `set windows-shell`, no Bash needed), just, Node.js, pnpm and Rust/MSVC installed:
 
 ```bash
 just nsis

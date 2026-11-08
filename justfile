@@ -3,6 +3,9 @@
 # build-all reserves a daily deb revision before exporting it to every build stage.
 # Do not add packaging entry points to package.json.
 set shell := ["bash", "-euo", "pipefail", "-c"]
+# Windows 上由 pwsh 7 执行 recipe 与 backtick，无需 Git Bash。
+# pwsh 没有 bash -e 语义，多步 recipe（install/check）用行尾 && 首败即停。
+set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
 release_version := `node -p "require('./package.json').version"`
 release_date := `node -p "require('./package.json').version.split('.')[2].split('-')[0]"`
@@ -10,7 +13,8 @@ build_date := env_var_or_default("QAQH_BUILD_DATE", "")
 build_version := env_var_or_default("QAQH_BUILD_VERSION", "")
 build_commit := `git rev-parse HEAD`
 build_short := `git rev-parse --short=8 HEAD`
-build_dirty := `if [ -n "$(git status --porcelain)" ]; then printf '1'; else printf '0'; fi`
+# 跨 shell 写法：pwsh/bash 下等价，避免依赖 bash 的 if/printf。
+build_dirty := `node -p "require('child_process').execSync('git status --porcelain').length ? 1 : 0"`
 
 export QAQH_BUILD_DATE := build_date
 export QAQH_BUILD_VERSION := build_version
@@ -23,17 +27,17 @@ default:
 
 # 打印本次构建将注入的版本、日期、提交与脏状态。
 info:
-    @printf 'version  %s\n' '{{if build_version == "" { "automatic for deb/all; " + release_version + " otherwise" } else { build_version }}}'
-    @printf 'date     %s\n' '{{if build_date == "" { "derived from build version" } else { build_date }}}'
-    @printf 'commit   %s\n' '{{build_commit}}'
-    @printf 'short    %s\n' '{{build_short}}'
-    @printf 'dirty    %s\n' '{{build_dirty}}'
+    @echo 'version  {{if build_version == "" { "automatic for deb/all; " + release_version + " otherwise" } else { build_version }}}'
+    @echo 'date     {{if build_date == "" { "derived from build version" } else { build_date }}}'
+    @echo 'commit   {{build_commit}}'
+    @echo 'short    {{build_short}}'
+    @echo 'dirty    {{build_dirty}}'
 
 # 完整打包；Linux: all|dir|AppImage|deb|tar.gz，Windows: nsis。
 build target="all" *options:
     @node scripts/build-all.mjs '{{target}}' {{options}}
 
-# Windows x64 NSIS 安装包；需在 Windows x64 + Bash 环境运行。
+# Windows x64 NSIS 安装包；需在 Windows x64 + pwsh 7 环境运行。
 nsis *options:
     @node scripts/build-all.mjs nsis {{options}}
 
@@ -56,7 +60,7 @@ alias desktop-build := build
 
 # 安装依赖；build 默认也会按需安装。
 install:
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile &&
     pnpm --dir webui install --frozen-lockfile
 
 # 本地开发（先执行一次 just build dir 准备 daemon/renderer/native 资源）。
@@ -65,11 +69,11 @@ dev:
 
 # 独立质量闸；打包本身只做必要类型检查，不重复跑全量测试。
 check:
-    pnpm run typecheck
-    pnpm test
-    pnpm --dir webui run typecheck
-    pnpm --dir webui run test
-    cargo test -p qaqh-client --lib --manifest-path ../qaqh-backend/Cargo.toml
+    pnpm run typecheck &&
+    pnpm test &&
+    pnpm --dir webui run typecheck &&
+    pnpm --dir webui run test &&
+    cargo test -p qaqh-client --lib --manifest-path ../qaqh-backend/Cargo.toml &&
     cargo check --manifest-path crates/qaqh-napi-client/Cargo.toml
 
 # 显式重新生成 SDK 契约并同步 WebUI DTO；打包只检查，不修改源码。
