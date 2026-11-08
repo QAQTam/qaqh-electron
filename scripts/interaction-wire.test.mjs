@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createClient } from "@qaqh/sdk";
-import { loadHost } from "./test-host.mjs";
+import { loadHost, mockNativeAddon } from "./test-host.mjs";
 
 const scenarios = [
   { kind: "ask", decision: "submit", payload: { answers: [{ question_id: "q1", answer: "yes" }] }, type: "interaction.ask.respond", answers: { q1: "yes" } },
@@ -14,105 +13,106 @@ const scenarios = [
 ];
 
 for (const scenario of scenarios) {
-  test(`IPC -> real SDK -> HTTP envelope: ${scenario.kind}/${scenario.decision}`, async t => {
-    const requests = [];
+  test(`IPC -> canonical command into native submit: ${scenario.kind}/${scenario.decision}`, async t => {
     const canonicalId = scenario.kind === "tool_permission" ? "call-canonical" : "interaction-canonical";
     const pending = {
       pending_permission: scenario.kind === "tool_permission" ? { tool_call_id: canonicalId, tool_name: "exec", paths: [] } : null,
       pending_interaction: scenario.kind !== "tool_permission" ? { id: canonicalId, kind: scenario.kind, details: {} } : null,
     };
-    const sdk = createClient({
-      credentials: { endpoint: "http://mock.invalid", token: "synthetic-host-token" },
-      fetch: async (url, init) => {
-        const path = new URL(url).pathname;
-        const body = init.body ? JSON.parse(init.body) : null;
-        requests.push({ path, body, headers: new Headers(init.headers), method: init.method });
-        let response;
-        if (path === "/ringing/v2/clients/open") {
-          response = { schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease-test", server_epoch: "epoch-test", renew_interval_ms: 3600_000, capabilities: { single_stream: true }, command_contract_revision: "ringing-commands-6" };
-        } else if (path === "/ringing/v2/sessions/session-A/approvals") {
-          response = pending;
-        } else if (path === "/ringing/v2/sessions/session-A/bootstrap") {
-          response = { schema: "qaqh.Ringing", version: 2, session_id: "session-A", server_epoch: "epoch-test", state: { session_id: "session-A", seq: 1, activity: "idle", current_turn_id: null, turns: [], timeline: [], tools: [], interactions: [{ interaction_id: canonicalId === "call-canonical" ? "permission-interaction" : canonicalId, call_id: canonicalId === "call-canonical" ? canonicalId : null, kind: scenario.kind === "tool_permission" ? "permission" : scenario.kind, request: "", resolution: null }], subagents: [] } };
-        } else if (path === "/ringing/v2/commands") {
-          response = { status: "accepted", command_id: body.command_id, result: null };
-        } else throw new Error(`Unexpected request: ${path}`);
-        return new Response(JSON.stringify(response), { status: 200, headers: { "Content-Type": "application/json" } });
-      },
+    const mock = mockNativeAddon();
+    mock.client.approvalsRaw = async () => pending;
+    mock.client.bootstrap = async seed => ({
+      session_id: seed, server_epoch: "epoch-test",
+      state: { session_id: seed, seq: 1, activity: "idle", current_turn_id: null, turns: [], timeline: [], tools: [],
+        interactions: [{ interaction_id: canonicalId === "call-canonical" ? "permission-interaction" : canonicalId, call_id: canonicalId === "call-canonical" ? canonicalId : null, kind: scenario.kind === "tool_permission" ? "permission" : scenario.kind, request: "", resolution: null }], subagents: [] },
     });
-    t.after(() => sdk.disconnect());
-    const host = await loadHost({ sdk });
+    const host = await loadHost({ native: mock.addon });
     const client = new host.RingingClient({}, () => {});
     host.registerIpcHandlers(client, {}, new host.ChallengeManager());
     const [view] = await host.invoke("pending_approvals", { seed: "session-A" });
     assert.ok(!JSON.stringify(view).includes(canonicalId));
     await host.invoke("respond_approval", { seed: "session-A", challengeId: view.challenge_id, decision: scenario.decision, payload: scenario.payload });
-    const request = requests.at(-1);
-    const envelope = request.body;
-    assert.equal(request.method, "POST");
-    assert.equal(request.path, "/ringing/v2/commands");
-    assert.equal(request.headers.get("Authorization"), "Bearer synthetic-host-token");
-    assert.equal(request.headers.get("X-QAQH-Client-Session-Id"), "lease-test");
-    assert.equal(envelope.schema, "qaqh.Ringing");
-    assert.equal(envelope.version, 2);
-    assert.equal(envelope.contract_revision, "ringing-commands-6");
-    assert.deepEqual(envelope.target, { kind: "session", session_id: "session-A" });
-    assert.equal(envelope.command.type, scenario.type);
+    const [target, command] = mock.submissions.at(-1);
+    // 信封（schema/version/contract_revision/headers/身份字段）由 qaqh-client 的
+    // send_command_v2_typed 构造并在 crate 测试覆盖；这里断言 Electron 层把
+    // 规范命令与显式 session target 原样交给 native 绑定。
+    assert.deepEqual(target, { kind: "session", session_id: "session-A" });
+    assert.equal(command.type, scenario.type);
     if (scenario.kind === "tool_permission") {
-      assert.equal(envelope.command.tool_call_id, canonicalId);
-      assert.equal(envelope.command.approved, scenario.approved);
-      assert.equal(envelope.command.trust_folder, scenario.trust_folder);
+      assert.equal(command.tool_call_id, canonicalId);
+      assert.equal(command.approved, scenario.approved);
+      assert.equal(command.trust_folder, scenario.trust_folder);
     } else {
-      assert.equal(envelope.command.interaction_id, canonicalId);
+      assert.equal(command.interaction_id, canonicalId);
       if (scenario.kind === "plan") {
-        assert.equal(envelope.command.approved, scenario.approved);
-        assert.equal(envelope.command.message, scenario.message);
-        assert.equal(envelope.command.autonomous, false);
-      } else if (scenario.decision === "submit") assert.deepEqual(envelope.command.answers, [{ question_id: "q1", answer: "yes" }]);
+        assert.equal(command.approved, scenario.approved);
+        assert.equal(command.message, scenario.message);
+        assert.equal(command.autonomous, false);
+      } else if (scenario.decision === "submit") assert.deepEqual(command.answers, [{ question_id: "q1", answer: "yes" }]);
     }
   });
 }
 
-test("real SDK reset re-bootstraps and resumes projection delivery", async t => {
-  const { FakeTimers } = await import("./test-host.mjs");
-  const timers = new FakeTimers();
-  let bootstraps = 0, streams = 0;
-  const encoder = new TextEncoder();
-  const sse = (text, holdOpen = false) => new Response(new ReadableStream({ start(controller) { if (text) controller.enqueue(encoder.encode(text)); if (!holdOpen) controller.close(); } }), { headers: { "Content-Type": "text/event-stream" } });
-  const json = value => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
-  const sdk = createClient({
-    credentials: { endpoint: "http://mock.invalid", token: "synthetic" },
-    reconnect: { initialMs: 1, maxMs: 1 },
-    fetch: async (url, init) => {
-      const path = new URL(url).pathname;
-      if (path.endsWith("/clients/open")) return json({ schema: "qaqh.Ringing", version: 2, accepted: true, client_session_id: "lease", server_epoch: "epoch", renew_interval_ms: 3600_000, capabilities: { single_stream: true }, command_contract_revision: "ringing-commands-6" });
-      if (path.endsWith("/commands")) return json({ status: "accepted", command_id: JSON.parse(init.body).command_id, result: null });
-      if (path.endsWith("/bootstrap")) {
-        bootstraps++;
-        return json({ schema: "qaqh.Ringing", version: 2, session_id: "session-A", server_epoch: "epoch", state: { session_id: "session-A", seq: bootstraps, activity: "idle", current_turn_id: null, turns: [], timeline: [], tools: [], interactions: [], subagents: [] } });
-      }
-      if (path.endsWith("/events")) {
-        streams++;
-        if (streams === 1) return sse('event: ringing.resync_required\ndata: {"session_id":"session-A","reason":"cursor_gap"}\n\n');
-        assert.equal(new URL(url).searchParams.get("since_cursor"), "epoch:2");
-        return sse('id: epoch:3\nevent: ringing.event\ndata: {"seq":3,"type":"activity_changed","activity":"idle","current_turn_id":null}\n\n');
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    },
-  });
-  const host = await loadHost({ sdk, timers });
+test("adapter delivers bootstrap before events and re-bootstraps after resync", async t => {
+  const mock = mockNativeAddon();
+  const host = await loadHost({ native: mock.addon });
   const events = [];
   const client = new host.RingingClient({}, (name, payload) => events.push({ name, payload }));
   t.after(() => client.destroy());
-  const until = async predicate => {
-    for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
-    assert.fail(`stream condition was not reached (${JSON.stringify({ bootstraps, streams, events })})`);
+  let bootstraps = 0;
+  mock.client.bootstrap = async seed => {
+    bootstraps++;
+    return { session_id: seed, server_epoch: "epoch", state: { session_id: seed, seq: bootstraps, activity: "idle", current_turn_id: null, turns: [], timeline: [], tools: [], interactions: [], subagents: [] } };
   };
   await client.attach("session-A");
-  // SDK owns its native recovery timer (the host's fake timer adapter must not
-  // create a competing recovery schedule).
-  await until(() => events.some(e => e.name === "projection://event"));
+  // open → bootstrap 先行送达；随后事件直通。
+  assert.equal(bootstraps, 1);
+  assert.ok(events.some(e => e.name === "projection://bootstrap"));
+  mock.emit.event("session-A", { seq: 2, type: "activity_changed", activity: "idle" });
+  assert.ok(events.some(e => e.name === "projection://event" && e.payload.event.seq === 2));
+
+  // resync：缓冲清空，下一次 open 重新 bootstrap（顺序契约与旧 SDK watch 一致）。
+  mock.emit.reset("session-A", "cursor_gap");
+  assert.ok(events.some(e => e.name === "projection://reset" && e.payload.reason === "cursor_gap"));
+  mock.emit.event("session-A", { seq: 9, type: "activity_changed", activity: "idle" });
+  assert.ok(!events.some(e => e.name === "projection://event" && e.payload.event.seq === 9), "事件在重新 bootstrap 前被缓冲");
+  mock.emit.status({ session_id: "session-A", state: "open", server_epoch: "epoch-2", cursor: null });
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(bootstraps, 2);
-  assert.ok(streams >= 2);
-  assert.ok(["live", "reconnecting"].includes(client.getProjectionStatus("session-A")));
+  assert.ok(events.some(e => e.name === "projection://event" && e.payload.event.seq === 9), "缓冲事件在新 bootstrap 之后按序 flush");
+});
+
+test("reconnecting status is forwarded as scheduled reconnect notices", async t => {
+  const mock = mockNativeAddon();
+  const host = await loadHost({ native: mock.addon });
+  const events = [];
+  const client = new host.RingingClient({}, (name, payload) => events.push({ name, payload }));
+  t.after(() => client.destroy());
+  await client.attach("session-A");
+  mock.emit.status({ session_id: "session-A", state: "reconnecting", retry_ms: 1500, reason: { kind: "lagged" }, last_cursor: "epoch:7" });
+  const reconnects = events.filter(e => e.name === "conn://reconnect");
+  assert.equal(reconnects.length, 1);
+  assert.equal(reconnects[0].payload.session_id, "session-A");
+  assert.equal(reconnects[0].payload.attempt, 1);
+  assert.equal(reconnects[0].payload.delay_ms, 1500);
+  assert.ok(reconnects.every(e => typeof e.payload.at === "number" && e.payload.at > 0));
+  assert.equal(client.getProjectionStatus("session-A"), "reconnecting");
+});
+
+test("closed stream surfaces the reason and detaching prevents stale callbacks", async t => {
+  const mock = mockNativeAddon();
+  const host = await loadHost({ native: mock.addon });
+  const events = [];
+  const client = new host.RingingClient({}, (name, payload) => events.push({ name, payload }));
+  t.after(() => client.destroy());
+  await client.attach("session-A");
+  mock.emit.status({ session_id: "session-A", state: "closed", reason: "server terminated stream (forbidden)" });
+  assert.equal(client.getProjectionStatus("session-A"), "closed");
+  assert.ok(events.some(e => e.name === "conn://error" && /forbidden/.test(e.payload.message)));
+  // detach 后旧 seed 的推送不再进入宿主事件面。
+  client.detachActive();
+  const count = events.length;
+  mock.emit.event("session-A", { seq: 3, type: "activity_changed" });
+  mock.emit.status({ session_id: "session-A", state: "open", server_epoch: "epoch", cursor: null });
+  assert.equal(events.length, count);
 });

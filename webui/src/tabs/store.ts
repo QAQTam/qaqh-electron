@@ -16,7 +16,9 @@ import { STR } from "../lib/strings";
 import { SessionStore } from "../session/store";
 import { overlayLocalTitles } from "../session/title-override";
 import { toast } from "../ui/toast";
-import type { ModelSelection, SessionContentRef, WorkspaceEntry } from "@qaqh/sdk/protocol";
+import type { ModelSelection } from "../api/qaqh/ModelSelection";
+import type { SessionContentRef } from "../api/qaqh/SessionContentRef";
+import type { WorkspaceEntry } from "../api/qaqh/WorkspaceEntry";
 
 export interface Tab {
   id: string;

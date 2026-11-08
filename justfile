@@ -54,13 +54,12 @@ tarball *options:
 # 兼容隔壁仓的常用命令名。
 alias desktop-build := build
 
-# 安装三处依赖；build 默认也会按需安装。
+# 安装依赖；build 默认也会按需安装。
 install:
     pnpm install --frozen-lockfile
     pnpm --dir webui install --frozen-lockfile
-    pnpm --dir ../qaqh-sdk install --frozen-lockfile
 
-# 本地开发（先执行一次 just build dir 准备 daemon/renderer 资源）。
+# 本地开发（先执行一次 just build dir 准备 daemon/renderer/native 资源）。
 dev:
     @node scripts/dev.mjs
 
@@ -68,9 +67,10 @@ dev:
 check:
     pnpm run typecheck
     pnpm test
-    pnpm --dir ../qaqh-sdk test
     pnpm --dir webui run typecheck
     pnpm --dir webui run test
+    cargo test -p qaqh-client --lib --manifest-path ../qaqh-backend/Cargo.toml
+    cargo check --manifest-path crates/qaqh-napi-client/Cargo.toml
 
 # 显式重新生成 SDK 契约并同步 WebUI DTO；打包只检查，不修改源码。
 sdk-sync:

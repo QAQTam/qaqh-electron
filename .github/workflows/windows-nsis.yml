@@ -26,13 +26,6 @@ jobs:
         with:
           path: qaqh-electron
 
-      - name: Checkout SDK
-        uses: actions/checkout@v4
-        with:
-          repository: qaqtam/qaqh-sdk
-          ref: main
-          path: qaqh-sdk
-
       - name: Checkout backend
         uses: actions/checkout@v4
         with:

@@ -13,7 +13,9 @@ import IconEyeOff from "~icons/lucide/eye-off";
 
 import { toast } from "../ui/toast";
 import { Select } from "../ui/Select";
-import type { ModelDef } from "@qaqh/sdk/protocol";
+import type {
+ ModelDef 
+} from "../api/contract";
 import { Field, Section, TextInput } from "./controls";
 import { MASK, WIRE_LABELS, WIRE_PROTOCOLS } from "./patch";
 import {

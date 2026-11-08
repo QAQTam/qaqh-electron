@@ -28,16 +28,14 @@ test("并发读取配置合并，广播后旧请求不能覆盖新配置", async
   expect(query).toHaveBeenCalledTimes(2);
 });
 
-test("并发目录刷新共享 provider 和 profile 请求", async () => {
+test("并发目录刷新共享 provider 请求（profile.list 已随 B06 退出刷新链）", async () => {
   const provider = deferred<any>();
-  const profile = deferred<any>();
   const command = vi.spyOn(transport, "command").mockImplementation(() => provider.promise);
-  const query = vi.spyOn(transport, "query").mockImplementation(() => profile.promise);
+  const query = vi.spyOn(transport, "query");
   const reads = [refreshRegistry(), refreshRegistry()];
   expect(command).toHaveBeenCalledTimes(1);
-  expect(query).toHaveBeenCalledTimes(1);
+  expect(query).not.toHaveBeenCalled();
   provider.resolve({ status: "accepted", result: { providers: {}, revision: 0 } });
-  profile.resolve({ profiles: {} });
   await Promise.all(reads);
 });
 
@@ -58,22 +56,18 @@ test("会话轮询不读取工作区，创建工作区后更新列表", async ()
 
 test("目录刷新跨写入通知时丢弃旧结果", async () => {
   const staleProvider = deferred<any>();
-  const staleProfile = deferred<any>();
   const providerCommand = vi.spyOn(transport, "command")
     .mockImplementationOnce(() => staleProvider.promise)
     .mockResolvedValue({ status: "accepted", result: { providers: {}, revision: 2 } } as never);
-  const query = vi.spyOn(transport, "query")
-    .mockImplementationOnce(() => staleProfile.promise)
-    .mockResolvedValue({ profiles: {} } as never);
+  const query = vi.spyOn(transport, "query");
   const old = refreshRegistry();
   notifyConfigChanged();
   const fresh = refreshRegistry();
   await fresh;
   staleProvider.resolve({ status: "accepted", result: { providers: {}, revision: 1 } });
-  staleProfile.resolve({ profiles: {} });
   await old;
   const { registry } = await import("../src/settings/registry");
   expect(registry()?.revision).toBe(2);
   expect(providerCommand).toHaveBeenCalledTimes(3);
-  expect(query).toHaveBeenCalledTimes(3);
+  expect(query).not.toHaveBeenCalled();
 });

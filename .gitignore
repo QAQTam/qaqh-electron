@@ -3,10 +3,13 @@ dist/
 release/
 renderer/
 resources/bin/
+native/
+
 .tmp/
 .qaqh/
 .qaqh-bundles/
 crates/qaqh-update/target/
+crates/qaqh-napi-client/target/
 *.log
 .DS_Store
 resources/baseline/

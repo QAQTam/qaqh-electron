@@ -1,24 +1,31 @@
-// Ringing v2 transport adapter over @qaqh/sdk.
+// Ringing v2 transport adapter over the qaqh-napi-client native addon.
 //
 // Owns the EventSender contract consumed by the renderer
 // (projection://*, conn://liveness); all HTTP/SSE/lease
 // mechanics — cursor resumption, backoff reconnects, lease renewal with
-// credential refresh, multipart content upload — live in the SDK.
+// credential refresh, multipart content upload — live in qaqh-client
+// (Rust, shared with the TUI / Android / HarmonyOS shells) behind the addon.
+//
+// bootstrap 顺序契约：单流**不携带快照**（规范顺序 open -> bootstrap ->
+// subscribe）。本适配层在收到 status=open 后拉取 bootstrap、先投递
+// projection://bootstrap，再 flush 缓冲的事件——旧 SDK watch 内嵌的
+// bootstrap-before-events 顺序由此保持。
 import {
-  createClient,
-  globalTarget,
-  SdkError,
-  sessionTarget,
-  type ApprovalsView,
-  type SessionBootstrap,
-  type ClientState,
-  type RingingClient as SdkRingingClient,
-  type SessionWatch,
-  type WatchStatus,
-} from "@qaqh/sdk";
+  NativeClientError,
+  globalCommandTarget,
+  loadNativeAddon,
+  sessionCommandTarget,
+  type NativeRingingClient,
+  type NativeStatusPayload,
+} from "./native-client.js";
 import { readDiscovery } from "./daemon.js";
 import { requireAccepted, requireId } from "./approvals.js";
-import type { CommandPrecondition, CommandTarget, RingingCommand } from "@qaqh/sdk/protocol";
+import type { CommandPrecondition } from "../../webui/src/api/qaqh/CommandPrecondition";
+import type { CommandTarget } from "../../webui/src/api/qaqh/CommandTarget";
+import type { RingingCommand } from "../../webui/src/api/qaqh/RingingCommand";
+import type { RingingV2CommandStatus } from "../../webui/src/api/qaqh/RingingV2CommandStatus";
+import type { RingingV2PendingApprovals } from "../../webui/src/api/qaqh/RingingV2PendingApprovals";
+import type { SessionBootstrap } from "../../webui/src/api/qaqh/SessionBootstrap";
 import type {
   DaemonDiscovery,
   MainServiceMap,
@@ -31,34 +38,123 @@ import type {
 export type EventSender = (eventName: string, payload: any) => void;
 
 export class RingingClient {
-  private readonly sdk: SdkRingingClient;
+  private native: NativeRingingClient | null = null;
+  private credentials: DaemonDiscovery | null = null;
   private readonly eventSender: EventSender;
   private activeSeed: string | null = null;
-  private sessionWatch: SessionWatch | null = null;
   private streamGeneration = 0;
-  private projectionStatus: WatchStatus = "closed";
+  private projectionStatus: ProjectionStatusWire["status"] = "closed";
   private attachRequest = 0;
+  /** status=open 之后、bootstrap 投递之前到达的事件缓冲（按活跃 seed）。 */
+  private pendingEvents: Array<Record<string, unknown>> = [];
+  /** bootstrap 是否已投递（true 之后事件直通）。 */
+  private bootstrapDelivered = false;
+  /** 当前 seed 的单飞 bootstrap 投递（status=open 与 attach 共享）。 */
+  private bootstrapInFlight: { seed: string; promise: Promise<void> } | null = null;
+  /** 当前 seed 的重连序号（conn://reconnect.attempt）。 */
+  private reconnectAttempts = 0;
 
   constructor(discovery: DaemonDiscovery, eventSender: EventSender) {
+    this.credentials = discovery;
     this.eventSender = eventSender;
-    this.sdk = createClient({
-      credentials: discovery,
-      // Daemon restarts re-publish daemon.json (new port/token); the SDK
-      // consults this hook before every recovery reconnect.
-      refreshCredentials: async () => {
-        const fresh = await readDiscovery();
-        if (!fresh) throw new Error("daemon discovery document disappeared");
-        return fresh;
-      },
-      logger: console,
-    });
-    this.sdk.onStateChange((state: ClientState) => {
-      if (state === "recovering") console.warn("[ringing] Lease lost; SDK is recovering");
-    });
   }
 
   async init(): Promise<void> {
-    await this.sdk.connect();
+    if (this.native) return;
+    this.native = this.createNative();
+  }
+
+  /** 用当前已知凭据建立 addon 客户端；回调统一进适配层分派。 */
+  private createNative(): NativeRingingClient {
+    if (!this.credentials) throw new Error("daemon credentials unavailable");
+    const addon = loadNativeAddon();
+    return addon.NativeClient.connect(
+      {
+        base_url: this.credentials.endpoint,
+        token: this.credentials.token,
+        tls_fp: this.credentials.tls_fingerprint ?? null,
+      },
+      (payload) => this.onNativeEvent(payload),
+      (payload) => this.onNativeReset(payload),
+      (payload) => this.onNativeStatus(payload),
+      () => this.onNativeLiveness(),
+    );
+  }
+
+  private onNativeEvent(payload: { session_id: string; event: Record<string, unknown> }): void {
+    if (payload.session_id !== this.activeSeed) return;
+    this.eventSender("conn://liveness", {});
+    if (!this.bootstrapDelivered) {
+      this.pendingEvents.push(payload.event);
+      return;
+    }
+    this.eventSender("projection://event", { session_id: payload.session_id, event: payload.event });
+  }
+
+  private onNativeReset(payload: { session_id: string; reset: Record<string, unknown> }): void {
+    if (payload.session_id !== this.activeSeed) return;
+    const reason = (payload.reset as { reason?: unknown } | null)?.reason;
+    console.warn(`[ringing] Resync required (${String(reason)}) for ${payload.session_id}`);
+    this.pendingEvents = [];
+    this.bootstrapDelivered = false;
+    this.eventSender("projection://reset", { session_id: payload.session_id, reason });
+  }
+
+  private onNativeStatus(payload: NativeStatusPayload): void {
+    if (payload.session_id !== this.activeSeed) return;
+    const status = payload.state === "open" ? "live" : payload.state;
+    if (payload.state === "open") {
+      // 拉快照 → 先发 bootstrap → flush 缓冲事件；attach 也等待同一次投递。
+      this.scheduleBootstrap(payload.session_id);
+      this.reconnectAttempts = 0;
+    } else if (payload.state === "reconnecting") {
+      this.reconnectAttempts += 1;
+      if (typeof payload.retry_ms === "number") {
+        this.sendReconnectScheduled(payload.session_id, this.reconnectAttempts, payload.retry_ms);
+      }
+    }
+    this.projectionStatus = status;
+    this.sendProjectionStatus(status, payload.session_id);
+    if (payload.state === "closed") {
+      this.reportError(`Session stream closed for ${payload.session_id}: ${payload.reason ?? "unknown"}`);
+    }
+  }
+
+  /** 单飞 bootstrap 投递：status=open 与 attach 共享同一次拉取。 */
+  private scheduleBootstrap(seed: string): Promise<void> {
+    if (this.bootstrapInFlight?.seed === seed) return this.bootstrapInFlight.promise;
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => { resolve = r; });
+    this.bootstrapInFlight = { seed, promise };
+    void this.deliverBootstrap(seed).finally(() => {
+      if (this.bootstrapInFlight?.seed === seed) this.bootstrapInFlight = null;
+      resolve();
+    });
+    return promise;
+  }
+
+  private async deliverBootstrap(seed: string, rethrow = false): Promise<void> {
+    try {
+      const native = this.native;
+      if (!native || seed !== this.activeSeed) return;
+      const bootstrap = await native.bootstrap(seed);
+      if (seed !== this.activeSeed) return;
+      this.eventSender("projection://bootstrap", { session_id: seed, bootstrap });
+      this.eventSender("conn://liveness", {});
+      this.bootstrapDelivered = true;
+      const buffered = this.pendingEvents;
+      this.pendingEvents = [];
+      for (const event of buffered) {
+        this.eventSender("projection://event", { session_id: seed, event });
+      }
+    } catch (err) {
+      if (rethrow) throw err;
+      this.reportError(`bootstrap failed for ${seed}`, err);
+    }
+  }
+
+  private onNativeLiveness(): void {
+    this.eventSender("conn://liveness", {});
   }
 
   getActiveSeed(): string | null {
@@ -74,59 +170,35 @@ export class RingingClient {
     const isCurrent = () => this.activeSeed === seed && this.streamGeneration === generation;
     this.projectionStatus = "connecting";
     this.sendProjectionStatus("connecting", seed);
+    await this.init();
 
     // Bind the selected session through the canonical command endpoint before watching it.
-    await this.command({ type: "session.resume" }, sessionTarget(seed))
+    await this.command({ type: "session.resume" }, sessionCommandTarget(seed))
       .then(requireAccepted).catch((err) => {
         if (isCurrent()) this.reportError(`session.resume failed for ${seed}`, err);
       });
     if (!isCurrent() || request !== this.attachRequest) return;
 
-    // 2. 投影单流（bootstrap + since_cursor 无缝续传）
-    this.sessionWatch = this.sdk.watchSession(
-      seed,
-      {
-        onBootstrap: (bootstrap) => {
-          if (!isCurrent()) return;
-          this.eventSender("projection://bootstrap", { session_id: seed, bootstrap });
-          this.eventSender("conn://liveness", {});
-        },
-        onEvent: (event) => {
-          if (!isCurrent()) return;
-          this.eventSender("conn://liveness", {});
-          this.eventSender("projection://event", { session_id: seed, event });
-        },
-        onResyncRequired: (reset) => {
-          if (!isCurrent()) return;
-          console.warn(`[ringing] Resync required (${reset.reason}) for ${seed}`);
-          this.eventSender("projection://reset", { session_id: seed, reason: reset.reason });
-        },
-        onStatus: (status) => {
-          if (!isCurrent()) return;
-          this.projectionStatus = status;
-          this.sendProjectionStatus(status, seed);
-        },
-        onReconnectScheduled: ({ attempt, delayMs }) => {
-          if (isCurrent()) this.sendReconnectScheduled(seed, attempt, delayMs);
-        },
-        onTerminated: (info) => {
-          if (isCurrent()) this.reportError(`Session stream terminated (${info.code}) for ${seed}: ${info.message}`);
-        },
-        onError: (error) => { if (isCurrent()) this.reportError(`Session watch error for ${seed}`, error); },
-      },
-      { skipBootstrap: false }
-    );
-    // Test/facade implementations may synchronously publish a status before
-    // returning their watch handle; ensure the reset callback owns recovery.
-    const watch = this.sessionWatch;
-    void watch;
+    this.bootstrapDelivered = false;
+    this.pendingEvents = [];
+    this.reconnectAttempts = 0;
+    const native = this.native!;
+    await native.watchSession(seed);
+    // status=open 先到（同步回调）时，attach 等待同一次 bootstrap 投递完成，
+    // 保证调用方拿到控制权时快照已先行送达（事件顺序契约的入口）。
+    if (this.bootstrapInFlight?.seed === seed) await this.bootstrapInFlight.promise;
+    void isCurrent;
   }
 
   detachActive(): void {
     this.attachRequest++;
     this.streamGeneration += 1;
-    this.sessionWatch?.close();
-    this.sessionWatch = null;
+    const seed = this.activeSeed;
+    if (this.native && seed) {
+      void this.native.deactivateStream(seed).catch(() => {});
+    }
+    this.pendingEvents = [];
+    this.bootstrapDelivered = false;
     this.projectionStatus = "closed";
     if (this.activeSeed) {
       this.sendProjectionStatus("closed", this.activeSeed);
@@ -137,11 +209,28 @@ export class RingingClient {
   /** Submit one typed command through the single Ringing v2 command endpoint. */
   async command(
     command: RingingCommand,
-    target: CommandTarget = globalTarget(),
+    target: CommandTarget = globalCommandTarget(),
     preconditions: CommandPrecondition[] = [],
   ): Promise<RingingCommandAck> {
     if (target.kind === "session") requireId(target.session_id, "session_id");
-    return this.normalizeAck(this.sdk.submit(target, command, { preconditions }).then(({ ack }) => ack));
+    await this.init();
+    try {
+      const { ack } = await this.native!.submit(target, command, { preconditions });
+      return ack as RingingCommandAck;
+    } catch (err) {
+      const nativeError = NativeClientError.from(err);
+      // 维持旧契约：daemon 明确拒绝时返回 rejected ack 而不是抛错；其余错误上抛。
+      if (nativeError.kind === "command_rejected") {
+        if (nativeError.ack != null) return nativeError.ack as RingingCommandAck;
+        return {
+          status: "rejected",
+          command_id: nativeError.commandId ?? "",
+          code: nativeError.code,
+          message: nativeError.message,
+        } as RingingCommandAck;
+      }
+      throw nativeError;
+    }
   }
 
   /** Typed service query/read boundary. The caller must include session_id in params when required. */
@@ -149,99 +238,130 @@ export class RingingClient {
     method: K,
     params: MainServiceMap[K]["params"],
   ): Promise<MainServiceMap[K]["result"]> {
-    return this.sdk.serviceCall(
-      method as never,
-      params as never,
-    ) as Promise<MainServiceMap[K]["result"]>;
-  }
-
-  private async normalizeAck(submit: Promise<RingingCommandAck>): Promise<RingingCommandAck> {
-    try {
-      return await submit;
-    } catch (err) {
-      // 维持旧契约：daemon 明确拒绝时返回 rejected ack 而不是抛错；其余错误上抛。
-      if (err instanceof SdkError && err.kind === "command_rejected") {
-        if (err.ack != null) return err.ack;
-        return { status: "rejected", command_id: err.commandId!, code: err.code, message: err.message };
-      }
-      // Keep outcome_unknown (and its original command id) explicit. Receipts
-      // do not carry the synchronous result needed by query-style commands.
-      throw err;
-    }
+    await this.init();
+    return this.native!.serviceCall(method as string, params) as Promise<MainServiceMap[K]["result"]>;
   }
 
   /** Resolve a pending approval submission using the original durable command id. */
-  async commandStatus(commandId: string) {
-    return this.sdk.commandStatus(commandId);
-  }
-
-  adminRequest<T = unknown>(credential: { endpoint: string; token: string }, path: string, init: { method: string; body?: BodyInit; contentType?: string | false }): Promise<T> {
-    return this.sdk.adminRequest<T>(credential, path, init);
+  async commandStatus(commandId: string): Promise<RingingV2CommandStatus> {
+    await this.init();
+    return this.native!.commandStatus(commandId) as Promise<RingingV2CommandStatus>;
   }
 
   /** Canonical flattened session state. */
-  bootstrap(seed: string): Promise<SessionBootstrap> {
-    return this.sdk.bootstrap(seed);
+  async bootstrap(seed: string): Promise<SessionBootstrap> {
+    await this.init();
+    return this.native!.bootstrap(seed) as Promise<SessionBootstrap>;
   }
 
   async readContentText(contentRef: string, signal?: AbortSignal): Promise<string> {
-    const content = await this.sdk.downloadContent(contentRef, { signal });
-    return new TextDecoder("utf-8", { fatal: true }).decode(content.bytes);
+    await this.init();
+    const download = this.native!.downloadContent(contentRef);
+    // addon 暂不支持 AbortSignal 入参：取消时立即向调用方返回 abort 语义，
+    // 后台传输自然结束后丢弃（内容体积受 daemon 上限约束）。
+    const bytes = await raceAbort(download, signal);
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   }
 
   /** approvals.admin capability；渲染层拿到的仍是 ChallengeManager 发出的 challenge 视图。 */
-  approvals(seed: string): Promise<ApprovalsView> {
-    return this.sdk.approvals(seed);
+  async approvals(
+    seed: string,
+  ): Promise<{ kind: "admin"; pending: RingingV2PendingApprovals } | { kind: "device"; challenges: unknown }> {
+    await this.init();
+    const body = (await this.native!.approvalsRaw(seed)) as Record<string, unknown> | null;
+    if (body && typeof body === "object" && "challenges" in body) {
+      return { kind: "device", challenges: body.challenges };
+    }
+    return { kind: "admin", pending: body as RingingV2PendingApprovals };
   }
 
   approvalsSnapshot(seed: string): Promise<SessionBootstrap> {
-    return this.sdk.bootstrap(seed);
+    return this.bootstrap(seed);
   }
 
   async uploadContent(seed: string, _filename: string, buffer: Uint8Array, mediaType: string) {
-    return this.sdk.uploadContent(seed, { bytes: buffer, mediaType });
+    await this.init();
+    return this.native!.uploadContentRaw(seed, mediaType, buffer);
   }
 
   stopDaemon(idleOnly: boolean): Promise<"stopping" | "busy" | "unsupported"> {
-    return this.sdk.stopDaemon(idleOnly);
+    if (!this.native) return Promise.resolve("unsupported");
+    return this.native.stopDaemon(idleOnly);
   }
 
   issuePairToken(request: { scope_grant: string; device_name: string; platform: string }) {
-    return this.sdk.issuePairToken(request);
+    if (!this.native) return Promise.reject(new Error("client not initialized"));
+    return this.native.issuePairingToken(request.scope_grant, request.device_name, request.platform);
   }
 
-  listDevices() { return this.sdk.listDevices(); }
-
-  revokeDevice(deviceId: string): Promise<void> { return this.sdk.revokeDevice(deviceId); }
-
-  reconnect(): Promise<void> {
-    this.detachActive();
-    return this.sdk.reconnect().then(() => {});
+  listDevices() {
+    if (!this.native) return Promise.reject(new Error("client not initialized"));
+    return this.native.listDevices();
   }
 
-  reconnectWithCredentials(credentials: DaemonDiscovery): Promise<void> {
+  revokeDevice(deviceId: string): Promise<void> {
+    if (!this.native) return Promise.reject(new Error("client not initialized"));
+    return this.native.revokeDevice(deviceId);
+  }
+
+  async reconnect(): Promise<void> {
     this.detachActive();
-    return this.sdk.reconnectWithCredentials(credentials).then(() => {});
+    await this.recreateClient();
+  }
+
+  async reconnectWithCredentials(credentials: DaemonDiscovery): Promise<void> {
+    this.detachActive();
+    this.credentials = credentials;
+    await this.recreateClient();
+  }
+
+  /** 关闭旧客户端并按当前凭据重建（daemon 重启换端口/token 的恢复路径）。 */
+  private async recreateClient(): Promise<void> {
+    if (this.native) {
+      const stale = this.native;
+      this.native = null;
+      try { stale.close(); } catch { /* already gone */ }
+    }
+    await this.init();
   }
 
   destroy(): void {
     this.detachActive();
-    void this.sdk.disconnect();
+    if (this.native) {
+      const stale = this.native;
+      this.native = null;
+      try { stale.close(); } catch { /* already gone */ }
+    }
   }
 
-  getProjectionStatus(seed: string): WatchStatus {
+  getProjectionStatus(seed: string): ProjectionStatusWire["status"] {
     return this.activeSeed === seed ? this.projectionStatus : "closed";
   }
 
+  /** 恢复重连前重读 discovery；凭据变化说明 daemon 换了端口/token，整客户端重建。 */
+  async refreshCredentialsIfChanged(): Promise<boolean> {
+    const fresh = await readDiscovery();
+    if (!fresh || !this.credentials) return false;
+    if (fresh.endpoint === this.credentials.endpoint && fresh.token === this.credentials.token) {
+      return false;
+    }
+    await this.reconnectWithCredentials(fresh);
+    return true;
+  }
+
   async retryActive(seed: string): Promise<void> {
-    if (this.activeSeed === seed && this.sessionWatch) {
-      await this.sessionWatch.resync();
+    if (this.activeSeed === seed) {
+      // 单流的重连/重基线由 Rust 侧 V2Stream 循环负责；这里只负责把
+      // bootstrap 顺序重新走一遍（等价旧 watch.resync 的观察面）。
+      this.bootstrapDelivered = false;
+      this.pendingEvents = [];
+      await this.deliverBootstrap(seed, true);
       return;
     }
     await this.attach(seed);
   }
 
-  private sendProjectionStatus(status: WatchStatus, seed: string): void {
+  private sendProjectionStatus(status: ProjectionStatusWire["status"], seed: string): void {
     this.eventSender("projection://status", {
       status,
       session_id: seed,
@@ -263,4 +383,17 @@ export class RingingClient {
     this.eventSender("conn://error", { message: detail });
   }
 
+}
+
+async function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+    if (signal.aborted) { onAbort(); return; }
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => { signal.removeEventListener("abort", onAbort); resolve(value); },
+      (err) => { signal.removeEventListener("abort", onAbort); reject(err); },
+    );
+  });
 }

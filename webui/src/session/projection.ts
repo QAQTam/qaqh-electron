@@ -1,4 +1,6 @@
-import type { ActivityState, SessionActivityState } from "@qaqh/sdk/protocol";
+import type {
+ ActivityState, SessionActivityState 
+} from "../api/contract";
 
 export type SessionActivity = "idle" | "working" | "waiting_user" | "cancelling" | "interrupted" | "disconnected";
 

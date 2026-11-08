@@ -17,7 +17,9 @@ import { ContentLoader } from "./content-loader";
 import { evictForWindow, fillGapHeights } from "./pagination";
 import type { SessionState, Wait } from "./types";
 import { normalizeActivity, type SessionActivity } from "./projection";
-import type { ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch } from "@qaqh/sdk/protocol";
+import type {
+ ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch 
+} from "../api/contract";
 import type { ProfileSummaryDto } from "../api/qaqh/ProfileSummaryDto";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 import { registry, refreshRegistry } from "../settings/registry";
@@ -1018,6 +1020,7 @@ export class SessionStore {
   async loadExecSessionOrigin(turnId: string): Promise<void> {
     if (this.stateGet.originTurns[turnId]) return;
     const snapshot = await transport.query("session.turn", { session_id: this.seed, turn_id: turnId });
+    if (!snapshot) return;
     this.mutate((draft) => { draft.originTurns[turnId] = snapshot; });
     this.hydrateContent(contentRefsInPayload(snapshot));
   }

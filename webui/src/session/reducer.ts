@@ -10,6 +10,7 @@ import {
   type TurnStatus,
 } from "./types";
 import type {
+
   ContentValue,
   SessionBootstrap as RingingBootstrap,
   SessionEventFrame,
@@ -20,7 +21,8 @@ import type {
   ToolCallView,
   ExecSessionView,
   TurnOutcome,
-} from "@qaqh/sdk/protocol";
+
+} from "../api/contract";
 import { now } from "../lib/time";
 
 export { emptySession };

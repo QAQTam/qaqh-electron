@@ -1,6 +1,6 @@
 # QAQ-Harness Electron (canonical desktop host)
 
-`qaqh-electron` is the first-class and only supported desktop shell. It hosts the SolidJS renderer in `webui/`, owns all OS privileges, daemon discovery credentials and lifecycle, and uses `@qaqh/sdk` for Ringing v2 communication. The renderer receives a narrow `window.qaqhHost` API; Node, Electron primitives, daemon bearer tokens, and unrestricted IPC are not exposed to it.
+`qaqh-electron` is the first-class and only supported desktop shell. It hosts the SolidJS renderer in `webui/`, owns all OS privileges, daemon discovery credentials and lifecycle, and speaks Ringing v2 through the native `qaqh-napi-client` addon (Rust `qaqh-client`, shared with the TUI / Android / HarmonyOS shells). The renderer receives a narrow `window.qaqhHost` API; Node, Electron primitives, daemon bearer tokens, and unrestricted IPC are not exposed to it.
 
 ## Architecture
 
@@ -8,13 +8,13 @@
 webui renderer (Chromium)
   → contextBridge window.qaqhHost (fixed command + event contract)
   → Electron main process (runtime sender checks, service allowlist, native OS work)
-  → @qaqh/sdk (Ringing v2, leases, commands, streams, pairing, graceful stop)
+  → qaqh-napi-client addon (Ringing v2, leases, commands, streams, pairing, graceful stop)
   → qaqh-daemon
 ```
 
 There is no Tauri compatibility runtime. Main IPC is sender-validated and accepts an enumerated set of host commands; the service RPC bridge has a runtime allowlist and active-session scoping. Model-picker IPC is separately restricted to its native picker window. Electron keeps the daemon client and credentials in main.
 
-The SDK owns protocol work: Ringing handshake/lease renewal, service methods, command idempotency, SSE bootstrap/resumption, content transfer, device management and stop semantics. Electron owns windows, tray, lifecycle, dialogs, external URL policy, local discovery, process launch/restart, user skills scanning and renderer IPC.
+The Rust client owns protocol work: Ringing handshake/lease renewal, service methods, command idempotency, SSE bootstrap/resumption, content transfer, device management and stop semantics. Electron owns windows, tray, lifecycle, dialogs, external URL policy, local discovery, process launch/restart, user skills scanning and renderer IPC.
 
 ## Development
 
@@ -140,14 +140,22 @@ Ask, tool permission requests and plan reviews share the renderer approval surfa
 
 The renderer uses context isolation and no Node integration. `app://` responses carry a restrictive CSP; external links are limited to `http(s)` plus the specific macOS screen-recording preference deep link. The preload exposes no raw `ipcRenderer`, arbitrary event channel, or arbitrary invoke API. Main validates the calling frame and service method names.
 
-### SDK 契约同步
+### 契约同步
 
-打包会逐文件校验当前后端导出的 SDK 契约，包括来源提交信息；失败时列出全部文件差异和清单字段差异，不自动修改源码。后端提交或契约变更后，执行：
+协议运行时已由原生绑定（`crates/qaqh-napi-client` → `qaqh-client`）直接编译进
+主进程，与打包的 daemon 同源；renderer 消费的 TS 类型来自 backend exporter 的
+唯一镜像（`webui/src/api/qaqh`）。打包会从当前 `../qaqh-backend` 导出契约并逐
+文件校验该镜像，漂移时列出全部差异、不自动修改源码。后端提交或契约变更后：
 
 ```bash
 just sdk-check  # 独立检查，无需开始打包
-just sdk-sync   # 重新生成隔壁 SDK 契约，校验后同步本仓 WebUI DTO 镜像
+just sdk-sync   # 重新导出后端契约并同步 WebUI DTO 镜像
+just check      # 含 native 绑定与方法白名单的一致性测试
 just deb
 ```
 
-同步会修改 `../qaqh-sdk/src/protocol/generated` 和 `webui/src/api/qaqh`，请审查两处 git diff。后端工作区干净时记录当前提交并启用发布校验；有未提交变更时记录 development/dirty。后端提交后需再次同步来源信息。不要手工编辑生成文件。
+`just sdk-sync` 只修改 `webui/src/api/qaqh`，请审查该目录 git diff。后端工作区
+干净时打包记录当前提交做来源校验；有未提交变更时按 development/dirty 处理。
+不要手工编辑生成文件；新增 service 方法或命令变体时，同步维护
+`src/main/types.ts` 的 `MAIN_SERVICE_METHODS` 与 `src/main/ipc-handlers.ts` 的
+`RINGING_COMMAND_TYPES`（两侧一致性有双向测试守门）。

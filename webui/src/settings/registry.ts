@@ -8,7 +8,11 @@
  */
 import { createSignal } from "solid-js";
 
-import type { CredentialSource, ModelDef, ModelSelection, ProviderUpsertDto, Wire } from "@qaqh/sdk/protocol";
+import type { CredentialSource } from "../api/qaqh/CredentialSource";
+import type { ModelDef } from "../api/qaqh/ModelDef";
+import type { ModelSelection } from "../api/qaqh/ModelSelection";
+import type { ProviderUpsertDto } from "../api/qaqh/ProviderUpsertDto";
+import type { Wire } from "../api/qaqh/Wire";
 import { notifyConfigChanged, onConfigChanged } from "../lib/config-events";
 import { transport } from "../lib/transport";
 import type { ModelEntry } from "../oauth/model-catalog";

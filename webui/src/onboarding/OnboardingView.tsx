@@ -16,7 +16,9 @@ import {
   siwcSignInStatus,
 } from "../lib/siwc";
 import { isDesktopRuntime } from "../lib/transport/backend";
-import type { ModelDef } from "@qaqh/sdk/protocol";
+import type {
+ ModelDef 
+} from "../api/contract";
 import { Field, TextInput } from "../settings/controls";
 import { Select } from "../ui/Select";
 import { WIRE_LABELS, WIRE_PROTOCOLS } from "../settings/patch";

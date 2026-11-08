@@ -7,6 +7,7 @@
  */
 
 import type {
+
   CommandPrecondition,
   CommandTarget,
   ConfigDto,
@@ -16,7 +17,8 @@ import type {
   ServiceMap as SdkServiceMap,
   SessionBootstrap,
   SessionEventFrame,
-} from "@qaqh/sdk/protocol";
+
+} from "../../api/contract";
 import { isDesktopRuntime } from "../desktop-host";
 
 export { isDesktopRuntime };

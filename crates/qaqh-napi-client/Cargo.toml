@@ -1,0 +1,30 @@
+[package]
+name = "qaqh-napi-client"
+version = "3.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Node-API (Electron main) bindings over qaqh-client for the QAQ-Harness desktop shell"
+publish = false
+
+[lib]
+name = "qaqh_napi_client"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+napi = { version = "3.16", features = ["async", "serde-json"] }
+napi-derive = "3.7"
+qaqh-client = { path = "../../../qaqh-backend/crates/qaqh-client" }
+serde = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+
+[build-dependencies]
+napi-build = "2"
+
+# 保持默认 unwind 的 panic 策略：napi 层把未捕获 panic 转成 Promise reject，
+# 绝不能在主进程里 abort 掉整个 Electron。
+[profile.release]
+panic = "unwind"

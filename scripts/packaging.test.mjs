@@ -65,6 +65,19 @@ test("preload exposes a narrow Electron host bridge, not the legacy Tauri or gen
   assert.match(preload, /Unsupported QAQH event/);
 });
 
+test("RINGING_COMMAND_TYPES covers every generated RingingCommand variant in both directions", () => {
+  const generated = readFileSync(fileURLToPath(new URL("../webui/src/api/qaqh/RingingCommand.ts", import.meta.url)), "utf8");
+  const handlers = readFileSync(fileURLToPath(new URL("../src/main/ipc-handlers.ts", import.meta.url)), "utf8");
+  const variants = new Set([...generated.matchAll(/\{\s*"type":\s*"([a-z][a-z0-9_.]*)"/g)].map(m => m[1]));
+  const block = handlers.match(/const RINGING_COMMAND_TYPES[^=]*= new Set\(\[([\s\S]*?)\]\);/);
+  assert.ok(block, "RINGING_COMMAND_TYPES block not found in ipc-handlers.ts");
+  const declared = new Set([...block[1].matchAll(/"([^"]+)"/g)].map(m => m[1]));
+  const missing = [...variants].filter(v => !declared.has(v));
+  const stale = [...declared].filter(v => !variants.has(v));
+  assert.deepEqual(missing, [], "renderer 发这些命令会被 invalid_command 拒：请补 RINGING_COMMAND_TYPES（或确认应从生成契约退出）");
+  assert.deepEqual(stale, [], "白名单里有生成契约已删除的命令：请清理（TS 侧 ReadonlySet 类型可能还在放行旧名）");
+});
+
 test("Electron host exposes the typed command bridge and rejects non-renderer senders", () => {
   const handlers = readFileSync(fileURLToPath(new URL("../src/main/ipc-handlers.ts", import.meta.url)), "utf8");
   assert.match(handlers, /case "command"/);
@@ -94,7 +107,13 @@ function fixture(t) {
   elf.write("\x7fELF"); elf[4] = 2; elf[5] = 1; elf.writeUInt16LE(62, 18);
   put("resources/bin/qaqh-daemon", elf);
   chmodSync(join(root, "resources/bin/qaqh-daemon"), 0o755);
-  return { root, put };
+  // native addon：verifyNativeAddon 断言 asar 外副本与构建树逐字节一致。
+  const addonName = process.platform === "win32"
+    ? "qaqh_napi_client.win32-x64-msvc.node"
+    : `qaqh_napi_client.${process.platform}-x64-gnu.node`;
+  put(join("native", addonName), "native-addon-bytes");
+  put(join("output/resources/app.asar.unpacked/native", addonName), "native-addon-bytes");
+  return { root, put, addonName };
 }
 
 test("preflight rejects missing resources, wrong architecture and missing metadata", t => {

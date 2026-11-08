@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SdkError } from "@qaqh/sdk";
-import { loadHost, mockSdk, FakeTimers } from "./test-host.mjs";
+import { loadHost, mockNativeAddon, FakeTimers } from "./test-host.mjs";
 
 const empty = () => ({ pending_permission: null, pending_interaction: null });
 const ask = () => ({ pending_permission: null, pending_interaction: { id: "interaction-ask", kind: "ask", details: { questions: [{ id: "q1", question: "Proceed?", options: ["yes"], allow_custom: false }] } } });
@@ -317,66 +316,61 @@ test("ChallengeManager detaches returned details and bounds global storage atomi
 });
 
 async function streamFixture() {
-  const mock = mockSdk();
+  const mock = mockNativeAddon();
   const timers = new FakeTimers();
-  const { RingingClient } = await loadHost({ sdk: mock.sdk, timers });
+  const host = await loadHost({ native: mock.addon, timers });
   const events = [];
-  const client = new RingingClient({}, (name, payload) => events.push({ name, payload }));
-  return { ...mock, timers, events, client };
+  const client = new host.RingingClient({}, (name, payload) => events.push({ name, payload }));
+  return { ...mock, native: mock.client, host, timers, events, client };
 }
 
-test("SDK bootstrap refreshes pending interactions without a host recovery timer", async t => {
+test("open status refreshes pending interactions without a host recovery timer", async t => {
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-A");
-  const watch = f.sessionWatches[0];
   assert.equal(f.client.getProjectionStatus("session-A"), "live");
-  watch.handlers.onResyncRequired({ reason: "cursor_expired", session_id: "session-A" });
-  assert.equal(watch.resyncs, 0, "host does not start a second recovery timer");
-  assert.equal(f.timers.jobs.size, 0);
+  assert.equal(f.timers.jobs.size, 0, "host does not start a recovery timer");
+  f.emit.reset("session-A", "cursor_expired");
+  assert.equal(f.timers.jobs.size, 0, "resync ownership stays in the Rust stream loop");
   assert.ok(f.events.some(e => e.name === "projection://reset" && e.payload.reason === "cursor_expired"));
 });
 
 test("scheduled SSE reconnects are forwarded with attempt and delay", async t => {
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-A");
-  f.sessionWatches[0].handlers.onReconnectScheduled({ attempt: 2, delayMs: 1500 });
+  f.emit.status({ session_id: "session-A", state: "reconnecting", retry_ms: 1500, reason: null, last_cursor: null });
+  f.emit.status({ session_id: "session-A", state: "reconnecting", retry_ms: 3000, reason: null, last_cursor: null });
   const reconnects = f.events.filter(e => e.name === "conn://reconnect");
-  assert.equal(reconnects.length, 1);
-  assert.equal(reconnects[0].payload.session_id, "session-A");
-  assert.equal(reconnects[0].payload.attempt, 2);
-  assert.equal(reconnects[0].payload.delay_ms, 1500);
-  assert.ok(reconnects.every(e => typeof e.payload.at === "number" && e.payload.at > 0));
-  assert.equal(f.client.getProjectionStatus("session-A"), "live");
+  assert.equal(reconnects.length, 2);
+  assert.deepEqual(reconnects.map(e => e.payload.attempt), [1, 2]);
+  assert.equal(reconnects[1].payload.session_id, "session-A");
+  assert.equal(reconnects[1].payload.delay_ms, 3000);
+  assert.ok(f.events.every(e => e.name !== "conn://reconnect" || (typeof e.payload.at === "number" && e.payload.at > 0)));
+  assert.equal(f.client.getProjectionStatus("session-A"), "reconnecting");
 });
 
-test("SDK owns repeated reset recovery; unrecoverable reset/termination stay paused", async t => {
+test("the Rust stream loop owns repeated reset recovery; adapter only mirrors status", async t => {
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-A");
-  const watch = f.sessionWatches[0];
-  watch.handlers.onResyncRequired({ reason: "replay_overflow", session_id: "session-A" });
-  assert.equal(watch.resyncs, 0);
+  f.emit.reset("session-A", "replay_overflow");
   assert.equal(f.timers.jobs.size, 0);
-  watch.handlers.onEvent({ session_id: "session-A" });
-  watch.handlers.onResyncRequired({ reason: "upgrade_required", session_id: "session-A" });
-  watch.handlers.onStatus("paused");
+  f.emit.reset("session-A", "upgrade_required");
   assert.equal(f.timers.jobs.size, 0);
-  assert.equal(f.client.getProjectionStatus("session-A"), "paused");
-  watch.handlers.onTerminated({ code: "forbidden", message: "lease lost" });
-  assert.equal(f.timers.jobs.size, 0);
+  f.emit.status({ session_id: "session-A", state: "closed", reason: "lease lost" });
+  assert.equal(f.client.getProjectionStatus("session-A"), "closed");
+  assert.ok(f.events.some(e => e.name === "conn://error" && /lease lost/.test(e.payload.message)));
 });
 
 test("explicit resync errors propagate and detaching prevents stale callbacks", async t => {
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-A");
-  const watch = f.sessionWatches[0];
-  watch.resync = async () => { throw new Error("bootstrap failed"); };
+  f.native.bootstrap = async () => { throw new Error("bootstrap failed"); };
   await assert.rejects(f.client.retryActive("session-A"), /bootstrap failed/);
   assert.equal(f.timers.jobs.size, 0);
   await f.client.attach("session-B");
   assert.equal(f.timers.jobs.size, 0);
   const count = f.events.length;
-  watch.handlers.onEvent({ session_id: "session-A" });
-  watch.handlers.onResyncRequired({ reason: "cursor_expired", session_id: "session-A" });
+  f.emit.event("session-A", { seq: 1, type: "activity_changed" });
+  f.emit.reset("session-A", "cursor_expired");
   assert.equal(f.events.length, count);
 });
 
@@ -384,7 +378,8 @@ test("overlapping attaches replace the current watch cleanly", async t => {
   const f = await streamFixture(); t.after(() => f.client.destroy());
   await f.client.attach("session-A");
   await f.client.attach("session-B");
-  assert.deepEqual(f.sessionWatches.map(w => w.seed), ["session-A", "session-B"]);
+  assert.deepEqual(f.watches.map(w => w.seed), ["session-A", "session-B"]);
+  assert.deepEqual(f.closedSeeds, ["session-A"], "旧 seed 的单流在 Rust 侧被显式停掉");
   assert.equal(f.client.getActiveSeed(), "session-B");
 });
 
@@ -396,6 +391,6 @@ test("typed commands preserve targets and unknown outcomes", async t => {
   assert.deepEqual(f.submissions.at(-1), [target, { type: "tool.permission.respond", tool_call_id: "tool-A", approved: true, trust_folder: false }, { preconditions: [] }]);
   await f.client.command({ type: "config.save", patch: {} });
   assert.deepEqual(f.submissions.at(-1), [{ kind: "global" }, { type: "config.save", patch: {} }, { preconditions: [] }]);
-  f.sdk.submit = async () => { throw new SdkError("outcome_unknown", "timeout", undefined, undefined, "command-unknown"); };
+  f.native.submit = async () => { throw new f.host.NativeClientError({ kind: "outcome_unknown", message: "timeout", commandId: "command-unknown" }); };
   await assert.rejects(f.client.command({ type: "interaction.ask.dismiss", interaction_id: "ask-A" }, target), e => e.kind === "outcome_unknown" && e.commandId === "command-unknown");
 });

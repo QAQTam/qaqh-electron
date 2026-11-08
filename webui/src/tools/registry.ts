@@ -55,6 +55,11 @@ export function primaryArgFull(argsJson: string | undefined): string {
   const args = parseJsonish(argsJson);
   if (args != null) {
     if (typeof args.cmd === "string" && args.cmd) return args.cmd;
+    if (typeof args.command === "string" && args.command) return args.command;
+    if (Array.isArray(args.argv) && args.argv.length > 0
+      && args.argv.every((entry) => typeof entry === "string")) {
+      return args.argv.join(" ");
+    }
     for (const key of ["path", "file_path", "file", "filename", "query", "pattern", "url", "name", "exec_session_id"]) {
       if (typeof args[key] === "string" && args[key]) return args[key];
     }

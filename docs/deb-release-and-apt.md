@@ -6,11 +6,13 @@
 application overlay, baseline extraction, or component updater. dpkg owns program
 files. Local build output is in `release/`.
 
-`.github/workflows/linux-deb.yml` runs on main pushes or manual dispatch. Backend,
-SDK and mutil-ai revisions are pinned in `build/repositories.json`; update these
-pins when intentionally integrating new source. The SDK manifest must name the
-same clean backend revision. Each release includes a deb, SHA256SUMS and the four
-source commit IDs in build-provenance.json.
+`.github/workflows/linux-deb.yml` runs on main pushes or manual dispatch. Backend
+and mutil-ai revisions are pinned in `build/repositories.json`; update these pins
+when intentionally integrating new source. The protocol runtime is the native
+`qaqh-napi-client` addon compiled from the same `qaqh-backend` checkout as the
+bundled daemon, so client and daemon share one contract revision by construction.
+Each release includes a deb, SHA256SUMS and the three source commit IDs in
+build-provenance.json.
 
 ## Version allocation
 

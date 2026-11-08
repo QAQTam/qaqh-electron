@@ -26,10 +26,10 @@ export interface Turn {
   /** answer 指向的 step id;用于作答开始后回退重分类。 */
   answerStepId: string | null;
   status: TurnStatus;
-  phase?: import("@qaqh/sdk/protocol").TurnPhase;
+  phase?: import("../api/contract").TurnPhase;
   workStartedAt?: number;
   error?: { message: string };
-  usage?: import("@qaqh/sdk/protocol").UsageInfo | null;
+  usage?: import("../api/contract").UsageInfo | null;
   /** 时间线里是否被用户展开。 */
   expanded: boolean;
   /** 仅供贴底触发;避免滚动 effect 订阅每个文本块。 */
@@ -107,11 +107,11 @@ export interface ToolStep {
   argsJson?: string;
   argsRef?: string;
   status: ToolStatus;
-  state?: import("@qaqh/sdk/protocol").ToolCallState;
+  state?: import("../api/contract").ToolCallState;
   execSessionId?: string;
-  execSessionState?: import("@qaqh/sdk/protocol").ExecSessionState;
+  execSessionState?: import("../api/contract").ExecSessionState;
   /** Execution transcript, including output received before the tool call returns. */
-  execSession?: import("@qaqh/sdk/protocol").ExecSessionView;
+  execSession?: import("../api/contract").ExecSessionView;
   output?: ToolOutput;
   outputRef?: string;
   error?: string;
@@ -126,8 +126,8 @@ export interface ToolStep {
   /** Backend metrics. */
   elapsedMs?: number;
   /** v3 structured edit accounting; never presented as a unified diff. */
-  codeDelta?: import("@qaqh/sdk/protocol").CodeDelta | null;
-  effects?: import("@qaqh/sdk/protocol").ToolEffectInfo[];
+  codeDelta?: import("../api/contract").CodeDelta | null;
+  effects?: import("../api/contract").ToolEffectInfo[];
 }
 
 export type Step = ThinkingStep | TextStep | ToolStep;
@@ -145,9 +145,9 @@ export interface Wait {
 export interface SessionState {
   turns: Record<string, Turn>;
   /** Session-level execution records survive turn pagination and late output. */
-  execSessions: Record<string, import("@qaqh/sdk/protocol").ExecSessionView>;
+  execSessions: Record<string, import("../api/contract").ExecSessionView>;
   /** Lazily loaded source turns used by execution cards after transcript eviction. */
-  originTurns: Record<string, import("@qaqh/sdk/protocol").SessionTurnSnapshot>;
+  originTurns: Record<string, import("../api/contract").SessionTurnSnapshot>;
   /** 渲染顺序槽:回合或(被淘汰回合的)等高占位。 */
   slots: Slot[];
   /** 结构提交版本。消息列表只订阅它,token 更新不重读所有槽位 key。 */

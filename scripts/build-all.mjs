@@ -9,9 +9,9 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { parseArgs, parseBuildIdentity, assertInputs } = require("./packaging.cjs");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const sdk = resolve(root, "../qaqh-sdk");
 const backend = resolve(root, "../qaqh-backend");
 const frontend = resolve(root, "webui");
+const nativeCrate = resolve(root, "crates/qaqh-napi-client");
 
 function run(command, args, cwd = root, capture = false, env = process.env) {
   console.log(`\n> ${command} ${args.join(" ")}`);
@@ -89,26 +89,24 @@ async function main() {
   }
   const [major, minor] = process.versions.node.split(".").map(Number);
   if (major < 22 || (major === 22 && minor < 12)) throw new Error("Node.js >=22.12 is required.");
-  for (const file of [join(sdk, "package.json"), join(sdk, "pnpm-lock.yaml"), join(sdk, "src/core/index.ts"),
-    join(frontend, "package.json"), join(frontend, "pnpm-lock.yaml"),
-    join(backend, "Cargo.toml"), join(backend, "Cargo.lock")]) {
-    if (!existsSync(file)) throw new Error(`Required sibling repository/lockfile missing: ${file}`);
+  for (const file of [join(frontend, "package.json"), join(frontend, "pnpm-lock.yaml"),
+    join(backend, "Cargo.toml"), join(backend, "Cargo.lock"),
+    join(nativeCrate, "Cargo.toml"), join(nativeCrate, "Cargo.lock")]) {
+    if (!existsSync(file)) throw new Error(`Required repository/lockfile missing: ${file}`);
   }
   run("pnpm", ["--version"]);
   run("cargo", ["--version"]);
 
-  console.log("\n[1/5] SDK and dependency preparation");
+  console.log("\n[1/5] Contract and dependency preparation");
+  // 协议运行时经 native 绑定直接编译 qaqh-client（与 daemon 同一 backend
+  // workspace，lockstep 由 cargo 保证）；唯一物化契约是 WebUI 类型镜像。
   sdkContract();
-  assertGeneratedMirror(join(sdk, "src/protocol/generated/types/qaqh"), join(frontend, "src/api/qaqh"));
-  if (!options.skipInstall) install(sdk);
-  run("pnpm", ["run", "build"], sdk);
-  if (!existsSync(join(sdk, "dist/core/index.js"))) throw new Error("qaqh-sdk build did not produce dist/core/index.js");
   if (!options.skipInstall) {
     install(frontend);
     install(root);
   }
 
-  console.log("\n[2/5] Backend daemon");
+  console.log("\n[2/5] Backend daemon and native client addon");
   if (!options.skipBackend) {
     // Cargo 报告真实 executable 路径，兼容 CARGO_TARGET_DIR/后端 .cargo 配置。
     const output = run("cargo", ["build", "--locked", "--release", "-p", "qaqh-daemon",
@@ -126,6 +124,28 @@ async function main() {
   } else {
     console.warn("Explicit --skip-backend: reusing staged daemon; its source freshness is NOT guaranteed.");
   }
+
+  // native 绑定（qaqh-napi-client → qaqh-client）与 daemon 同源编译。
+  // 命名规则与 src/main/native-client.ts 的 nativeAddonFile 保持一致。
+  const addonOutput = run("cargo", ["build", "--locked", "--release",
+    "--message-format=json-render-diagnostics"], nativeCrate, true);
+  const addonArtifacts = addonOutput.split("\n").filter(Boolean).map(line => JSON.parse(line));
+  const addon = addonArtifacts.findLast(item => item.reason === "compiler-artifact" &&
+    item.target?.name === "qaqh_napi_client" && item.target?.crate_types?.includes("cdylib") &&
+    Array.isArray(item.filenames) && item.filenames.some(name => name.endsWith(".so") || name.endsWith(".dll")));
+  if (!addon) throw new Error("Cargo did not report the qaqh-napi-client cdylib.");
+  const cdylibPath = addon.filenames.find(name => name.endsWith(".so") || name.endsWith(".dll"));
+  const report = process.report?.getReport?.();
+  const musl = process.platform === "linux" && report?.header?.glibcVersionRuntime == null;
+  const suffix = process.platform === "win32"
+    ? "win32-x64-msvc"
+    : process.platform === "darwin"
+      ? `darwin-x64`
+      : `linux-x64-${musl ? "musl" : "gnu"}`;
+  const addonName = `qaqh_napi_client.${suffix}.node`;
+  mkdirSync(join(root, "native"), { recursive: true });
+  cpSync(cdylibPath, join(root, "native", addonName));
+  console.log(`Native client addon: native/${addonName} (${cdylibPath})`);
 
   console.log("\n[3/5] Renderer");
   run("pnpm", ["run", "typecheck"], frontend);

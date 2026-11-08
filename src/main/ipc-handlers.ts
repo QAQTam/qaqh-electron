@@ -2,10 +2,12 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { readDiscovery, DaemonManager } from "./daemon.js";
-import { globalTarget, sessionTarget } from "@qaqh/sdk";
-import { isAlive } from "@qaqh/sdk/node";
-import { serviceMetadata } from "@qaqh/sdk/protocol";
-import type { CommandPrecondition, CommandTarget, ConversationSendMessage, RingingCommand } from "@qaqh/sdk/protocol";
+import { globalCommandTarget, loadNativeAddon, sessionCommandTarget } from "./native-client.js";
+import { isAlive } from "./daemon.js";
+import type { RingingCommand } from "../../webui/src/api/qaqh/RingingCommand";
+import type { CommandTarget } from "../../webui/src/api/qaqh/CommandTarget";
+import type { CommandPrecondition } from "../../webui/src/api/qaqh/CommandPrecondition";
+import type { ConversationSendMessage } from "../../webui/src/api/qaqh/ConversationSendMessage";
 import { isIP } from "node:net";
 import { spawn } from "node:child_process";
 import { resolveDaemonExecutable } from "./daemon.js";
@@ -22,6 +24,7 @@ import {
 import { processGroup } from "./process-metrics.js";
 import { readGpuStatus } from "./gpu-info.js";
 import type { ApprovalView, MainServiceMap, MainServiceMethod } from "./types.js";
+import { MAIN_SERVICE_METHODS } from "./types.js";
 
 const DEFAULT_LAN_PORT = 64413;
 const RESTART_TIMEOUT_MS = 20_000;
@@ -37,20 +40,32 @@ const RINGING_COMMAND_TYPES: ReadonlySet<RingingCommand["type"]> = new Set([
   "profile.set_default", "profile.apply", "profile.save_current", "profile.delete", "workspace.set",
   "workspace.create", "workspace.rename", "workspace.delete", "workspace.move_session", "workspace.detach",
   "subagent.spawn", "todo.set", "todo.cancel", "plan.action", "diagnostics.memory.start", "diagnostics.memory.stop",
+  "exec_session.interrupt", "exec_session.terminate",
 ]);
 
-const EXTRA_SERVICE_METHODS = new Set<MainServiceMethod>([
-  "config.load", "profile.list", "skills.list_tools", "todo.status", "todo.list", "plan.read",
-  "diagnostics.memory.snapshot",
-]);
 const SESSION_SERVICE_METHODS = new Set<MainServiceMethod>([
   "session.meta", "session.get_activity", "workspace.get", "todo.status", "todo.list", "plan.read",
 ]);
 const approvedAttachmentPaths = new Set<string>();
 const contentReadControllers = new Map<string, AbortController>();
 
+// 方法闸门真源：native addon 的 serviceMethods()（qaqh-client 封闭查询枚举 +
+// 账号面白名单）。addon 加载失败时回退到 types.ts 的手写方法表——两者在
+// packaging 测试中做双向一致校验，漂移会先红。
+let allowedServiceMethods: ReadonlySet<string> | null = null;
+function serviceMethodAllowlist(): ReadonlySet<string> {
+  if (allowedServiceMethods == null) {
+    try {
+      allowedServiceMethods = new Set(loadNativeAddon().serviceMethods());
+    } catch {
+      allowedServiceMethods = new Set<string>(MAIN_SERVICE_METHODS);
+    }
+  }
+  return allowedServiceMethods;
+}
+
 function isServiceMethod(method: string): method is MainServiceMethod {
-  return method in serviceMetadata || EXTRA_SERVICE_METHODS.has(method as MainServiceMethod);
+  return serviceMethodAllowlist().has(method);
 }
 
 function isRingingCommand(value: unknown): value is RingingCommand {
@@ -91,7 +106,7 @@ function normalizeRendererCommand(command: RingingCommand): RingingCommand {
 }
 
 function readCommandTarget(value: unknown): CommandTarget {
-  if (value == null) return globalTarget();
+  if (value == null) return globalCommandTarget();
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_command_target");
   const target = value as Record<string, unknown>;
   if (target.kind === "global") return { kind: "global" };
@@ -365,7 +380,7 @@ async function handleCommand(
 
       const command = approvalCommand(stored, decision, payload);
       try {
-        requireAccepted(await client.command(command, sessionTarget(stored.sessionId)));
+        requireAccepted(await client.command(command, sessionCommandTarget(stored.sessionId)));
       } catch (error) {
         const commandId = error != null && typeof error === "object" && "commandId" in error
           ? String((error as { commandId?: unknown }).commandId ?? "") : "";
@@ -466,30 +481,25 @@ async function handleCommand(
     case "pairing_create": {
       const discovery = await readDiscovery();
       if (!discovery?.lan_endpoint) throw new Error("daemon 当前未开启局域网模式；请先开启 LAN 模式");
-      const adminToken = discovery.token;
       const scopeGrant = String(args.scopeGrant ?? "interact");
       if (!["view", "interact", "admin"].includes(scopeGrant)) throw new Error("invalid pairing scope");
       const deviceName = String(args.deviceName ?? "").trim().slice(0, 80);
       if (!deviceName) throw new Error("device name is required");
       const platform = String(args.platform ?? "mobile").slice(0, 40);
-      const ticket = await client.adminRequest<{ pairing_token: string; expires_in_ms: number; tls_fp?: string }>(
-        { endpoint: discovery.endpoint, token: adminToken },
-        "/ringing/v2/pairing/tokens",
-        { method: "POST", body: JSON.stringify({ scope_grant: scopeGrant, device_name: deviceName, platform }) },
-      );
+      const ticket = await client.issuePairToken({ scope_grant: scopeGrant, device_name: deviceName, platform });
       const payload = {
         v: 1, kind: "qaqh-pair", base_url: discovery.lan_endpoint.replace(/\/$/, ""),
-        pairing_token: ticket.pairing_token,
-        tls_fp: ticket.tls_fp || discovery.tls_fingerprint || "",
+        pairing_token: String(ticket.pairing_token),
+        tls_fp: String(ticket.tls_fp || discovery.tls_fingerprint || ""),
         host_name: hostname() || "qaqh-desktop",
       };
-      return { qr_payload: JSON.stringify(payload), expires_in_ms: ticket.expires_in_ms, base_url: discovery.lan_endpoint };
+      return { qr_payload: JSON.stringify(payload), expires_in_ms: Number(ticket.expires_in_ms), base_url: discovery.lan_endpoint };
     }
 
     case "devices_list": {
       const discovery = await readDiscovery();
       if (!discovery) throw new Error("daemon discovery unavailable");
-      return client.adminRequest({ endpoint: discovery.endpoint, token: discovery.token }, "/ringing/v2/devices", { method: "GET" });
+      return client.listDevices();
     }
 
     case "device_revoke": {
@@ -497,7 +507,7 @@ async function handleCommand(
       if (!/^[A-Za-z0-9_-]+$/.test(deviceId)) throw new Error("invalid device_id");
       const discovery = await readDiscovery();
       if (!discovery) throw new Error("daemon discovery unavailable");
-      await client.adminRequest({ endpoint: discovery.endpoint, token: discovery.token }, `/ringing/v2/devices/${deviceId}/revoke`, { method: "POST" });
+      await client.revokeDevice(deviceId);
       return null;
     }
 

@@ -12,7 +12,9 @@
 import { isDesktopRuntime, type HostEvent } from "../desktop-host";
 import { invoke, listen, type Event, type UnlistenFn } from "./electron-core";
 import { noteEvent, noteRpc } from "../devlog";
-import type { CommandPrecondition, CommandTarget, SessionBootstrap, SessionEventFrame } from "@qaqh/sdk/protocol";
+import type {
+ CommandPrecondition, CommandTarget, SessionBootstrap, SessionEventFrame 
+} from "../../api/contract";
 import {
   type Ack,
   type ApprovalView,

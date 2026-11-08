@@ -1,4 +1,5 @@
-import type { RingingCommand, RingingV2PendingApprovals } from "@qaqh/sdk/protocol";
+import type { RingingCommand } from "../../webui/src/api/qaqh/RingingCommand";
+import type { RingingV2PendingApprovals } from "../../webui/src/api/qaqh/RingingV2PendingApprovals";
 import type { ApprovalKind, RingingCommandAck } from "./types.js";
 
 /** Canonical ids stay in the host; only details enter the approval view. */

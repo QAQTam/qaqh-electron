@@ -50,14 +50,14 @@ export async function uploadAttachment(
 
   const mediaType = guessMediaType(name);
 
-  const { response, contentRef } = await client.uploadContent(seed, name, buffer, mediaType);
+  const upload = await client.uploadContent(seed, name, buffer, mediaType);
 
   return {
-    content_ref: contentRef,
-    media_type: response.media_type,
+    content_ref: upload.content_ref,
+    media_type: upload.media_type,
     name,
     size: st.size,
-    truncated: response.truncated,
+    truncated: upload.truncated,
   };
 }
 

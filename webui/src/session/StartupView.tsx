@@ -1,5 +1,7 @@
 import { registry, refreshRegistry } from "../settings/registry";
-import type { ModelSelection } from "@qaqh/sdk/protocol";
+import type {
+ ModelSelection 
+} from "../api/contract";
 import { createSignal, For, Show, type Component } from "solid-js";
 import IconFolder from "~icons/lucide/folder";
 import IconChevronDown from "~icons/lucide/chevron-down";

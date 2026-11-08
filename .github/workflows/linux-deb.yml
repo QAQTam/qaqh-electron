@@ -42,13 +42,6 @@ jobs:
           }
           JS
 
-      - name: Checkout SDK
-        uses: actions/checkout@v4
-        with:
-          repository: qaqtam/qaqh-sdk
-          ref: ${{ steps.sources.outputs.sdk }}
-          path: qaqh-sdk
-
       - name: Checkout backend
         uses: actions/checkout@v4
         with:
@@ -112,7 +105,7 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { writeFileSync } from 'node:fs';
           const sources = {};
-          for (const name of ['qaqh-electron', 'qaqh-backend', 'qaqh-sdk', 'mutil-ai']) {
+          for (const name of ['qaqh-electron', 'qaqh-backend', 'mutil-ai']) {
             sources[name] = execFileSync('git', ['-C', `../${name}`, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
           }
           writeFileSync('release/build-provenance.json', JSON.stringify({ version: process.env.QAQH_BUILD_VERSION,

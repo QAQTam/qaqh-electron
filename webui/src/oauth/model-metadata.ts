@@ -1,4 +1,6 @@
-import type { ModelDef } from "@qaqh/sdk/protocol";
+import type {
+ ModelDef 
+} from "../api/contract";
 import type { ModelEntry } from "./model-catalog";
 
 const positiveInteger = (value: number | undefined): value is number =>

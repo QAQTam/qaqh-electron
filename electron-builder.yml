@@ -9,10 +9,14 @@ files:
   - dist/**/*
   - renderer/**/*
   - build/icons/**/*
+  - native/**/*
   - package.json
   - "!dist/**/*.map"
 
 asar: true
+# Node-API 协议客户端必须在 asar 之外（主进程运行时经 app.asar.unpacked 加载）。
+asarUnpack:
+  - "native/**/*.node"
 afterPack: scripts/verify-package.cjs
 
 extraResources:

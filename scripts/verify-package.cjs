@@ -48,5 +48,30 @@ function verifyAsar(context, root) {
   if (pkg.main !== "dist/main/index.cjs" || pkg.version !== expectedVersion) {
     throw new Error(`Packaged entrypoint/version mismatch: expected ${expectedVersion}, got ${pkg.version}.`);
   }
+  verifyNativeAddon(context, root, resources);
   console.log(`[verify] ${files.length} shell/renderer files and daemon match the current build.`);
+}
+
+// native 协议客户端必须落在 asar 之外（asarUnpack），且与仓库构建产物逐字节一致。
+function verifyNativeAddon(context, root, resources) {
+  const platform = context.electronPlatformName || process.platform;
+  const report = process.report?.getReport?.();
+  const musl = platform === "linux" && report?.header?.glibcVersionRuntime == null;
+  const addonName = platform === "win32"
+    ? "qaqh_napi_client.win32-x64-msvc.node"
+    : `qaqh_napi_client.${platform}-x64-${musl ? "musl" : "gnu"}.node`;
+  const packed = join(resources, "app.asar.unpacked", "native", addonName);
+  const source = join(root, "native", addonName);
+  if (!existsSync(source)) throw new Error(`Native addon missing from build tree: native/${addonName}; run the build pipeline.`);
+  if (!existsSync(packed) ||
+      digest(readFileSync(packed)) !== digest(readFileSync(source))) {
+    throw new Error(`Packaged native addon missing or stale: app.asar.unpacked/native/${addonName}.`);
+  }
+  // asarUnpack 生效时 asar 内不应再有实体副本。
+  const archive = join(resources, "app.asar");
+  const inAsar = asar.listPackage(archive).some(file =>
+    normalize(file) === normalize(`${sep}native${sep}${addonName}`));
+  if (inAsar) {
+    throw new Error("Native addon was packed inside app.asar; asarUnpack did not apply.");
+  }
 }
