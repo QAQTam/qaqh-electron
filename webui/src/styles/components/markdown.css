@@ -58,7 +58,10 @@
   .md-host h6 { font-size: var(--md-h6-size); color: var(--muted); }
   .md-host h1, .md-host h2 { padding-bottom: .3em; border-bottom: 1px solid var(--border); }
   .md-host strong { font-weight: 600; }
-  .md-host ul, .md-host ol { margin: 6px 0; padding-left: 22px; list-style: disc; }
+  /* 列表与段落共用同一垂直节奏(p 的 16px 下边距),不再单独给 6px;
+     嵌套列表仍收紧,避免父项尾部多出整段间距。 */
+  .md-host ul, .md-host ol { margin: 0 0 var(--space-4); padding-left: 22px; list-style: disc; }
+  .md-host li > ul, .md-host li > ol { margin: 2px 0; }
   /* content-visibility on .turn clips markers outside its bounds. Reserve enough
      space for decimal markers in the bundled monospace font, including 100+. */
   .md-host ol { list-style: decimal; padding-left: max(2.5em, 5ch); }

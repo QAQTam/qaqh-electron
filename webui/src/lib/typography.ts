@@ -44,16 +44,16 @@ export const FONT_PRESETS = {
   ui: [
     { label: "系统默认 (推荐)", value: "" },
     { label: "苹方 (PingFang SC)", value: '"PingFang SC", system-ui, sans-serif' },
-    { label: "鸿蒙黑体 (HarmonyOS Sans)", value: '"QAQH HarmonyOS Sans SC", system-ui, sans-serif' },
+    { label: "思源黑体 (Noto Sans SC)", value: '"Noto Sans SC", system-ui, sans-serif' },
     { label: "Segoe UI Variable", value: '"Segoe UI Variable Text", system-ui, sans-serif' },
     { label: "微软雅黑 (Microsoft YaHei)", value: '"Microsoft YaHei UI", system-ui, sans-serif' },
   ],
   prose: [
     { label: "界面一致 (跟随 UI)", value: "" },
     { label: "清晰阅读 (苹方 / 西文比例)", value: '"PingFang SC", "Segoe UI Variable Text", system-ui, sans-serif' },
-    { label: "鸿蒙阅读体", value: '"QAQH HarmonyOS Sans SC", system-ui, sans-serif' },
+    { label: "思源黑体阅读 (Noto Sans SC)", value: '"Noto Sans SC", system-ui, sans-serif' },
     { label: "霞鹜文楷 / 楷体 (LXGW WenKai)", value: '"LXGW WenKai", "Kaiti SC", "STKaiti", serif' },
-    { label: "思源宋体 (Source Han Serif)", value: '"Source Han Serif SC", "Songti SC", "SimSun", serif' },
+    { label: "思源宋体 (Noto Serif SC)", value: '"Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif' },
   ],
   code: [
     { label: "Cascadia Code (内置推荐)", value: "" },

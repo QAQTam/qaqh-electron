@@ -61,7 +61,9 @@
        字和行一起缩,密度不变。
        比例同时也让 --font-scale 能整体接管:正文乘系数后,行距、标题(em)、代码(85%)
        全部按比例跟着走,设置页「等比缩放所有字阶」对阅读区同样成立。
-       来源已不再是 Primer 的 16px 基准,见 docs/markdown-typography.md。 */
+       标题阶(2/1.5/1.25/1/.875/.85em,600 字重,h1/h2 下边框)与 GitHub Primer
+       markdown 渲染(github-markdown-css)一致,该体系是 Markdown 视觉的事实标准;
+       基准 16px vs 14px 只改变绝对对比度,不改变比例关系。 */
     --md-body-size: calc(14px * var(--font-scale));
     --md-body-leading: calc(24 / 14);
     --md-heading-leading: 1.25;
@@ -84,9 +86,12 @@
     --fs-lg: calc(18px * var(--font-scale));
     --fs-body: calc(16px * var(--font-scale));
 
-    /* 4 大核心语义字体槽位 */
-    --font-ui: "PingFang SC", "Segoe UI Variable Text", "QAQH HarmonyOS Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
-    --font-prose: "PingFang SC", "Segoe UI Variable Text", "QAQH HarmonyOS Sans SC", system-ui, sans-serif;
+    /* 4 大核心语义字体槽位
+       中文不内嵌：macOS 走苹方；Windows 11 24H2+ 系统自带 Noto Sans SC 可变
+       字体（wght 100-900），旧系统回落雅黑。西文优先 Segoe（Win11 变体），
+       让数字/拉丁与 CJK 各取所长。 */
+    --font-ui: "PingFang SC", "Segoe UI Variable Text", "Noto Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
+    --font-prose: "PingFang SC", "Segoe UI Variable Text", "Noto Sans SC", system-ui, sans-serif;
     --font-code: "QAQH Cascadia Code", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
     --font-terminal: "Menlo", "Consolas", "QAQH Cascadia Code", ui-monospace, monospace;
 

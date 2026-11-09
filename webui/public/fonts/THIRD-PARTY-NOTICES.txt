@@ -1,11 +1,5 @@
 QAQH-Harness includes the following third-party fonts:
 
-HarmonyOS Sans SC
-Copyright 2021 Huawei Device Co., Ltd.
-Source: https://developer.huawei.com/consumer/cn/design/resource/
-The unmodified Regular and Bold Simplified Chinese font files are included with
-the HarmonyOS Sans Fonts License Agreement in HarmonyOS-Sans-LICENSE.txt.
-
 Cascadia Code
 Copyright 2019 Microsoft Corporation.
 Source: https://github.com/microsoft/cascadia-code/releases/tag/v2407.24

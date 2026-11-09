@@ -1,19 +1,8 @@
 /* QAQ-Harness WebUI —— 字体声明与基础重置 */
 
-@font-face {
-  font-family: "QAQH HarmonyOS Sans SC";
-  src: url("/fonts/HarmonyOS_Sans_SC_Regular.ttf") format("truetype");
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-}
-@font-face {
-  font-family: "QAQH HarmonyOS Sans SC";
-  src: url("/fonts/HarmonyOS_Sans_SC_Bold.ttf") format("truetype");
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-}
+/* 中文正文不内嵌字体：macOS 走苹方，Windows 11 24H2+ 引用系统自带的
+   Noto Sans SC 可变字体（wght 100-900，标题 600 为真 semibold），
+   更旧的系统回落微软雅黑。内嵌字体仅保留 Cascadia Code（等宽）。 */
 @font-face {
   font-family: "QAQH Cascadia Code";
   src: url("/fonts/CascadiaCode_VTT.ttf") format("truetype");

@@ -457,7 +457,7 @@ export const SettingsView: Component<{
                     </div>
 
                     <p class="settings-section-desc">
-                      界面内嵌 HarmonyOS Sans SC 与 Cascadia Code；字体许可与来源见{" "}
+                      界面内嵌 Cascadia Code 等宽字体；中文正文引用系统字体（macOS 苹方 / Windows 11 24H2+ 自带 Noto Sans SC，旧系统回落微软雅黑）；字体许可与来源见{" "}
                       <a href="/fonts/THIRD-PARTY-NOTICES.txt">第三方字体说明</a>。
                     </p>
                   </Section>
