@@ -1,10 +1,11 @@
-import { For, onCleanup, Show, type Component } from "solid-js";
+import { createSignal, For, onCleanup, Show, type Component } from "solid-js";
 import IconKeyRound from "~icons/lucide/key-round";
 import IconMessageSquare from "~icons/lucide/message-square";
 import IconSettings from "~icons/lucide/settings";
 import IconWrench from "~icons/lucide/wrench";
 import { clampSidebarWidth, dragSidebarWidth, SIDEBAR_WIDTH_STEP } from "../lib/sidebar-resize";
 import { MessageSidebar } from "./MessageSidebar";
+import { createSelectionPill } from "./selection-pill";
 import type { ApprovalView } from "../lib/transport";
 import type { SidebarSession, SidebarWorkspace } from "../tabs/store";
 import { SETTINGS_NAV, SETTINGS_NAV_GROUPS } from "../settings/navigation";
@@ -103,6 +104,36 @@ export const Sidebar: Component<{
     }
   };
 
+  /* ── 2×2 主导航的 WinUI 选中指示器(共享 pill)─────────────────────────
+   * 同一驱动器;网格里的换位分类:同列 = 同级滑动(拉伸-跳变-收回),
+   * 跨列 = 跨层级交换(WinUI non-same-level:600ms 线性收缩/生长)。
+   * 收起成图标列时所有项同列,自然退化为纯滑动。 */
+  const [navGridEl, setNavGridEl] = createSignal<HTMLElement | undefined>();
+  const [navGridPillEl, setNavGridPillEl] = createSignal<HTMLElement | undefined>();
+  createSelectionPill({
+    container: navGridEl,
+    pill: navGridPillEl,
+    selection: () => props.section,
+    findTarget: (el) => el.querySelector<HTMLElement>('.sidebar-nav-item[aria-current="page"]'),
+    observe: (el) => [...el.querySelectorAll(".sidebar-nav-item")],
+    classify: (from, to) => (from.offsetLeft === to.offsetLeft ? "slide" : "swap"),
+  });
+
+  /* ── 设置分区导航的 WinUI 选中指示器(共享 pill)────────────────────────
+   * 驱动逻辑在 ./selection-pill(设置导航与会话列表共用同一套 600ms
+   * 拉伸-跳变-收回公式);这里只声明容器、选择键与目标定位。ref 走 signal
+   * 而非裸变量:导航在 `<Show>` 里,离开设置页会卸载,裸变量赋值无响应性。 */
+  const [settingsNavEl, setSettingsNavEl] = createSignal<HTMLElement | undefined>();
+  const [settingsPillEl, setSettingsPillEl] = createSignal<HTMLElement | undefined>();
+  createSelectionPill({
+    container: settingsNavEl,
+    pill: settingsPillEl,
+    selection: () => props.settingsSection ?? SETTINGS_NAV[0].id,
+    findTarget: (nav, sel) =>
+      nav.querySelector<HTMLElement>(`[data-section-id="${CSS.escape(sel)}"]`),
+    observe: (nav) => [...nav.querySelectorAll(".settings-nav-item, .settings-nav-group")],
+  });
+
   return (
   <aside
     id="app-sidebar"
@@ -115,7 +146,8 @@ export const Sidebar: Component<{
     }}
     aria-label="主导航与会话"
   >
-    <nav class="sidebar-nav" aria-label="主导航">
+    <nav class="sidebar-nav" aria-label="主导航" ref={setNavGridEl}>
+      <span class="sidebar-nav-pill" aria-hidden="true" ref={setNavGridPillEl} />
       <For each={NAV_ITEMS}>
         {(item) => (
           <button
@@ -148,7 +180,8 @@ export const Sidebar: Component<{
       />
     </Show>
     <Show when={props.section === "settings" && props.onSettingsSection != null}>
-      <nav class="sidebar-settings-nav" aria-label="设置分区">
+      <nav class="sidebar-settings-nav" aria-label="设置分区" ref={setSettingsNavEl}>
+        <span class="settings-nav-pill" aria-hidden="true" ref={setSettingsPillEl} />
         <For each={[...SETTINGS_NAV_GROUPS]}>{(group) => <>
           <div class="settings-nav-group">{group}</div>
           <For each={SETTINGS_NAV.filter((item) => item.group === group)}>{(item) =>

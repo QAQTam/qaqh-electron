@@ -354,7 +354,7 @@ const App: Component = () => {
     // "档位表第一档"画——把"还没读到"冒充成「轻度」。旧行为是等用户点开卡片才读,
     // 于是"默认轻度、点进去才变真值"。配置是 daemon 全局态,读它不该等一次点击。
     void bootModelConfig();
-    // 首次引导读的是同一份 profiles.toml：没有可用默认存档就弹全屏引导。
+    // 首次引导读的是同一份 provider 目录：没有任何可用服务商与模型就弹全屏引导。
     void refreshOnboarding();
     // 设置页 / 接入页 / 引导自身的写成功后都会广播；配置一落地，引导门自己消失。
     const unlistenConfig = onConfigChanged(() => {
@@ -679,7 +679,7 @@ const App: Component = () => {
   const openShellMenu = (anchor: HTMLElement): void => {
     const rect = anchor.getBoundingClientRect();
     const items: ContextMenuItem[] = [
-      { kind: "action", label: "管理存档…", hint: "Ctrl+Shift+M", onSelect: () => openProfilesSettings() },
+      { kind: "action", label: "管理服务商和模型…", hint: "Ctrl+Shift+M", onSelect: () => openProfilesSettings() },
       { kind: "separator" },
       {
         kind: "action",

@@ -197,8 +197,14 @@ export function resolveDaemonExecutable(): string | null {
   return null;
 }
 
-/** dpkg can replace an executable without changing its path or version. */
+/**
+ * dpkg can replace an executable without changing its path or version.
+ * inode 身份只有 Linux 的 /proc/<pid>/exe 提供；调用方（ensureDaemonRunning）
+ * 也只在 Linux 安装包路径上启用本检查。其他平台返回 false 表示「无法判定」，
+ * 绝不能让调用方把它当成「确实是旧二进制」而去 stop-if-idle。
+ */
 export function daemonMatchesExecutable(pid: number, executable: string): boolean {
+  if (process.platform !== "linux") return false;
   try {
     const running = statSync(`/proc/${pid}/exe`);
     const installed = statSync(executable);

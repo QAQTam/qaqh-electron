@@ -1023,9 +1023,9 @@ const scenarios = {
   },
 
   /**
-   * 尾块重绘代价:模拟「每帧重解析未闭合尾块」这条路径(现在被
-   * Markdown.tsx 的 TAIL_THROTTLE_MS=120 限到 ~8fps),量它在不同尾块长度下
-   * 单帧要多久 —— 120Hz 的预算是 8.3ms/帧,90Hz 是 11.1ms/帧。
+   * 尾块重绘代价:模拟「每帧重解析未闭合尾块」这条路径(Markdown.tsx 只在单帧
+   * 超出 PAINT_BUDGET_MS=4 时才退回 THROTTLE_MS=120 限频,并非恒定 8fps),量
+   * 它在不同尾块长度下单帧要多久 —— 120Hz 预算 8.3ms/帧,90Hz 是 11.1ms/帧。
    */
   async markdownCost(): Promise<Record<string, unknown>> {
     const split = await import("./markdown/split");
@@ -1371,6 +1371,27 @@ const scenarios = {
   material(mode: SessionMaterial): Record<string, unknown> {
     setSessionMaterial(mode);
     return { name: "material", mode, dataset: document.documentElement.dataset.material };
+  },
+  /** 400 回合长时间线:窗口化 + content-visibility + 逐帧贴底的复现床
+   *  (安装版「下半空白」问题的定点压测;CDP 驱动:await __stress.scenarios.flood())。 */
+  async flood(count = 400): Promise<Record<string, unknown>> {
+    const words = ["布局", "渲染", "合成器", "光栅", "滚动", "分页", "占位", "窗口", "队列", "缓存"];
+    for (let i = 0; i < count; i++) {
+      const id = `flood-${fixtureIdSeq++}`;
+      startTurn(id, `压测回合 ${i + 1} / ${count}`);
+      seedAssistantBlock(id, "reply", "answer");
+      let md = `## 第 ${i + 1} 段输出\n\n`;
+      for (let j = 0; j < 6; j++) md += Array.from({ length: 40 }, (_, k) => words[(i + j + k) % words.length]).join("") + "\n\n";
+      md += "```js\n" + Array.from({ length: 8 }, (_, k) => `const x${k} = ${i * k};`).join("\n") + "\n```\n";
+      messageDelta(id, "reply", md, true);
+      if (i % 50 === 0) await frames(2);
+    }
+    await frames(30);
+    return {
+      name: "flood", turns: count,
+      scrollerH: document.getElementById("messages")?.scrollHeight ?? 0,
+      slots: document.querySelectorAll("[data-slot-key]").length,
+    };
   },
 };
 

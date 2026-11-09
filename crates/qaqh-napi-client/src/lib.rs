@@ -20,7 +20,7 @@ use napi::{Error, Result, Status};
 use napi_derive::napi;
 use qaqh_client::{
     Client, ClientHandlers, ClientOptions, CommandOptions, CommandTarget, PairScope,
-    QueryRequest, RemoteEndpoint, RingingCommand, StopStatus,
+    QueryRequest, RemoteEndpoint, RingingCommand, RingingV2ClientKind, StopStatus,
 };
 use serde_json::{Value, json};
 
@@ -99,7 +99,11 @@ fn deserialize_arg<T: serde::de::DeserializeOwned>(value: Value, what: &str) -> 
         .map_err(|e| json_error("protocol", format!("invalid {what}: {e}")))
 }
 
-#[napi(object)]
+// napi 3 对象字段默认只把 missing/undefined 当 None，显式 null 会拒绝转换
+// （`Failed to convert ... into rust type String`）。use_nullable 才把 null
+// 收成 None；调用方（native-client facade / e2e）总是显式携带该键，不受
+// "键必须存在" 语义影响。
+#[napi(object, use_nullable = true)]
 pub struct ConnectOptions {
     /// daemon endpoint（`http://127.0.0.1:<port>` 或 LAN `https://...`，无尾斜杠）。
     #[napi(js_name = "base_url")]
@@ -251,6 +255,9 @@ impl NativeClient {
         };
         let client_options = ClientOptions {
             client_instance_id: uuid::Uuid::new_v4().to_string(),
+            // presence/诊断自报：本绑定只服务 Electron 桌面壳（与 ACP 桥自报
+            // Acp 同款模式），不参与任何信任判定。
+            client_kind: Some(RingingV2ClientKind::Desktop),
             handlers,
             // daemon 由 Electron DaemonManager 负责启动/复用。
             launch_daemon_if_missing: false,

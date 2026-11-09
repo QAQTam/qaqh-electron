@@ -16,22 +16,7 @@ import {
   siwcSignInStatus,
 } from "../lib/siwc";
 import { isDesktopRuntime } from "../lib/transport/backend";
-import type {
- ModelDef 
-} from "../api/contract";
-import { Field, TextInput } from "../settings/controls";
-import { Select } from "../ui/Select";
-import { WIRE_LABELS, WIRE_PROTOCOLS } from "../settings/patch";
-import {
-  newId,
-  refreshRegistry,
-  registry,
-  registryError,
-  saveModel,
-  saveProvider,
-} from "../settings/registry";
-import { fetchLiveModels } from "../settings/registry/model-fetcher";
-import { PROVIDER_TEMPLATES } from "../settings/registry/templates";
+import { ByokProviderForm } from "../settings/ByokProviderForm";
 import { clearOnboardingError, dismissOnboarding } from "./state";
 
 const messageOf = (cause: unknown): string =>
@@ -104,103 +89,6 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
     props.onOpenSettings?.();
   };
 
-  /* ── BYOK ── */
-  const firstTemplate = PROVIDER_TEMPLATES[0]!;
-  const [templateId, setTemplateId] = createSignal(firstTemplate.id);
-  const [providerName, setProviderName] = createSignal(firstTemplate.name);
-  const [baseUrl, setBaseUrl] = createSignal(firstTemplate.baseUrl);
-  const [wire, setWire] = createSignal(firstTemplate.wire);
-  const [apiKey, setApiKey] = createSignal("");
-  const [model, setModel] = createSignal("");
-  const [contextLength, setContextLength] = createSignal("");
-  const [maxTokens, setMaxTokens] = createSignal("");
-  const [liveModels, setLiveModels] = createSignal<Array<{ id: string; label: string }>>([]);
-  const [fetching, setFetching] = createSignal(false);
-
-  const applyTemplate = (id: string): void => {
-    const template = PROVIDER_TEMPLATES.find((item) => item.id === id);
-    if (template == null) return;
-    setTemplateId(id);
-    setProviderName(template.name);
-    setBaseUrl(template.baseUrl);
-    setWire(template.wire);
-    setContextLength("");
-    setMaxTokens("");
-    setLiveModels([]);
-  };
-
-  const probeModels = async (): Promise<void> => {
-    if (fetching()) return;
-    setFetching(true);
-    setError(null);
-    try {
-      const result = await fetchLiveModels({
-        baseUrl: baseUrl(),
-        wire: wire(),
-        apiKey: apiKey().trim() === "" ? undefined : apiKey(),
-      });
-      if (!result.ok) {
-        setError(result.error ?? "端点没有返回模型列表；仍可手动填写模型 id。");
-        return;
-      }
-      setLiveModels(result.models.map((item) => ({ id: item.id, label: item.label })));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setFetching(false);
-    }
-  };
-
-  const saveByok = async (): Promise<void> => {
-    const name = providerName().trim();
-    const url = baseUrl().trim();
-    const modelId = model().trim();
-    if (name === "" || url === "" || modelId === "") {
-      setError("服务商名称、Base URL 与模型 id 都必须填写。");
-      return;
-    }
-    const context = Number(contextLength());
-    const tokens = Number(maxTokens());
-    if (!Number.isSafeInteger(context) || context <= 0) {
-      setError("上下文窗口必须是大于 0 的整数。");
-      return;
-    }
-    if (!Number.isSafeInteger(tokens) || tokens <= 0) {
-      setError("最大输出必须是正整数。");
-      return;
-    }
-    await refreshRegistry();
-    const current = registry();
-    const providerId = newId(
-      `${name}-provider`,
-      (current?.providers ?? []).map((item) => item.id),
-    );
-    const providerSaved = await saveProvider(providerId, {
-      name,
-      baseUrl: url,
-      wire: wire(),
-      credential: "api_key",
-      ...(apiKey().trim() === "" ? {} : { apiKey: apiKey() }),
-    });
-    if (!providerSaved) {
-      setError(registryError() ?? "保存服务商失败");
-      return;
-    }
-    const modelDefinition: ModelDef = {
-      enabled: true,
-      display_name: liveModels().find((item) => item.id === modelId)?.label ?? null,
-      context_window: context,
-      max_output_tokens: tokens,
-      reasoning_levels: [],
-      capabilities: { tool_calls: false, image_input: false, native_web_search: false, reasoning: false },
-      defaults: { max_output_tokens: tokens, native_web_search: false },
-    };
-    if (!await saveModel(providerId, modelId, modelDefinition)) {
-      setError(registryError() ?? "保存模型目录失败");
-      return;
-    }
-  };
-
   const signIn = (): void => {
     void run(route() === "account" ? connectAccount : connectPlan);
   };
@@ -260,96 +148,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
 
         <Show when={route() === "byok"}>
           <div class="onboarding-body onboarding-byok">
-            <div class="settings-row-wide provider-template-chips">
-              <For each={PROVIDER_TEMPLATES}>
-                {(template) => (
-                  <button
-                    type="button"
-                    class={`provider-template-chip${templateId() === template.id ? " active" : ""}`}
-                    onClick={() => applyTemplate(template.id)}
-                  >
-                    {template.name}
-                    <small>({template.badge})</small>
-                  </button>
-                )}
-              </For>
-            </div>
-            <Field label="服务商名称">
-              <TextInput value={providerName()} onInput={setProviderName} />
-            </Field>
-            <Field label="Base URL">
-              <TextInput value={baseUrl()} onInput={setBaseUrl} placeholder="https://…" />
-            </Field>
-            <Field label="协议形态 (wire)">
-              <Select
-                value={wire()}
-                options={WIRE_PROTOCOLS.map((item) => ({
-                  value: item,
-                  label: WIRE_LABELS[item] ?? item,
-                }))}
-                onChange={setWire}
-                ariaLabel="协议形态"
-              />
-            </Field>
-            <Field label="API key" hint="留空 = 该服务商暂不存密钥（本地 Ollama 等）">
-              <TextInput
-                type="password"
-                value={apiKey()}
-                onInput={setApiKey}
-                placeholder="sk-..."
-                autocomplete="new-password"
-              />
-            </Field>
-            <Field label="模型 id" wide>
-              <div class="model-picker-row">
-                <div class="model-picker-input">
-                  <TextInput
-                    value={model()}
-                    onInput={setModel}
-                    placeholder="填写服务商提供的模型 ID"
-                  />
-                </div>
-                <button
-                  type="button"
-                  class="ghost-mini"
-                  disabled={fetching() || baseUrl().trim() === ""}
-                  onClick={() => void probeModels()}
-                >
-                  {fetching() ? "同步中…" : "探测在线模型"}
-                </button>
-              </div>
-              <Show when={liveModels().length > 0}>
-                <div class="model-preset-pills">
-                  <For each={liveModels()}>
-                    {(entry) => (
-                      <button
-                        type="button"
-                        class={`model-preset-pill${model() === entry.id ? " active" : ""}`}
-                        onClick={() => setModel(entry.id)}
-                      >
-                        {entry.label}
-                      </button>
-                    )}
-                  </For>
-                </div>
-              </Show>
-            </Field>
-            <Field label="上下文窗口" hint="按当前模型可用的上下文窗口手动填写">
-              <TextInput type="number" value={contextLength()} onInput={setContextLength} />
-            </Field>
-            <Field label="最大输出" hint="手动填写端点支持的最大输出 tokens">
-              <TextInput type="number" value={maxTokens()} onInput={setMaxTokens} />
-            </Field>
-            <div class="onboarding-actions">
-              <button
-                type="button"
-                class="primary-mini button-primary"
-                disabled={busy() || fetching()}
-                onClick={() => void run(saveByok)}
-              >
-                {busy() ? "保存中…" : "保存并开始"}
-              </button>
-            </div>
+            <ByokProviderForm submitLabel="保存并开始" />
           </div>
         </Show>
 
@@ -370,7 +169,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
               打开完整设置
             </button>
           </Show>
-          <span class="onboarding-note">之后可在侧栏「接入」登录账号，或在「设置 → 存档」管理全部配置。</span>
+          <span class="onboarding-note">之后可在侧栏「接入」登录账号，或在「设置 → 服务商」管理端点、密钥与模型。</span>
         </footer>
       </div>
     </div>

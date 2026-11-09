@@ -82,7 +82,9 @@ describe("decoder 不变量 fuzz", () => {
       sealedDecoder.push(text, true);
       expect(sealedDecoder.push(text, true), `case ${round} final 幂等`).toEqual(final);
     }
-  }, 30_000);
+    // 2 万轮 × 逐字符前缀增量对拍，弱硬件/Windows 上 30s 不够；这是固定种子的
+    // 确定性压测而非死循环，放宽单测超时以免 `just check` 被机器性能误判为失败。
+  }, 180_000);
 
   it("定向:同一文本两次完整围栏 → 两个独立 ui part(seal 不串扰)", () => {
     const parts = splitContentParts(FENCE + FENCE, { final: true });

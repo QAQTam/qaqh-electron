@@ -6,7 +6,7 @@
  * 也不再改写 `ConfigDto` 的顶层模型字段 —— 那些只是读投影。
  *
  * 授权 URL 交给**系统浏览器**打开；daemon 不 spawn 进程、也不内嵌 webview。
- * 自带 API key 的配置统一在「设置 → 存档」维护，这里只展示入口。
+ * 自带 API key 的配置统一在「设置 → 服务商」维护，这里只展示入口。
  */
 import { loadConfigSnapshot } from "../lib/config-snapshot";
 
@@ -64,7 +64,7 @@ import {
   syncAccountCatalog,
 } from "../settings/registry";
 
-/** 接入页只管理两类账号额度；BYOK 在「设置 → 存档」。 */
+/** 接入页只管理两类账号额度；BYOK 在「设置 → 服务商」。 */
 type AccountEntry = {
   id: "plan" | "account";
   name: string;
@@ -681,10 +681,10 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
           <section class="oauth-section oauth-byok">
             <div>
               <h2 class="oauth-section-title">API key 与端点</h2>
-              <p>API key 与端点在「设置 → 服务商」维护；在「存档」中保存和选择模型与参数组合。</p>
+              <p>API key、端点与模型目录在「设置 → 服务商」维护；账号模型可在这里刷新目录并设为默认。</p>
             </div>
             <Show when={props.onOpenSettings}>
-              <button type="button" class="ghost-mini" onClick={() => props.onOpenSettings?.()}>管理存档</button>
+              <button type="button" class="ghost-mini" onClick={() => props.onOpenSettings?.()}>管理服务商和模型</button>
             </Show>
           </section>
           <p class="oauth-page-note">凭据加密保存在本机，登录将在系统浏览器中完成。</p>

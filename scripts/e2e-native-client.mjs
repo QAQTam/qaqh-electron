@@ -23,7 +23,7 @@ let resolveTurn = null;
 const turnEnded = new Promise((resolve) => { resolveTurn = resolve; });
 
 const client = addon.NativeClient.connect(
-  { base_url: discovery.endpoint, token: discovery.token, tls_fp: discovery.tls_fingerprint ?? undefined },
+  { base_url: discovery.endpoint, token: discovery.token, tls_fp: discovery.tls_fingerprint ?? null },
   (payload) => {
     events.push(payload.event);
     if (payload.event.type === "turn_ended") resolveTurn(payload.event);

@@ -341,6 +341,19 @@ async function setDefaultSelection(selection: ModelSelection): Promise<void> {
   await configCommand({ type: "model.selection.set_default", selection });
 }
 
+/** 把服务商目录里的某个模型设为全局默认；BYOK 与账号模型共用这一条写口。 */
+export async function setDefaultModel(providerId: string, modelId: string): Promise<boolean> {
+  const model = registry()?.providers.find((provider) => provider.id === providerId)
+    ?.models.find((entry) => entry.id === modelId)?.definition;
+  const issue = modelSelectionIssue(model, null, null);
+  if (issue != null) { setError(`模型「${modelId}」${issue}`); return false; }
+  const result = await perform(async () => {
+    await setDefaultSelection({ provider_id: providerId, model_id: modelId, options: {} });
+    return true;
+  });
+  return result === true;
+}
+
 export async function saveProfile(input: ProfileInput, options: { makeDefault?: boolean } = {}): Promise<string | null> {
   const value = registry();
   const id = newId(input.name, (value?.profiles ?? []).map((profile) => profile.id));

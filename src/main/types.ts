@@ -1,7 +1,9 @@
 // 协议契约类型直接复用 backend exporter 生成、webui 镜像持有的同一份产物，
 // main 与 renderer 不再有第二份生成目录（原 @qaqh/sdk/protocol 依赖已退役）。
+import type { ClientsListParams } from "../../webui/src/api/qaqh/ClientsListParams";
 import type { ConfigDto } from "../../webui/src/api/qaqh/ConfigDto";
 import type { DaemonDiscovery as ContractDaemonDiscovery } from "../../webui/src/api/qaqh/DaemonDiscovery";
+import type { RingingV2ClientView } from "../../webui/src/api/qaqh/RingingV2ClientView";
 import type { FsEntry } from "../../webui/src/api/qaqh/FsEntry";
 import type { FsReadResult } from "../../webui/src/api/qaqh/FsReadResult";
 import type { RingingV2CommandAck } from "../../webui/src/api/qaqh/RingingV2CommandAck";
@@ -22,6 +24,8 @@ export type RingingCommandAck = RingingV2CommandAck;
  * 这里只补 TS 侧的形状（账号面 18 个方法沿用 `unknown` result——见 docs B08）。
  */
 export type MainServiceMap = {
+  /** 活跃连接 presence 视图；daemon 基础设施查询，不属于会话业务，故无 session_id。 */
+  "clients.list": { params: ClientsListParams; result: RingingV2ClientView[] };
   "daemon.version": { params: Record<never, never>; result: string };
   "session.list": { params: { include_archived?: boolean }; result: SessionListEntry[] };
   "session.meta": { params: { session_id: string }; result: SessionListEntry | null };
@@ -65,6 +69,7 @@ export type MainServiceMethod = keyof MainServiceMap;
 
 /** 运行时方法清单（与 addon `serviceMethods()` 双向一致性由 packaging 测试校验）。 */
 export const MAIN_SERVICE_METHODS: readonly MainServiceMethod[] = [
+  "clients.list",
   "daemon.version", "session.list", "session.meta", "session.activity", "session.get_activity",
   "session.dashboard", "session.turn", "workspace.get", "workspace.list", "fs.list", "fs.read", "config.load",
   "profile.list", "skills.catalog", "skills.list_tools", "todo.status", "todo.list", "plan.read",

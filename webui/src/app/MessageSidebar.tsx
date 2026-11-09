@@ -9,6 +9,7 @@ import type { ApprovalView } from "../lib/transport";
 import { sessionCatalog, workspaceCatalog, type SidebarSession, type SidebarWorkspace } from "../tabs/store";
 import { Collapse } from "../ui/Collapse";
 import { SessionPendingCard } from "./SessionPendingCard";
+import { createSelectionPill } from "./selection-pill";
 import { pendingPresentation, workingOnly } from "./session-pending";
 
 const pathName = (path: string | null | undefined): string => {
@@ -101,6 +102,23 @@ export const MessageSidebar: Component<{
     setCollapsed(next);
   };
 
+  /* ── 会话列表的 WinUI 选中指示器(共享 pill)────────────────────────────
+   * 与设置分区导航共用 ./selection-pill 的 600ms 拉伸-跳变-收回公式。
+   * 会话列表比导航多两类布局扰动,都交给驱动器的静默对位:
+   *  - RO 观察列表内容包裹层(增删/折叠动画/字体加载都会改它的高度);
+   *  - invalidation 挂 groups memo:15s 轮询换目录对象会按 updated_at 重排,
+   *    活动行瞬移时盒子尺寸不变、RO 抓不到,靠这条兜住。 */
+  const [groupsEl, setGroupsEl] = createSignal<HTMLElement | undefined>();
+  const [sessionPillEl, setSessionPillEl] = createSignal<HTMLElement | undefined>();
+  createSelectionPill({
+    container: groupsEl,
+    pill: sessionPillEl,
+    selection: () => props.activeSeed ?? null,
+    findTarget: (el) => el.querySelector<HTMLElement>('.message-session-item[aria-current="page"]'),
+    observe: (el) => [el.querySelector(".message-sidebar-list") ?? el],
+    invalidation: groups,
+  });
+
   return (
     <aside class="message-sidebar" aria-label="会话列表">
       <div class="message-sidebar-head">
@@ -111,7 +129,9 @@ export const MessageSidebar: Component<{
           <button type="button" class="message-create" aria-label="新建会话" title="新建会话" disabled={props.creating || props.canCreate === false} onClick={() => props.onCreate?.()}><IconPlus /></button>
         </Show>
       </div>
-      <div class="message-sidebar-groups">
+      <div class="message-sidebar-groups" ref={setGroupsEl}>
+        <span class="message-session-pill" aria-hidden="true" ref={setSessionPillEl} />
+        <div class="message-sidebar-list">
         <Show when={groups().length > 0} fallback={<div class="message-sidebar-empty">暂无会话</div>}>
           {/* 按 id 做键,不按引用:`pollSessions` 每轮都用 IPC 新解出来的对象
               换掉整个目录(`tabs/store.ts:362`),引用键会让每次轮询把整棵侧栏
@@ -296,6 +316,7 @@ export const MessageSidebar: Component<{
             </section>
           )}</For>
         </Show>
+        </div>
       </div>
     </aside>
   );

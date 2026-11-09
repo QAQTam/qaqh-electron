@@ -49,7 +49,12 @@
     display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px;
     padding: 10px 10px 8px;
     border-bottom: 1px solid var(--border);
+    /* 选中指示器 pill 的包含块(绝对定位 + offsetTop/offsetLeft 测量基准)。 */
+    position: relative;
   }
+  /* WinUI 3 式选中指示器(共享 pill,由 app/selection-pill.ts 驱动):
+     基础主题不显示;Windows/Fluent 覆盖层里显示并驱动滑动/交换动画。 */
+  .sidebar-nav-pill { display: none; }
   .sidebar-nav-item {
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
     min-width: 0; min-height: 44px; padding: 6px 4px;
@@ -70,6 +75,8 @@
     display: grid; align-content: start; gap: 2px;
     min-height: 0; overflow-y: auto; overscroll-behavior: contain;
     padding: 16px 12px 24px;
+    /* 选中指示器 pill 的包含块(绝对定位 + offsetTop 测量基准)。 */
+    position: relative;
   }
   .sidebar-settings-nav .settings-nav-item { min-height: 36px; }
   .app-sidebar.collapsed .sidebar-settings-nav { display: none; }
@@ -124,7 +131,9 @@
   .message-create svg { width: 16px; height: 16px; }
   .message-create:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
   .message-create:disabled { opacity: .5; }
-  .message-sidebar-groups { min-height: 0; overflow: auto; padding: 2px 8px 12px; overscroll-behavior: contain; }
+  .message-sidebar-groups { min-height: 0; overflow: auto; padding: 2px 8px 12px; overscroll-behavior: contain; /* 选中指示器 pill 的包含块(绝对定位 + offsetTop/offsetLeft 测量基准)。 */ position: relative; }
+  /* 会话列表内容包裹层:选中指示器的 RO 观察目标(高度随增删/折叠/字体变化)。 */
+  .message-sidebar-list { min-width: 0; }
   /* 会话行 = 主体按钮 + 「…」动作钮。动作钮常占位、悬停/聚焦/展开时才显形,
      所以 hover 只改表面不改布局(spec §悬停)。 */
   .message-session-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
@@ -204,6 +213,10 @@
     color: var(--text); background: var(--accent-soft); border-color: transparent;
   }
   .message-session-item.active::before { height: 16px; opacity: 1; }
+  /* WinUI 3 式选中指示器(单个共享 pill,由 app/selection-pill.ts 驱动):
+     基础主题继续用上面的 per-item ::before 过渡;Windows/Fluent 覆盖层里
+     隐藏 ::before、改用会滑动的共享 pill(见 fluent.css)。 */
+  .message-session-pill { display: none; }
   .message-session-item:focus-visible { outline-offset: 1px; }
   .message-session-item > svg { flex: none; width: 14px; height: 14px; opacity: .72; }
   .message-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

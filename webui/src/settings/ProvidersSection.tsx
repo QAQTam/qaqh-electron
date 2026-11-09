@@ -2,6 +2,8 @@
  * 服务商页：列出 backend provider/model catalog 里的 Provider（含暂时没被引用的）。
  *
  * - BYOK 行可展开编辑名称 / Base URL / wire / 密钥（留空保持、可单独清除）；
+ * - 「＋ 添加服务商」用与首次引导共用的 BYOK 表单新建自带端点，已登录账号也能加；
+ * - 模型行可设为全局默认（model.selection.set_default）；
  * - 账号类（ChatGPT 套餐 / DeepSeek 账号）只读，登录与切换在侧栏「接入」页；
  * - provider 与 model 分开维护，所有目录写入都带 `config_revision`；
  * - 被存档或默认选择引用的服务商不能删（前端提前禁用，后端仍是权威）；
@@ -13,6 +15,7 @@ import IconEyeOff from "~icons/lucide/eye-off";
 
 import { toast } from "../ui/toast";
 import { Select } from "../ui/Select";
+import { ByokProviderForm } from "./ByokProviderForm";
 import type {
  ModelDef 
 } from "../api/contract";
@@ -29,6 +32,7 @@ import {
   registryLoading,
   saveModel,
   saveProvider,
+  setDefaultModel,
   type RegistryModel,
   type RegistryProvider,
 } from "./registry";
@@ -168,7 +172,7 @@ const ProviderEditor: Component<{
 
       <Show when={props.provider.referencedBy.length > 0}>
         <p class="field-hint is-warn">
-          端点与密钥改动会影响引用此服务商的存档和全局默认模型。
+          端点与密钥改动会影响全局默认模型和已打开的会话。
         </p>
       </Show>
 
@@ -253,6 +257,14 @@ const ProviderRow: Component<{
     return value?.defaultSelection?.provider_id === props.provider.id && value.defaultSelection.model_id === modelId
       || value?.profiles.some((profile) => profile.providerId === props.provider.id && profile.model === modelId) === true;
   };
+  const isDefaultModel = (modelId: string): boolean => {
+    const value = registry();
+    return value?.defaultSelection?.provider_id === props.provider.id && value.defaultSelection.model_id === modelId;
+  };
+
+  const makeDefault = async (modelId: string): Promise<void> => {
+    if (await setDefaultModel(props.provider.id, modelId)) toast("已设为默认模型", "ok");
+  };
 
   const remove = async (): Promise<void> => {
     if (referenced() > 0) return;
@@ -287,7 +299,7 @@ const ProviderRow: Component<{
                 type="button"
                 class="ghost-mini is-danger"
                 disabled={registryBusy() || referenced() > 0}
-                title={referenced() > 0 ? "先删除或改指向引用它的存档" : undefined}
+                title={referenced() > 0 ? "先取消默认选择或删除引用它的配置" : undefined}
                 onClick={() => void remove()}
               >
                 删除
@@ -320,8 +332,23 @@ const ProviderRow: Component<{
                   上下文 {model.definition.context_window.toLocaleString()} · 输出 {model.definition.max_output_tokens.toLocaleString()} · 工具 {model.definition.capabilities.tool_calls ? "支持" : "未启用"}
                 </small>
               </span>
-              <button type="button" class="ghost-mini" disabled={registryBusy()} onClick={() => { setAddingModel(false); setEditingModelId(model.id); }}>编辑模型</button>
-              <button type="button" class="ghost-mini is-danger" disabled={registryBusy() || modelInUse(model.id)} title={modelInUse(model.id) ? "默认选择或存档仍引用此模型" : undefined} onClick={() => void deleteModel(props.provider.id, model.id)}>删除</button>
+              <div class="provider-model-actions">
+                <Show
+                  when={isDefaultModel(model.id)}
+                  fallback={
+                    <button
+                      type="button"
+                      class="ghost-mini"
+                      disabled={registryBusy() || !model.definition.enabled}
+                      onClick={() => void makeDefault(model.id)}
+                    >设为默认</button>
+                  }
+                >
+                  <span class="profile-active-tag">默认模型</span>
+                </Show>
+                <button type="button" class="ghost-mini" disabled={registryBusy()} onClick={() => { setAddingModel(false); setEditingModelId(model.id); }}>编辑模型</button>
+                <button type="button" class="ghost-mini is-danger" disabled={registryBusy() || modelInUse(model.id)} title={modelInUse(model.id) ? "全局默认或存档仍引用此模型" : undefined} onClick={() => void deleteModel(props.provider.id, model.id)}>删除</button>
+              </div>
             </div>
           )}
         </For>
@@ -343,6 +370,7 @@ const ProviderRow: Component<{
 export const ProvidersSection: Component<{
   onOpenOAuth?: () => void;
 }> = (props) => {
+  const [addingProvider, setAddingProvider] = createSignal(false);
   const rows = () => {
     const value = registry();
     return value == null ? [] : providerRows(value);
@@ -352,7 +380,7 @@ export const ProvidersSection: Component<{
     <Section
       id="section-providers"
       title="服务商"
-      desc="服务商管理端点与凭据，模型目录管理能力和上限。修改后即时保存。"
+      desc="服务商管理端点与凭据，模型目录管理能力和上限；可新增自带 API key 的服务商并设为默认。修改后即时保存。"
     >
       <Show when={registryError()}>
         {(message) => <p class="field-hint is-error settings-row-wide">{message()}</p>}
@@ -362,7 +390,7 @@ export const ProvidersSection: Component<{
       </Show>
       <Show when={registry() != null && rows().length === 0}>
         <p class="settings-muted settings-row-wide">
-          还没有服务商。请先通过接入页登录，或使用首次设置添加服务商。
+          还没有服务商。点下方「添加服务商」配置自带 API key 端点，或到侧栏「接入」登录账号。
         </p>
       </Show>
 
@@ -372,6 +400,31 @@ export const ProvidersSection: Component<{
         </For>
       </div>
 
+      <div class="settings-row-wide">
+        <button
+          type="button"
+          class="ghost-mini provider-add"
+          disabled={registryBusy()}
+          onClick={() => setAddingProvider(!addingProvider())}
+        >
+          {addingProvider() ? "收起表单" : "＋ 添加服务商"}
+        </button>
+      </div>
+      <Show when={addingProvider()}>
+        <div class="provider-editor byok-form">
+          <div class="provider-editor__head settings-row-wide">
+            <strong>添加服务商 · 自带 API key</strong>
+          </div>
+          <ByokProviderForm
+            submitLabel="添加服务商"
+            onCancel={() => setAddingProvider(false)}
+            onSaved={() => {
+              setAddingProvider(false);
+              toast("服务商已添加", "ok");
+            }}
+          />
+        </div>
+      </Show>
     </Section>
   );
 };
