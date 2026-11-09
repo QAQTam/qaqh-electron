@@ -102,6 +102,36 @@ export interface GpuPrefBridge {
   set(disabled: boolean): Promise<GpuPrefState>;
 }
 
+/** 本地热更新壳侧状态(qaqh-update plan --json 的收敛视图)。 */
+export interface UpdatePlanView {
+  upToDate: boolean;
+  releaseId: string;
+  mode: string;
+  artifacts: string[];
+}
+
+export interface UpdateStatus {
+  /** 壳是否具备热更新能力(packaged + 随包 updater CLI)。 */
+  available: boolean;
+  reason?: string;
+  sourceDir: string;
+  installRoot: string;
+  version: string;
+  plan: UpdatePlanView | null;
+  /** 暂存就绪,等待「重启并应用」。 */
+  staged: boolean;
+  error?: string;
+}
+
+export interface UpdatesBridge {
+  /** 只读检查本地 update-source;失败以 error 字段返回,不抛异常。 */
+  check(): Promise<UpdateStatus>;
+  /** 校验并暂存(写 <安装根>/staging);成功后 staged=true。 */
+  stage(): Promise<UpdateStatus>;
+  /** 触发 apply-staged handoff 并退出壳;失败(无暂存)抛错,壳保持运行。 */
+  apply(): Promise<void>;
+}
+
 export interface DesktopHostBridge {
   readonly platform: "electron";
   invoke<T = unknown>(command: HostCommand, args?: Record<string, unknown>): Promise<T>;
@@ -111,6 +141,7 @@ export interface DesktopHostBridge {
   powerBlocker?: PowerBlockerBridge;
   gpuPref?: GpuPrefBridge;
   relaunch?(): Promise<void>;
+  updates?: UpdatesBridge;
   requestQuit(options: { stopDaemon: boolean; stopActiveWork: boolean }): Promise<void>;
 }
 

@@ -277,7 +277,41 @@ fn wait_process_exit(pid: u32, timeout: Duration) -> Result<()> {
             thread::sleep(Duration::from_millis(200));
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        // STILL_ACTIVE = STATUS_WAIT_0 + 259;windows-sys 0.59 未导出该常量。
+        const STILL_ACTIVE: u32 = 259;
+        let deadline = Instant::now() + timeout;
+        loop {
+            let exited = unsafe {
+                // 句柄拿不到(权限/已回收)按"仍存活"处理:宁可超时报错,也不提前写坏包。
+                let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+                if handle.is_null() {
+                    false
+                } else {
+                    let mut code: u32 = 0;
+                    let ok = GetExitCodeProcess(handle, &mut code);
+                    CloseHandle(handle);
+                    ok != 0 && code != STILL_ACTIVE
+                }
+            };
+            if exited {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(UpdateError(format!(
+                    "timed out waiting for pid {pid} to exit ({}s)",
+                    timeout.as_secs()
+                )));
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (pid, timeout);
         Err(UpdateError(
@@ -315,7 +349,23 @@ fn relaunch_detached(command: &[String]) -> Result<()> {
             .map_err(|error| UpdateError(format!("relaunch '{program}': {error}")))?;
         Ok(())
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::process::{Command, Stdio};
+        let (program, args) = command
+            .split_first()
+            .ok_or_else(|| UpdateError("relaunch command is empty".into()))?;
+        // 更新器自身就是分离进程;GUI 子系统的壳不需要额外 detachment 标志。
+        Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| UpdateError(format!("relaunch '{program}': {error}")))?;
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = command;
         Err(UpdateError(
@@ -512,12 +562,15 @@ mod tests {
             fs::read(install.join("backend/qaqh-daemon")).unwrap(),
             b"new-daemon"
         );
-        use std::os::unix::fs::PermissionsExt;
-        let daemon_mode = fs::metadata(install.join("backend/qaqh-daemon"))
-            .unwrap()
-            .permissions()
-            .mode();
-        assert_eq!(daemon_mode & 0o111, 0o111, "daemon 必须保留执行位");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let daemon_mode = fs::metadata(install.join("backend/qaqh-daemon"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(daemon_mode & 0o111, 0o111, "daemon 必须保留执行位");
+        }
         // 应用成功后暂存被清空
         assert!(!staging.exists());
 
@@ -627,9 +680,16 @@ mod tests {
         assert!(error.to_string().contains("timed out"), "{error}");
         assert_eq!(fs::read(install.join("app/app.js")).unwrap(), b"old-app");
 
-        // 退出中的 pid：子进程 300ms 后退出，等待后应用成功。
+        // 退出中的 pid：子进程 ~1s 后退出，等待后应用成功。
+        #[cfg(unix)]
         let mut child = std::process::Command::new("sleep")
             .arg("0.3")
+            .spawn()
+            .unwrap();
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("ping")
+            .args(["-n", "2", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap();
         let child_pid = child.id();
@@ -652,7 +712,7 @@ mod tests {
         let source = root.join("source");
         let install = root.join("install");
         let staging = root.join("staging");
-        let probe = root.join("relaunched.txt");
+        let probe = root.join("relaunched-probe");
         fs::create_dir_all(&install).unwrap();
         write_source(&source, b"new-app", b"new-daemon");
         write_old_state(&install);
@@ -660,24 +720,35 @@ mod tests {
         fs::write(install.join("app/app.js"), b"old-app").unwrap();
         stage_update(&source, &install, &staging).unwrap();
 
+        #[cfg(unix)]
+        let relaunch_command = vec![
+            "sh".into(),
+            "-c".into(),
+            format!("echo ok > {}", probe.display()),
+        ];
+        #[cfg(windows)]
+        let relaunch_command = vec![
+            "cmd".into(),
+            "/C".into(),
+            "mkdir".into(),
+            // 用 mkdir 做探针;分开传参,不把整条命令塞进一个带重定向的字符串
+            // (cmd /C 对含内嵌引号的整串命令有历史遗留的引号剥离规则)。
+            probe.display().to_string(),
+        ];
         apply_staged(ApplyStagedOptions {
             staging_root: &staging,
             install_root: &install,
             wait_pid: None,
             wait_timeout: Duration::from_secs(1),
-            relaunch: &[
-                "sh".into(),
-                "-c".into(),
-                format!("echo ok > {}", probe.display()),
-            ],
+            relaunch: &relaunch_command,
         })
         .unwrap();
-        // 子进程是异步的，轮询等探针文件出现。
+        // 子进程是异步的，轮询等探针出现。
         let deadline = Instant::now() + Duration::from_secs(5);
         while !probe.exists() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(50));
         }
-        assert!(probe.exists(), "relaunch 命令未执行");
+        assert!(probe.is_dir(), "relaunch 命令未执行");
         assert_eq!(fs::read(install.join("app/app.js")).unwrap(), b"new-app");
         fs::remove_dir_all(root).unwrap();
     }

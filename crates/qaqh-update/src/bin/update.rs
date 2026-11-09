@@ -3,6 +3,8 @@
 //! 子命令：
 //!   plan            [--source <dir>] --install-root <dir> [--json]
 //!       读 catalog + install-state，输出更新计划（不落任何文件）。
+//!   init            --install-root <dir> [--adopt]
+//!       写安装根标记；--adopt 收编已存在的 QAQ-Harness 安装目录（NSIS 平根）。
 //!   stage           --source <dir> --install-root <dir> --staging <dir> [--json]
 //!       校验并暂存选中 artifact，写出 staged-operation.json。
 //!   apply-staged    --staging <dir> --install-root <dir>
@@ -23,9 +25,9 @@ use std::time::{Duration, Instant};
 
 use qaqh_update::{
     ApplyStagedOptions, DirectoryUpdateSource, Result, UpdateError, UpdateMode, UpdateSource,
-    apply_staged, current_snapshot_path, installation_id_for_path, load_installed_state,
-    lock_install_root, plan_update, read_staged_operation, safe_join_under_root, stage_update,
-    verify_install_root,
+    adopt_install_root, apply_staged, current_snapshot_path, initialize_install_root,
+    installation_id_for_path, load_installed_state, lock_install_root, normalized_root_text,
+    plan_update, read_staged_operation, stage_update, verify_install_root,
 };
 use std::fs;
 
@@ -42,6 +44,7 @@ fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let result = match arguments.first().map(String::as_str) {
         Some("plan") => cmd_plan(&arguments[1..]),
+        Some("init") => cmd_init(&arguments[1..]),
         Some("stage") => cmd_stage(&arguments[1..]),
         Some("apply-staged") => cmd_apply_staged(&arguments[1..]),
         Some("rollback-staged") => cmd_rollback_staged(&arguments[1..]),
@@ -77,11 +80,27 @@ fn print_usage() {
     println!(
         "qaqh-update — QAQ-Harness 运行时更新 CLI\n\
          plan [--source <dir>] --install-root <dir> [--json]\n\
+          init --install-root <dir> [--adopt]\n\
          stage --source <dir> --install-root <dir> --staging <dir> [--json]\n\
          apply-staged --staging <dir> --install-root <dir> [--wait-pid <pid>] [--wait-timeout <secs>] [--relaunch <cmd> <args...>]\n\
          rollback-staged --staging <dir> --install-root <dir>\n\
          inspect --staging <dir> --install-root <dir>"
     );
+}
+
+/// 写安装根标记。--adopt 用于收编 NSIS 装出来的平根:标记缺失但目录里装着
+/// 产品;写标记本身不走维护锁(锁依赖已验证的标记,存在鸡蛋问题)。
+fn cmd_init(raw: &[String]) -> Result<()> {
+    let args = Args::parse(raw)?;
+    let install_input = PathBuf::from(args.require("install-root")?);
+    if args.flag("adopt") {
+        let canonical = adopt_install_root(Path::new(&install_input))?;
+        println!("init: adopted install root {}", canonical.display());
+        return Ok(());
+    }
+    let canonical = initialize_install_root(&install_input)?;
+    println!("init: initialized install root {}", canonical.display());
+    Ok(())
 }
 
 /// 简易 `--key value` 参数解析（与 qaqh-pack 同款，无 clap 依赖）。
@@ -92,15 +111,20 @@ struct Args {
 impl Args {
     fn parse(raw: &[String]) -> Result<Self> {
         let mut pairs = Vec::new();
-        let mut iter = raw.iter();
+        let mut iter = raw.iter().peekable();
         while let Some(key) = iter.next() {
             if !key.starts_with("--") {
                 return Err(UpdateError(format!("expected --flag, got '{key}'")));
             }
-            let value = iter
-                .next()
-                .ok_or_else(|| UpdateError(format!("missing value for {key}")))?
-                .clone();
+            // 无值布尔旗标(--adopt / --json):下一个 token 是旗标或耗尽时收空串。
+            let value = match iter.peek() {
+                Some(next) if !next.starts_with("--") => {
+                    let value = (*next).clone();
+                    iter.next();
+                    value
+                }
+                _ => String::new(),
+            };
             pairs.push((key.strip_prefix("--").unwrap_or(key).to_string(), value));
         }
         Ok(Self { pairs })
@@ -133,12 +157,12 @@ fn load_state(install_root: &Path) -> qaqh_update::Result<Option<qaqh_update::In
 
 fn validate_staging_root(install_root: &Path, staging_root: &Path) -> Result<()> {
     let canonical_install = verify_install_root(install_root)?;
+    // staging 固定位于 <安装根>/staging(它本身是保留名,不能再用 safe_join 探测)。
+    // 路径比较统一走 normalized_root_text:canonicalize 产出 \\?\ 前缀路径,而
+    // 首次暂存目录尚不存在、不会被规范化,裸字符串比较必误判。
     let expected = canonical_install.join("staging");
-    if let Some(parent) = expected.parent() {
-        safe_join_under_root(parent, "staging")?;
-    }
     if let Some(parent) = staging_root.parent()
-        && parent != canonical_install
+        && normalized_root_text(parent) != normalized_root_text(&canonical_install)
     {
         return Err(UpdateError(
             "staging path parent must be the installation root".into(),
@@ -154,7 +178,7 @@ fn validate_staging_root(install_root: &Path, staging_root: &Path) -> Result<()>
     } else {
         staging_input
     };
-    if staging != expected {
+    if normalized_root_text(&staging) != normalized_root_text(&expected) {
         return Err(UpdateError(format!(
             "staging root must be the managed directory {}",
             expected.display()

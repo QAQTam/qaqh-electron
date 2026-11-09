@@ -37,9 +37,12 @@ function verifyAsar(context, root, platform) {
     throw new Error("Packaged renderer contains missing/stale files.");
   }
   const daemonName = platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
+  // Windows NSIS 额外携带热更新 handoff 工作器;Linux 由 dpkg 管程序文件,
+  // updater CLI 不得进入系统包。
+  const expectedBin = platform === "win32" ? [daemonName, "qaqh-update.exe"] : [daemonName];
   if (existsSync(join(resources, "baseline")) ||
-      JSON.stringify(readdirSync(join(resources, "bin")).sort()) !== JSON.stringify([daemonName])) {
-    throw new Error("System package must contain only its bundled daemon, without component overlays or updater CLIs.");
+      JSON.stringify(readdirSync(join(resources, "bin")).sort()) !== JSON.stringify(expectedBin)) {
+    throw new Error("System package bin/ contents mismatch (daemon + win-only updater CLI expected).");
   }
   const daemon = join(resources, "bin", daemonName);
   if ((platform !== "win32" && !(statSync(daemon).mode & 0o111)) ||

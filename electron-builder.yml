@@ -25,6 +25,10 @@ extraResources:
     filter:
       - "qaqh-daemon"
       - "qaqh-daemon.exe"
+      # 热更新 handoff 工作器(仅 Windows 分发;Linux 走 dpkg,verify-package 会
+      # 拒绝 linux 包里出现 updater CLI)。
+      - "qaqh-update"
+      - "qaqh-update.exe"
 
 linux:
   icon: build/icons

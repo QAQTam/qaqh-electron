@@ -1,6 +1,14 @@
 /* QAQ-Harness WebUI —— 设置页与设备配对面板 (Settings & Pairing) */
 
 @layer components {
+  /* 本地热更新区块:状态网格与按钮行,更新源路径过长时省略(悬浮看全量)。 */
+  .about-updates { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .about-updates .about-devbar { margin-top: 10px; }
+  .about-update-source {
+    max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 500;
+  }
+
   /* 设置页占满工作区,与消息/工具保持同一层级。 */
   .settings-page {
     display: grid; grid-template-rows: auto minmax(0, 1fr) auto;

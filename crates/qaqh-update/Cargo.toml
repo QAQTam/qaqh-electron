@@ -13,6 +13,9 @@ hex = "0.4"
 zip = "8.6"
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [[bin]]
 name = "qaqh-pack"
 path = "src/bin/pack.rs"

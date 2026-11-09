@@ -46,6 +46,13 @@ nsis *options:
 frontend-rolling *options:
     @node scripts/package-frontend.mjs {{options}}
 
+# 本地前端热更新闭环：构建 renderer/shell → 单文件 app.asar bundle → 发布到本地
+# update-source（默认 %LOCALAPPDATA%\QAQ-Harness\update-source，可用 QAQH_UPDATE_SOURCE
+# 覆盖）。壳启动/设置页「检查更新」扫到后即可暂存并重启应用。
+frontend-update *options:
+    node scripts/make-bundles.mjs --skip-backend {{options}} &&
+    node scripts/make-update-source.mjs --publish
+
 # 常用目标的短命令，等价于 just build <target>。
 dir *options:
     @just build dir {{options}}

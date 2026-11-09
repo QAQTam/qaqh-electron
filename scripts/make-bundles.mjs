@@ -5,8 +5,9 @@
  *   frontend → app 代码(package.json + dist/ + renderer/),target 前缀 app/,重启 Electron;
  *   backend  → qaqh-daemon 二进制,target 前缀 backend/,重启 daemon。
  *
- * 布局对齐已定稿的双根架构:overlay = ~/.local/share/QAQ-Harness/{app/, backend/},
- * bundle 的 files[] target 直接是 overlay 相对路径,updater apply 后即生效。
+ * NSIS 平根布局(README doctrine:壳只从安装目录加载,不做 overlay):
+ *   frontend → 整个 app 代码打成单文件 resources/app.asar,apply 即换 asar,重启 Electron;
+ *   backend  → resources/bin/qaqh-daemon[.exe],apply 换 daemon 二进制(接线待做)。
  *
  * 用法(just 封装):
  *   node scripts/make-bundles.mjs [--skip-frontend] [--skip-backend] [--skip-install]
@@ -16,7 +17,8 @@
  */
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
+import { basename, join, resolve, dirname } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { collectBundle } from "./collect-bundle.mjs";
 
@@ -24,6 +26,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const backend = resolve(root, "../qaqh-backend");
 const frontend = resolve(root, "webui");
 const outRoot = resolve(root, ".qaqh-bundles");
+const require = createRequire(import.meta.url);
 
 function run(command, args, cwd = root, capture = false) {
   console.log(`\n> ${command} ${args.join(" ")}`);
@@ -32,6 +35,9 @@ function run(command, args, cwd = root, capture = false) {
     stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    // Windows 上 pnpm/cargo 都是 PATH shim(.cmd),无 shell 的 spawnSync 找不到;
+    // 参数都是不含空格的简单 token,cmd 转发安全。
+    shell: process.platform === "win32",
   });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} failed (${result.signal || result.status})`);
@@ -55,7 +61,7 @@ function stagingPath(kind) {
 }
 
 async function buildFrontend(identity, skipInstall) {
-  console.log("\n[bundle-frontend] renderer + shell code");
+  console.log("\n[bundle-frontend] renderer + shell code (NSIS asar flavor)");
   if (skipInstall) {
     // 依赖已就位才允许 skip;否则 typecheck/build 会自己失败,不在脚本里猜。
   } else {
@@ -70,18 +76,25 @@ async function buildFrontend(identity, skipInstall) {
   for (const entry of ["package.json", "dist", "renderer"]) {
     cpSync(join(root, entry), join(staging, entry), { recursive: true });
   }
+  // 应用载荷 = 单个 resources/app.asar(electron 运行时从安装根的该路径加载)。
+  // payload 目录与 staging 分离,避免 asar 把自己的输出再打进包里。
+  const payload = stagingPath("frontend-payload");
+  mkdirSync(join(payload, "resources"), { recursive: true });
+  const asar = require("@electron/asar");
+  await asar.createPackage(staging, join(payload, "resources", "app.asar"));
   const buildId = `frontend-${identity.buildId}`;
   const bundleRoot = join(outRoot, identity.releaseId, buildId);
+  const zipOut = join(outRoot, identity.releaseId, "bundles", `${buildId}.zip`);
+  mkdirSync(dirname(zipOut), { recursive: true });
   await collectBundle([
     "--kind", "frontend", "--build-id", buildId, "--app-version", identity.version,
-    "--source", staging, "--target-prefix", "app", "--out", bundleRoot,
+    "--source", payload, "--out", bundleRoot,
     "--component", `frontend=${buildId}`, "--control-protocol", "1",
     "--release-id", identity.releaseId, "--channel", "local",
-    "--exec", "dist/main/index.cjs", "--exec", "dist/preload/index.cjs",
   ]);
   run("cargo", ["run", "--quiet", "--manifest-path", join(root, "crates", "qaqh-update", "Cargo.toml"),
     "--bin", "qaqh-pack", "--", "zip", "--bundle", bundleRoot,
-    "--out", join(outRoot, identity.releaseId, "bundles", `${buildId}.zip`)]);
+    "--out", zipOut]);
 }
 
 function buildBackend(identity) {
@@ -94,19 +107,22 @@ function buildBackend(identity) {
   if (!artifact) throw new Error("Cargo did not report a qaqh-daemon executable.");
 
   const staging = stagingPath("backend");
-  cpSync(artifact.executable, join(staging, "qaqh-daemon"));
+  cpSync(artifact.executable, join(staging, basename(artifact.executable)));
   const buildId = `backend-${identity.buildId}`;
   const bundleRoot = join(outRoot, identity.releaseId, buildId);
+  const zipOut = join(outRoot, identity.releaseId, "bundles", `${buildId}.zip`);
+  mkdirSync(dirname(zipOut), { recursive: true });
   return collectBundle([
     "--kind", "backend", "--build-id", buildId, "--app-version", identity.version,
-    "--source", staging, "--target-prefix", "backend", "--out", bundleRoot,
+    "--source", staging, "--target-prefix", "resources/bin", "--out", bundleRoot,
     "--component", `backend=${buildId}`, "--control-protocol", "1",
     "--release-id", identity.releaseId, "--channel", "local",
-    "--exec", "qaqh-daemon",
+    // Windows 落盘忽略 mode;Linux 包必须带执行位,否则应用后 daemon 无法执行。
+    ...(process.platform === "win32" ? [] : ["--exec", basename(artifact.executable)]),
   ]).then(() => {
     run("cargo", ["run", "--quiet", "--manifest-path", join(root, "crates", "qaqh-update", "Cargo.toml"),
       "--bin", "qaqh-pack", "--", "zip", "--bundle", bundleRoot,
-      "--out", join(outRoot, identity.releaseId, "bundles", `${buildId}.zip`)]);
+      "--out", zipOut]);
   });
 }
 

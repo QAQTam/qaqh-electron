@@ -20,9 +20,10 @@
  */
 import { createHash } from "node:crypto";
 import {
-  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync,
+  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { basename, join, resolve, dirname } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -155,6 +156,20 @@ function main() {
     console.log(`  artifact ${artifact.id} (${artifact.restartPolicy}) -> ${artifact.payload.path}`);
   }
   console.log(`update-source ready: ${outDir}`);
+  if (args.includes("--publish")) {
+    const publishRoot = process.env.QAQH_UPDATE_SOURCE?.trim()
+      || join(process.env.LOCALAPPDATA ?? homedir(), "QAQ-Harness", "update-source");
+    rmSync(publishRoot, { recursive: true, force: true });
+    mkdirSync(join(publishRoot, "bundles"), { recursive: true });
+    copyFileSync(join(outDir, "catalog.json"), join(publishRoot, "catalog.json"));
+    for (const artifact of catalog.artifacts) {
+      copyFileSync(
+        join(outDir, artifact.payload.path),
+        join(publishRoot, artifact.payload.path),
+      );
+    }
+    console.log(`published: ${publishRoot}`);
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

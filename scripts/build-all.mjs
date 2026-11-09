@@ -123,6 +123,14 @@ async function main() {
     const daemonName = windowsBuild ? "qaqh-daemon.exe" : "qaqh-daemon";
     cpSync(artifact.executable, join(bin, daemonName));
     if (!windowsBuild) chmodSync(join(bin, daemonName), 0o755);
+    // 热更新 handoff 工作器:仅 Windows 平台随包分发(Linux 走 dpkg,verify-package
+    // 拒绝系统包里出现 updater CLI)。见 crates/qaqh-update 与 docs 的更新设计。
+    if (process.platform === "win32") {
+      run("cargo", ["build", "--locked", "--release", "--manifest-path",
+        join(root, "crates", "qaqh-update", "Cargo.toml"), "--bin", "qaqh-update"], root);
+      cpSync(join(root, "crates", "qaqh-update", "target", "release", "qaqh-update.exe"),
+        join(bin, "qaqh-update.exe"));
+    }
   } else {
     console.warn("Explicit --skip-backend: reusing staged daemon; its source freshness is NOT guaranteed.");
   }

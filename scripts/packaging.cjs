@@ -59,7 +59,9 @@ function expectedPackageVersion(sourceVersion, env = process.env) {
 
 function assertInputs(root, platform = process.platform) {
   const daemonName = platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
-  for (const file of [...requiredFiles, `resources/bin/${daemonName}`]) {
+  const updaterName = platform === "win32" ? "qaqh-update.exe" : null;
+  for (const file of [...requiredFiles, `resources/bin/${daemonName}`,
+    ...(updaterName ? [`resources/bin/${updaterName}`] : [])]) {
     const path = join(root, file);
     if (!existsSync(path) || !statSync(path).isFile() || statSync(path).size === 0) {
       throw new Error(`Missing or empty packaging input: ${file}. Run just build dir.`);

@@ -47,5 +47,10 @@ contextBridge.exposeInMainWorld("qaqhHost", {
     set: (disabled: boolean) => ipcRenderer.invoke("qaqh:gpu-pref-set", { disabled }) as Promise<{ currentLaunchDisabled: boolean; nextLaunchDisabled: boolean }>,
   },
   relaunch: () => ipcRenderer.invoke("qaqh:relaunch"),
+  updates: {
+    check: () => ipcRenderer.invoke("qaqh:update-check"),
+    stage: () => ipcRenderer.invoke("qaqh:update-stage"),
+    apply: () => ipcRenderer.invoke("qaqh:update-apply"),
+  },
   requestQuit: (options: { stopDaemon: boolean; stopActiveWork: boolean }) => ipcRenderer.invoke("qaqh:request-quit", options),
 });

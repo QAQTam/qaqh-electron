@@ -372,6 +372,10 @@ mod tests {
         fs::create_dir_all(root.join(GENERATIONS_DIR).join(id)).expect("create generation");
     }
 
+    // 快照世代(generations + 链接切换)目前只被 Linux 维护链路使用;NSIS 平根
+    // 更新走 apply-staged 的 in-place 分支。Windows 上 symlink 创建需要特权,
+    // 这些用例在 Unix 机器上才有意义。
+    #[cfg(unix)]
     #[test]
     fn prepared_operation_gets_one_boot_then_unconfirmed_boot_rolls_back() {
         let install = install_root("pending-rollback");
@@ -403,6 +407,7 @@ mod tests {
         fs::remove_dir_all(install.parent().expect("test parent")).expect("cleanup");
     }
 
+    #[cfg(unix)]
     #[test]
     fn confirmation_requires_matching_booting_operation() {
         let install = install_root("confirm");
@@ -422,6 +427,7 @@ mod tests {
         fs::remove_dir_all(install.parent().expect("test parent")).expect("cleanup");
     }
 
+    #[cfg(unix)]
     #[test]
     fn generation_id_and_symlink_are_rejected() {
         let install = install_root("invalid-generation");
@@ -436,6 +442,7 @@ mod tests {
         fs::remove_dir_all(install.parent().expect("test parent")).expect("cleanup");
     }
 
+    #[cfg(unix)]
     #[test]
     fn confirmed_snapshot_can_be_manually_rolled_back() {
         let install = install_root("manual-rollback");

@@ -7,6 +7,7 @@ import { DaemonManager } from "./daemon.js";
 import { RingingClient } from "./ringing-client.js";
 import { ChallengeManager } from "./challenges.js";
 import { registerIpcHandlers, registerQuitIpcHandler, isTrustedRenderer } from "./ipc-handlers.js";
+import { applyStagedAndQuit, checkForUpdate, ensureInstallRootAdopted, stageUpdate } from "./updater.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
 protocol.registerSchemesAsPrivileged([
@@ -104,6 +105,8 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    // 首启动收编 NSIS 平根(写 install-root 标记);失败只影响热更新能力,不阻塞壳。
+    ensureInstallRootAdopted();
     await bootstrapApp();
   });
 }
@@ -254,6 +257,25 @@ ipcMain.handle("qaqh:gpu-pref-set", (event, payload: unknown) => {
 ipcMain.handle("qaqh:relaunch", (event) => {
   if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
   app.relaunch();
+  try { tray?.destroy(); } catch { /* 面板侧可能已先摘除 */ }
+  tray = null;
+  app.quit();
+});
+
+// 本地热更新(plan 只读检查 / stage 校验暂存 / apply handoff+退出)。
+// 全部走壳本地 qaqh-update CLI,不经 daemon。
+ipcMain.handle("qaqh:update-check", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  return checkForUpdate();
+});
+ipcMain.handle("qaqh:update-stage", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  return stageUpdate();
+});
+ipcMain.handle("qaqh:update-apply", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  // 抛错(无暂存/CLI 缺失)时壳保持运行,renderer 捕获转 toast。
+  applyStagedAndQuit();
   try { tray?.destroy(); } catch { /* 面板侧可能已先摘除 */ }
   tray = null;
   app.quit();

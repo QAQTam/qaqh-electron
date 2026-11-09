@@ -34,6 +34,32 @@ pub fn initialize_install_root(root: &Path) -> Result<PathBuf> {
     verify_install_root(&canonical)
 }
 
+/// 收编一个已存在的产品安装目录(NSIS 装出来的平根):跳过空目录检查,但要求
+/// 目录里确实装着 QAQ-Harness(exe 或 resources/),防止误标记无关目录。
+/// 已带标记的目录直接走 verify(幂等)。
+pub fn adopt_install_root(root: &Path) -> Result<PathBuf> {
+    if !root.exists() {
+        return Err(UpdateError(format!(
+            "cannot adopt missing install root '{}'",
+            root.display()
+        )));
+    }
+    let canonical = prepare_user_root(root, true)?;
+    let looks_installed = canonical.join("QAQ-Harness.exe").is_file()
+        || canonical.join("resources").is_dir();
+    if !looks_installed {
+        return Err(UpdateError(format!(
+            "refusing to adopt '{}': no QAQ-Harness.exe or resources/ present",
+            canonical.display()
+        )));
+    }
+    if canonical.join(INSTALL_ROOT_MARKER).exists() {
+        return verify_install_root(&canonical);
+    }
+    write_marker(&canonical)?;
+    verify_install_root(&canonical)
+}
+
 fn write_marker(canonical: &Path) -> Result<()> {
     let canonical_root = normalized_root_text(canonical);
     let marker = InstallRootMarker {
@@ -56,15 +82,14 @@ fn write_marker(canonical: &Path) -> Result<()> {
     file.write_all(&serde_json::to_vec_pretty(&marker)?)?;
     file.sync_all()?;
     fs::rename(&temporary, &marker_path)?;
+    // Windows 不允许对目录句柄 FlushFileBuffers(拒绝访问);rename 本身已保证
+    // 原子落位,目录 fsync 仅 unix 需要。
+    #[cfg(unix)]
     File::open(canonical)?.sync_all()?;
     Ok(())
 }
 
 pub fn verify_install_root(root: &Path) -> Result<PathBuf> {
-    if root.as_os_str().is_empty() {
-        return Err(UpdateError("install root is empty".into()));
-    }
-    reject_root_path_symlink_components(root)?;
     let canonical = fs::canonicalize(root).map_err(|error| {
         UpdateError(format!(
             "canonicalize install root '{}': {error}",
@@ -144,50 +169,75 @@ pub fn lock_install_root(root: &Path) -> Result<InstallRootLock> {
 fn lock_root_directory(root: &Path) -> Result<InstallRootLock> {
     let path = root.join(MAINTENANCE_LOCK);
     reject_reparse_point_if_present(&path)?;
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    }
-    let file = options.open(&path)?;
-    let metadata = file.metadata().map_err(UpdateError::from)?;
-    if !metadata.is_file() {
-        return Err(UpdateError("maintenance lock is not a regular file".into()));
-    }
-    ensure_current_user_owner(&metadata)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(UpdateError(
-                "maintenance lock permissions must be 0600".into(),
-            ));
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true);
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-        // SAFETY: flock only observes the live descriptor; File owns it until
-        // InstallRootLock is dropped, which releases the advisory lock.
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if result != 0 {
-            let error = std::io::Error::last_os_error();
-            if error.kind() == ErrorKind::WouldBlock {
-                return Err(UpdateError("maintenance lock busy".into()));
+        let file = options.open(&path)?;
+        let metadata = file.metadata().map_err(UpdateError::from)?;
+        if !metadata.is_file() {
+            return Err(UpdateError("maintenance lock is not a regular file".into()));
+        }
+        ensure_current_user_owner(&metadata)?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(UpdateError(
+                    "maintenance lock permissions must be 0600".into(),
+                ));
             }
-            return Err(UpdateError(format!("acquire maintenance lock: {error}")));
         }
+        {
+            use std::os::unix::fd::AsRawFd;
+            // SAFETY: flock only observes the live descriptor; File owns it until
+            // InstallRootLock is dropped, which releases the advisory lock.
+            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == ErrorKind::WouldBlock {
+                    return Err(UpdateError("maintenance lock busy".into()));
+                }
+                return Err(UpdateError(format!("acquire maintenance lock: {error}")));
+            }
+        }
+        return Ok(InstallRootLock { _file: file });
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        return Err(UpdateError(
-            "OS advisory install lock is unsupported on this platform".into(),
-        ));
+        // 独占语义等价 flock LOCK_EX:share_mode(0) 让第二个打开者直接收到
+        // sharing violation;句柄随进程退出释放,崩溃不会留下死锁。
+        use std::os::windows::fs::OpenOptionsExt;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .share_mode(0)
+            .open(&path)
+            .map_err(|error| {
+                if error.raw_os_error() == Some(ERROR_SHARING_VIOLATION) {
+                    UpdateError("maintenance lock busy".into())
+                } else {
+                    UpdateError::from(error)
+                }
+            })?;
+        let metadata = file.metadata().map_err(UpdateError::from)?;
+        if !metadata.is_file() {
+            return Err(UpdateError("maintenance lock is not a regular file".into()));
+        }
+        return Ok(InstallRootLock { _file: file });
     }
-    Ok(InstallRootLock { _file: file })
+    #[cfg(not(any(unix, windows)))]
+    {
+        Err(UpdateError(
+            "OS advisory install lock is unsupported on this platform".into(),
+        ))
+    }
 }
 
 fn prepare_user_root(root: &Path, reject_root: bool) -> Result<PathBuf> {
@@ -427,7 +477,7 @@ fn reject_reparse_point_if_present(path: &Path) -> Result<()> {
     }
 }
 
-fn normalized_root_text(path: &Path) -> String {
+pub fn normalized_root_text(path: &Path) -> String {
     let value = path.to_string_lossy().replace('\\', "/");
     let value = if let Some(rest) = value.strip_prefix("//?/UNC/") {
         format!("//{rest}")

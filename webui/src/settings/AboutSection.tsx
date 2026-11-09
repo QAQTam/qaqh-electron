@@ -15,7 +15,7 @@ import { transport } from "../lib/transport";
 import { daemonLanStatus } from "../lib/pairing";
 import { toast } from "../ui/toast";
 import { devConsoleOpen, devMode, openDevConsole, pushUnlockClick } from "../lib/devmode";
-import { desktopHost } from "../lib/desktop-host";
+import { desktopHost, type UpdateStatus } from "../lib/desktop-host";
 import { DevConsole } from "./dev/DevConsole";
 
 export const AboutSection: Component = () => {
@@ -28,6 +28,9 @@ export const AboutSection: Component = () => {
   const [stamps, setStamps] = createSignal<number[]>([]);
   /** Chrome DevTools 开关态(来自主进程回执;toggle 失败时不翻转)。 */
   const [devtoolsOpen, setDevtoolsOpen] = createSignal(false);
+  /** 本地热更新状态(仅桌面壳;浏览器 dev 环境整块隐藏)。 */
+  const [update, setUpdate] = createSignal<UpdateStatus | null>(null);
+  const [updateBusy, setUpdateBusy] = createSignal(false);
 
   const toggleDevtools = (): void => {
     const bridge = desktopHost()?.devtools;
@@ -57,7 +60,57 @@ export const AboutSection: Component = () => {
       setDaemonBuildId(status.build_id ?? null);
       setDaemonProtocol(status.protocol_version == null ? null : String(status.protocol_version));
     }).catch(() => {});
+    // 打开设置页即扫一次本地 update-source(只读 plan,不改任何文件)。
+    refreshUpdate();
   });
+
+  function refreshUpdate(): void {
+    const bridge = desktopHost()?.updates;
+    if (bridge == null) return;
+    setUpdateBusy(true);
+    bridge.check().then((status) => {
+      setUpdate(status);
+      setUpdateBusy(false);
+    }).catch((error: unknown) => {
+      setUpdateBusy(false);
+      toast(`检查更新失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    });
+  }
+
+  function stageUpdate(): void {
+    const bridge = desktopHost()?.updates;
+    if (bridge == null) return;
+    setUpdateBusy(true);
+    bridge.stage().then((status) => {
+      setUpdate(status);
+      setUpdateBusy(false);
+      if (status.staged) toast("更新已暂存，重启应用后生效", "ok");
+      else if (status.error) toast(`暂存失败：${status.error}`, "err");
+    }).catch((error: unknown) => {
+      setUpdateBusy(false);
+      toast(`暂存失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    });
+  }
+
+  function applyUpdate(): void {
+    const bridge = desktopHost()?.updates;
+    if (bridge == null) return;
+    // 成功路径:主进程拉起 handoff 后自行退出,这里不会收到 resolve。
+    bridge.apply().catch((error: unknown) => {
+      toast(`应用更新失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    });
+  }
+
+  const updateStateText = (): string => {
+    const status = update();
+    if (status == null) return updateBusy() ? "检查中…" : "未检查";
+    if (status.error != null) return `检查失败：${status.error}`;
+    if (status.staged) return "已暂存，等待重启应用";
+    const plan = status.plan;
+    if (plan == null) return status.available ? "更新源为空" : `不可用：${status.reason ?? ""}`;
+    if (plan.upToDate) return `已是最新（${plan.releaseId}）`;
+    return `有可用更新：${plan.releaseId}（${plan.mode}）`;
+  };
 
   const version = (): string => {
     if (failed()) return "壳未提供 app_version";
@@ -118,6 +171,32 @@ export const AboutSection: Component = () => {
         <span>后端协议</span>
         <b>{daemonProtocol() ?? "—"}</b>
       </div>
+      <Show when={desktopHost()?.updates != null}>
+        <div class="about-updates">
+          <div class="readonly-grid">
+            <span>本地更新源</span>
+            <b class="about-update-source" title={update()?.sourceDir ?? ""}>{update()?.sourceDir ?? "—"}</b>
+            <span>更新状态</span>
+            <b>{updateStateText()}</b>
+          </div>
+          <div class="about-devbar">
+            <button type="button" class="ghost-mini" disabled={updateBusy()} onClick={refreshUpdate}>
+              检查更新
+            </button>
+            <Show when={update()?.plan != null && !(update()?.plan?.upToDate ?? true) && !update()?.staged}>
+              <button type="button" class="ghost-mini" disabled={updateBusy()} onClick={() => stageUpdate()}>
+                下载并暂存
+              </button>
+            </Show>
+            <Show when={update()?.staged}>
+              <button type="button" class="primary-mini" onClick={() => applyUpdate()}>
+                重启并应用
+              </button>
+            </Show>
+            <span class="settings-muted">暂存与安装只动本安装目录的 app.asar；daemon 会话不中断。</span>
+          </div>
+        </div>
+      </Show>
       <Show when={devMode()}>
         <div class="about-devbar">
           <button type="button" class="primary-mini" onClick={openDevConsole}>打开调试控制台</button>

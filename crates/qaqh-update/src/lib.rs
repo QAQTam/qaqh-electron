@@ -11,8 +11,9 @@ mod state;
 
 pub use apply::{apply_bundle_zip, read_bundle_manifest_zip, rollback_bundle_zip};
 pub use install_root::{
-    INSTALL_ROOT_MARKER, InstallRootLock, initialize_install_root, is_reparse_or_symlink,
-    lock_install_root, safe_join_under_root, verify_install_root,
+    INSTALL_ROOT_MARKER, InstallRootLock, adopt_install_root, initialize_install_root,
+    is_reparse_or_symlink, lock_install_root, normalized_root_text, safe_join_under_root,
+    verify_install_root,
 };
 pub use model::{
     Artifact, ArtifactKind, ArtifactPayload, ArtifactRequires, ArtifactStrategy, BundleFile,

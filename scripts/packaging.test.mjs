@@ -136,6 +136,8 @@ function fixture(t) {
   put("dist/preload/index.cjs", "module.exports = {};");
   put(`resources/bin/${daemonName}`, daemonStub());
   if (targetPlatform !== "win32") chmodSync(join(root, "resources/bin", daemonName), 0o755);
+  // Windows NSIS 额外携带热更新 handoff 工作器(assertInputs/verify 白名单)。
+  if (targetPlatform === "win32") put("resources/bin/qaqh-update.exe", daemonStub());
   // native addon：verifyNativeAddon 断言 asar 外副本与构建树逐字节一致。
   const addonName = targetPlatform === "win32"
     ? "qaqh_napi_client.win32-x64-msvc.node"
@@ -168,6 +170,9 @@ test("afterPack validates actual ASAR content and rejects stale renderer/daemon 
   const outputDaemon = `output/resources/bin/${daemon}`;
   put(outputDaemon, readFileSync(join(root, "resources/bin", daemon)));
   if (targetPlatform !== "win32") chmodSync(join(appOutDir, "resources/bin", daemon), 0o755);
+  if (targetPlatform === "win32") {
+    put("output/resources/bin/qaqh-update.exe", readFileSync(join(root, "resources/bin/qaqh-update.exe")));
+  }
   const input = join(root, "archive-input");
   for (const file of ["package.json", "dist", "renderer"]) {
     cpSync(join(root, file), join(input, file), { recursive: true });
