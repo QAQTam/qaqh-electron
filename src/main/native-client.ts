@@ -180,7 +180,14 @@ export function loadNativeAddon(): NativeAddon {
   const candidates = [
     // 显式覆盖（多实例/测试）。
     ...(override ? [join(override, file)] : []),
-    // 打包：.node 被 asarUnpack 解到 app.asar 同级 unpacked 目录。
+    // 打包：asarUnpack 把 .node 解到 <resources>/app.asar.unpacked/native/。
+    // 必须走 process.resourcesPath——热更新 asar 可能把 app 代码放在 asar 根
+    // (asar flavor)，用 __dirname 两级向上会推到 <asar>/app.asar.unpacked 这种
+    // 错误位置；resourcesPath 与 asar 内部布局无关。
+    ...(process.resourcesPath
+      ? [join(process.resourcesPath, "app.asar.unpacked", "native", file)]
+      : []),
+    // 兼容 electron-builder 嵌套布局（dist/main 在 asar 内）的推导，兜底保留。
     join(__dirname, "..", "..", "app.asar.unpacked", "native", file),
     // 开发：repo/native。
     join(__dirname, "..", "..", "native", file),
