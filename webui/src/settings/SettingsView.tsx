@@ -9,7 +9,7 @@
  *    清空不会生效(dto.rs:10-11),所以这些框清空即视作未改动。
  *  - MCP/LSP 只有读模型(ConfigDto:56-59 注明写模型另立),这里只读展示。
  *
- * 服务商与存档在 `ProvidersSection` / `ProfilesSection`（命令直写 profiles.toml）;
+ * 服务商（端点、密钥、模型目录、默认选择）在 `ProvidersSection`（命令直写 profiles.toml）;
  * 设备配对在 `PairingSection`;
  * 左侧分区导航是**切换式单页**:点谁渲染谁(2026-10-16 起,原「长滚动+锚点
  * 跳转+scroll-spy」因高亮与视口脱节下线),草稿在 store,切换不丢改动。
@@ -354,7 +354,7 @@ export const SettingsView: Component<{
 
                   <Show when={activeSection() === "section-appearance"}>
                   <Section id="section-appearance" title="外观" desc={STR.settingsThemeNote}>
-                    <Field label="界面风格预设" hint="纯 CSS 主题预设；Electron 壳当前不提供原生 Mica/材质切换（set_window_theme 返回 false）。">
+                    <Field label="界面风格预设" hint="纯 CSS 主题预设;Win11 22H2+ 由壳启用原生 Mica,旧系统自动回退实底。">
                       <Select
                         value={themePreset()}
                         onChange={(value) => applyThemePreset(value as ThemePreset)}

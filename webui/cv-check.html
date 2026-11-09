@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>cv-check</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.6 "Segoe UI", sans-serif; }
+  body { background: #f3f3f3; color: #1a1a1a; }
+  body.mica { background: transparent; }
+  #app { display: grid; height: 100%; grid-template-rows: 48px minmax(0, 1fr); }
+  #top { display: grid; align-items: center; padding: 0 12px; border-bottom: 1px solid rgba(0,0,0,.06); }
+  body.mica #top { background: transparent; border-bottom: 0; }
+  .workspace { display: grid; height: 100%; }
+  #main { min-height: 0; display: grid; }
+  .session-column { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
+  #session { position: relative; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+  .workspace-content { height: 100%; }
+  body.mica .workspace-content { background: rgb(255 255 255 / 50%); }
+  body:not(.mica) .workspace-content { background: #f9f9f9; }
+  #messages {
+    height: 100%; overflow-y: auto; overflow-x: hidden; overflow-anchor: auto;
+    padding: 16px calc(var(--gutter, 96px) - 10px) 24px;
+    scrollbar-gutter: stable both-edges;
+    box-sizing: border-box;
+  }
+  .turn { width: min(760px, 100%); margin-inline: auto; padding-bottom: 24px; }
+  body.cv .turn { content-visibility: auto; contain-intrinsic-size: auto 320px; }
+  .turn h2 { border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+  .turn pre { background: rgba(0,0,0,.05); padding: 12px; overflow-x: auto; }
+  .badge { position: fixed; top: 8px; right: 8px; z-index: 9; background: #d93025; color: #fff; padding: 4px 10px; border-radius: 4px; font: bold 13px monospace; }
+  body.nocv .badge { background: #188038; }
+  body.nomica .badge { background: #1a73e8; }
+</style>
+</head>
+<body>
+<div class="badge" id="badge">…</div>
+<div id="app">
+  <div id="top">会话 ses_01M6 …</div>
+  <div class="workspace"><div id="main"><div class="session-column"><div id="session">
+    <div class="workspace-content"><div id="messages"></div></div>
+    <div style="padding:10px;background:rgba(0,0,0,.03)">composer…</div>
+  </div></div></div></div>
+</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  if (q.has("nocv")) document.body.classList.add("nocv"); else document.body.classList.add("cv");
+  if (q.has("nomica")) document.body.classList.add("nomica"); else document.body.classList.add("mica");
+  const scroller = document.getElementById("messages");
+  const words = ["布局","渲染","合成器","光栅","滚动","分页","占位","窗口","队列","缓存"];
+  for (let i = 0; i < 400; i++) {
+    const d = document.createElement("div");
+    d.className = "turn";
+    let p = "<h2>回合 " + (i + 1) + " / 400</h2>";
+    for (let j = 0; j < 6; j++) p += "<p>" + Array.from({length: 40}, (_, k) => words[(i + j + k) % words.length]).join("") + "</p>";
+    p += "<pre>code block " + i + "\n" + Array.from({length: 8}, (_, k) => "  line " + k + ": const x" + k + " = " + (i * k) + ";").join("\n") + "</pre>";
+    d.innerHTML = p;
+    scroller.appendChild(d);
+  }
+  const badge = document.getElementById("badge");
+  const probe = () => { badge.textContent = (q.has("nocv") ? "CV OFF" : "CV ON") + (q.has("nomica") ? "·MICA OFF" : "·MICA") + " · y=" + Math.round(scroller.scrollTop) + " · h=" + scroller.scrollHeight; };
+  setInterval(probe, 400); probe();
+  if (q.has("scroll")) requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
+</script>
+</body>
+</html>

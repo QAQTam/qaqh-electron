@@ -19,6 +19,9 @@ let configTheme: string | null = null;
 let themeTransitionTimer: number | undefined;
 let backdropSyncRevision = 0;
 let backdropSyncQueue: Promise<unknown> = Promise.resolve();
+/** 最近一次 set_window_theme 的结果:true = 壳已启用原生 Mica(Win11 22H2+)。
+ *  syncTitlebarOverlay 据此把 WCO 底色透出去;两者共用同一队列,顺序有保证。 */
+let nativeBackdropApplied = false;
 
 const prefersReducedMotion = typeof matchMedia === "function"
   ? matchMedia("(prefers-reduced-motion: reduce)")
@@ -27,28 +30,37 @@ const prefersReducedMotion = typeof matchMedia === "function"
 function syncNativeBackdrop(theme: ResolvedTheme): void {
   if (!isDesktopRuntime()) return;
   const revision = ++backdropSyncRevision;
+  // followSystem:应用内没强制主题(""/null)时告诉壳保持 nativeTheme "system",
+  // Mica 的深浅变体才能继续跟系统走,而不是被锁死在当前解析值上。
+  const followSystem = configTheme !== "light" && configTheme !== "dark";
   backdropSyncQueue = backdropSyncQueue
     .then(() => {
       if (revision !== backdropSyncRevision) return;
-      return invoke<boolean>("set_window_theme", { dark: theme === "dark" }).then((applied) => {
+      return invoke<boolean>("set_window_theme", { dark: theme === "dark", followSystem }).then((applied) => {
         // Win10 / 旧系统拿不到 Mica：撤掉透明层，让 CSS 退回实底。
-        document.documentElement.classList.toggle("has-mica", applied === true);
+        nativeBackdropApplied = applied === true;
+        document.documentElement.classList.toggle("has-mica", nativeBackdropApplied);
       });
     })
     .catch((error: unknown) => {
+      nativeBackdropApplied = false;
       document.documentElement.classList.remove("has-mica");
       console.warn("[qaqh-webui] failed to sync native Mica theme", error);
     });
 }
 
-/** WCO 窗口控制配色跟随主题(阶段4):只影响外观;失败(平台不支持)静默降级。 */
+/** WCO 窗口控制配色跟随主题(阶段4):只影响外观;失败(平台不支持)静默降级。
+ *  壳已启用 Mica 时底色透出去(Files 式无缝);否则回填主题实色,盖住透明窗口。 */
 function syncTitlebarOverlay(theme: ResolvedTheme): void {
   if (!isDesktopRuntime()) return;
-  const overlay = theme === "dark"
-    ? { color: "#17181b", symbolColor: "#edeef0" }
-    : { color: "#f7f7f8", symbolColor: "#20242b" };
   backdropSyncQueue = backdropSyncQueue
     .then(() => {
+      // 必须等 set_window_theme 落定后再读 nativeBackdropApplied：recompute()
+      // 是同步连调两次 sync，冷启动时在队列外读到的还是初始值 false，会把
+      // 实色 WCO 盖在已经启用的 Mica 上（顶部出现一条不透明色带）。
+      const overlay = theme === "dark"
+        ? { color: nativeBackdropApplied ? "#00000000" : "#17181b", symbolColor: "#edeef0" }
+        : { color: nativeBackdropApplied ? "#00000000" : "#f7f7f8", symbolColor: "#20242b" };
       const controls = desktopHost()?.windowControls;
       if (controls == null) return;
       void controls.setTitleBarOverlay(overlay).catch(() => {});

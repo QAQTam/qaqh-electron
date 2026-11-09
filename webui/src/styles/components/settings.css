@@ -58,6 +58,9 @@
     background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--accent); font-weight: 500;
   }
+  /* WinUI 3 式选中指示器(单个共享 pill,由 Sidebar 按 NavigationView 的
+     600ms 拉伸-跳变-收回公式驱动):基础主题不显示,Windows/Fluent 覆盖层显示。 */
+  .settings-nav-pill { display: none; }
   .settings-content { position: relative; min-width: 0; max-width: 740px; }
   .settings-section { padding: 0 0 18px; }
   .settings-section + .settings-section { padding-top: 2px; }
@@ -142,7 +145,11 @@
   .profile-row .ghost-mini { margin-left: auto; }
   .profile-row .ghost-mini.is-danger { margin-left: 0; color: var(--err); }
   .settings-row-wide { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .provider-cta { font-weight: 600; padding: 8px 16px; height: auto; }
+  .provider-cta, .provider-add { font-weight: 600; padding: 8px 16px; height: auto; }
+  .byok-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .byok-form > .provider-editor__head { grid-column: 1 / -1; }
+  .provider-model-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .provider-model-actions .ghost-mini { margin-left: 0; }
   .provider-meta { display: block; opacity: 0.62; font-size: var(--fs-xs); overflow-wrap: anywhere; }
   .provider-editor {
     grid-column: 1 / -1;
@@ -419,5 +426,5 @@
 
 @media (max-width: 720px) {
   .onboarding-routes { grid-template-columns: 1fr; }
-  .onboarding-byok { grid-template-columns: 1fr; }
+  .onboarding-byok, .byok-form { grid-template-columns: 1fr; }
 }

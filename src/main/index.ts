@@ -396,7 +396,11 @@ function createMainWindow(): BrowserWindow {
     minHeight: 600,
     title: "QAQ-Harness",
     show: false,
-    backgroundColor: "#18181b",
+    // Win11 22H2+ 原生 Mica:窗口背景必须透出去,DWM 才能画 systembackdrop。
+    // 不支持的系统(Win10 / 22H2-)材质是 no-op,渲染层 syncNativeBackdrop 拿到
+    // false 后撤掉 .has-mica,CSS 退回实底;ready-to-show 门闩挡住透明首帧。
+    backgroundColor: process.platform === "win32" ? "#00000000" : "#18181b",
+    ...(process.platform === "win32" ? { backgroundMaterial: "mica" as const } : {}),
     // 阶段4(spec §5):隐藏原生标题栏。Linux/Windows 用 WCO(titleBarOverlay):
     // 窗口控制由壳层原生绘制,renderer panic/挂死之后窗口仍然可拖动、缩放、
     // 关闭——「能否关窗」绝不依赖 renderer 存活。macOS 用 hiddenInset 交通灯。
@@ -407,7 +411,10 @@ function createMainWindow(): BrowserWindow {
     ...(process.platform !== "darwin"
       ? {
           titleBarOverlay: {
-            color: "#17181b",
+            // 透明 WCO:控制条直接叠在 renderer TopBar / Mica 上(Files 式无缝)。
+            // 渲染层按主题与材质回填 symbolColor;color 若平台不认 alpha,
+            // syncTitlebarOverlay 的实色回退仍在(set_window_theme 返回 false 时)。
+            color: process.platform === "win32" ? "#00000000" : "#17181b",
             symbolColor: "#edeef0",
             height: 48, // 与 TopBar(--topbar-height: 48px)同高
           },

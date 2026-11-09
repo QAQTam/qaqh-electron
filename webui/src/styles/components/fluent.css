@@ -58,6 +58,12 @@
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
     grid-template-rows: var(--topbar-height) minmax(0, 1fr);
   }
+  /* 折叠态必须在本层再压一次:上面这条规则带 html 前缀,特异性 (1,1,1) 高于
+     sidebar.css 的 #app.sidebar-collapsed (1,1,0),不补的话 Windows 上点汉堡
+     只藏标签,轨道永远 288px(实测踩坑)。轨道数对齐本层的两轨骨架。 */
+  html[data-platform="windows"] #app.sidebar-collapsed {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
   html[data-platform="windows"] #top {
     padding-left: 12px;
     gap: 8px;
@@ -138,6 +144,22 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+  /* 2×2 主导航的选中指示器(共享 pill,与设置导航/会话列表同一驱动器):
+     3×16、圆角 2,对齐 NavigationViewItemSelectionIndicator* 主题资源;
+     left 由驱动器按激活项 offsetLeft 写 inline。 */
+  html[data-platform="windows"] .sidebar-nav-pill {
+    display: block;
+    position: absolute;
+    top: 0; z-index: 1;
+    width: 3px; height: 16px;
+    border-radius: 2px;
+    background: var(--accent);
+    /* 缩放锚定自身顶缘:滑动段的 translateY 补偿与交换段的锚边语义都建立在它上。 */
+    transform-origin: top;
+    /* JS 摆位前保持隐形,避免首帧闪现在 (0,0);摆位后由 inline opacity=1 接管。 */
+    opacity: 0;
+    pointer-events: none;
+  }
   html[data-platform="windows"] .message-sidebar-head {
     min-height: 44px;
     padding: 0 12px;
@@ -153,8 +175,23 @@
   html[data-platform="windows"] .message-session-item.active {
     background: var(--surface-2);
   }
-  html[data-platform="windows"] .message-session-item.active::before {
-    height: 14px;
+  /* Windows 上会话列表改用共享滑动 pill(app/selection-pill.ts 驱动,与设置
+     分区导航同一套 WinUI 600ms 公式),per-item ::before 过渡在此停用。
+     left 由驱动器按激活项 offsetLeft 写 inline,这里只管外观。 */
+  html[data-platform="windows"] .message-session-item::before { content: none; }
+  html[data-platform="windows"] .message-session-pill {
+    display: block;
+    position: absolute;
+    top: 0; z-index: 1;
+    width: 3px; height: 16px;
+    border-radius: 2px;
+    background: var(--accent);
+    /* 缩放锚定自身顶缘:配合关键帧里的 translateY 补偿,还原 WinUI 的
+       「朝行进方向拉伸 → 1/3 处跳变 → 对侧边缘收回」。 */
+    transform-origin: top;
+    /* JS 摆位前保持隐形,避免首帧闪现在 (0,0);摆位后由 inline opacity=1 接管。 */
+    opacity: 0;
+    pointer-events: none;
   }
 
   html[data-platform="windows"] .workspace-content,
@@ -165,9 +202,10 @@
     grid-template-columns: 240px minmax(0, 1fr);
   }
 
-  html[data-platform="windows"] #session {
-    grid-template-rows: 48px minmax(0, 1fr) auto;
-  }
+  /* #session 不再在这里改行模板:阶段四把 SessionHeader 迁进 TopBar 后,
+     timeline.css 的两行模板(minmax(0,1fr) auto)是唯一事实。此前的 Windows
+     三行模板(48px 头行)是旧布局残留——#messages 显式 grid-row:1,会落进
+     48px 头行,把时间线挤成一条缝(安装版「下半空白、滚动条缩在顶部」的根因)。*/
   html[data-platform="windows"] .session-header {
     height: 48px;
     min-height: 48px;
@@ -255,7 +293,6 @@
   }
   html[data-platform="windows"] .settings-nav-group:first-child { margin-top: 0; }
   html[data-platform="windows"] .settings-nav-item {
-    position: relative;
     min-height: 36px;
     padding: 0 12px;
     border-radius: 4px;
@@ -269,14 +306,23 @@
     color: var(--text);
     font-weight: 600;
   }
-  html[data-platform="windows"] .settings-nav-item.active::before {
-    content: "";
+  /* WinUI 3 NavigationView 选中指示器:单个共享 pill(3×16、圆角 2,对齐
+     NavigationViewItemSelectionIndicator* 主题资源),由 Sidebar.tsx 按
+     NavigationView.cpp 的 AnimateSelectionChanged 公式驱动位移+缩放;
+     不再 per-item ::before 硬切。 */
+  html[data-platform="windows"] .settings-nav-pill {
+    display: block;
     position: absolute;
-    left: 0; top: 50%;
+    top: 0; left: 12px; z-index: 1;
     width: 3px; height: 16px;
     border-radius: 2px;
     background: var(--accent);
-    transform: translateY(-50%);
+    /* 缩放锚定自身顶缘:配合关键帧里的 translateY 补偿,还原 WinUI 的
+       「朝行进方向拉伸 → 1/3 处跳变 → 对侧边缘收回」。 */
+    transform-origin: top;
+    /* JS 摆位前保持隐形,避免首帧闪现在 (0,0);摆位后由 inline opacity=1 接管。 */
+    opacity: 0;
+    pointer-events: none;
   }
 
   html[data-platform="windows"] .settings-content {

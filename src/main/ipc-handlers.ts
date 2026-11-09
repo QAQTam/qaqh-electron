@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { release as osRelease } from "node:os";
 import { readDiscovery, DaemonManager } from "./daemon.js";
 import { globalCommandTarget, loadNativeAddon, sessionCommandTarget } from "./native-client.js";
 import { isAlive } from "./daemon.js";
@@ -29,6 +30,47 @@ import { MAIN_SERVICE_METHODS } from "./types.js";
 const DEFAULT_LAN_PORT = 64413;
 const RESTART_TIMEOUT_MS = 20_000;
 const restartLock = { held: false };
+
+/** createMainWindow 在 win32 上无条件设了透明底色 + mica 请求；不支持材质或
+ *  调用失败时必须主动撤掉，否则 DWM 不画 backdrop，窗口会整块透出桌面
+ *  （只依赖渲染层 CSS 回退盖不住首帧与未绘制区域）。 */
+function restoreOpaqueWindow(win: BrowserWindow, dark: boolean): void {
+  try {
+    win.setBackgroundMaterial("none");
+    win.setBackgroundColor(dark ? "#18181b" : "#f7f7f8");
+  } catch (error) {
+    console.warn("[ipc] failed to restore opaque window background:", error);
+  }
+}
+
+/**
+ * Win11 22H2+ 原生 Mica(DWMWA_SYSTEMBACKDROP_TYPE,Electron 的
+ * `backgroundMaterial: "mica"` / `setBackgroundMaterial("mica")`)。
+ * 返回是否真的启用:非 win32、系统版本低于 22H2(build 22621,systembackdrop
+ * 从它开始可用)或调用失败都返回 false,渲染层据此撤掉 has-mica 透明层。
+ * 深浅变体不在此显式选择——`"mica"` 跟随窗口暗色属性,由 nativeTheme.themeSource
+ * 决定:应用内强制主题时同步它,跟随系统时保持 "system"(否则锁死系统跟随)。
+ * Mica 是 DWM 侧的壁纸采样材质,由系统合成器绘制,不占应用 GPU 额度。
+ */
+function applyNativeMica(dark: boolean, followSystem: boolean): boolean {
+  if (process.platform !== "win32") return false;
+  const win = BrowserWindow.getAllWindows().find(window => !window.isDestroyed?.()) ?? null;
+  if (win == null) return false;
+  const build = Number(osRelease().split(".")[2] ?? 0);
+  if (!(build >= 22621)) {
+    restoreOpaqueWindow(win, dark);
+    return false;
+  }
+  nativeTheme.themeSource = followSystem ? "system" : dark ? "dark" : "light";
+  try {
+    win.setBackgroundMaterial("mica");
+    return true;
+  } catch (error) {
+    console.warn("[ipc] setBackgroundMaterial failed:", error);
+    restoreOpaqueWindow(win, dark);
+    return false;
+  }
+}
 
 const RINGING_COMMAND_TYPES: ReadonlySet<RingingCommand["type"]> = new Set([
   "session.create", "session.settings.patch", "session.resume", "session.attach", "session.close",
@@ -605,8 +647,12 @@ async function handleCommand(
     }
 
     case "set_window_theme": {
-      // Electron currently uses the CSS theme surface, with no native material effect.
-      return false;
+      // Win11 22H2+ 原生 Mica(DWM systembackdrop)。返回是否真的启用:
+      // Win10 / 22H2 以下 / 调用失败返回 false,渲染层撤掉 has-mica 透明层,
+      // CSS 退回实底(theme.ts 的既有回退路径)。
+      const dark = args?.dark === true;
+      const followSystem = args?.followSystem === true;
+      return applyNativeMica(dark, followSystem);
     }
 
     default:

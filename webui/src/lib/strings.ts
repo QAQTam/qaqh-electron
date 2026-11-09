@@ -238,7 +238,7 @@ export const STR = {
   settingsSubagentOutboundHint: "0 = 不限;改动需重启 daemon。",
   settingsSubagentToolsHint: "逗号分隔;留空 = 全部工具可用;只对之后新建的子代理生效,已开会话需重开。",
   // theme 是「后端已生效、前端未接线」的档位:说清楚,免得用户以为界面会跟着变。
-  settingsThemeNote: "主题偏好保存在本机；Electron 壳使用 CSS 主题，不提供原生 Mica/材质切换。",
+  settingsThemeNote: "主题偏好保存在本机;Win11 22H2+ 由壳启用原生 Mica(需系统「透明效果」),更旧系统自动回退实底。",
   settingsBypassWarn: "即将降到 skip-permissions:普通工具全部自动放行。",
 } as const;
 
