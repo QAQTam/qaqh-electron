@@ -18,6 +18,22 @@ const builderRequire = createRequire(require.resolve("electron-builder/package.j
 const libRequire = createRequire(builderRequire.resolve("app-builder-lib/package.json"));
 const asar = libRequire("@electron/asar");
 
+// assertInputs / verify-package 按目标平台校验 daemon 头：Linux 要 ELF + exec bit，
+// Windows 要 PE(MZ) 且没有 exec bit 概念。夹具必须跟随宿主平台，否则在 Windows
+// 上连 `qaqh-daemon.exe` 都找不到，三个用例会一起被前置检查掩盖。
+const targetPlatform = process.platform === "win32" ? "win32" : "linux";
+const daemonName = targetPlatform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
+const daemonStub = () => {
+  const bytes = Buffer.alloc(64);
+  if (targetPlatform === "win32") {
+    bytes.write("MZ", 0, "ascii");
+  } else {
+    bytes.write("\x7fELF"); bytes[4] = 2; bytes[5] = 1; bytes.writeUInt16LE(62, 18);
+  }
+  return bytes;
+};
+const badHeaderError = targetPlatform === "win32" ? /Windows PE/ : /Linux x64 ELF/;
+
 test("CLI accepts only explicit targets and known opt-outs", () => {
   assert.equal(parseArgs([]).target, "all");
   for (const target of ["all", "dir", "AppImage", "deb", "tar.gz", "nsis"]) {
@@ -91,7 +107,22 @@ function fixture(t) {
   const temp = fileURLToPath(new URL("../.tmp/", import.meta.url));
   mkdirSync(temp, { recursive: true });
   const root = mkdtempSync(join(temp, "package-test-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(async () => {
+    // Windows：@electron/asar 的 createWriteStream 在 createPackage resolve 后可能
+    // 仍持有 app.asar 句柄，立即 rmSync 会 EBUSY，把「断言全过」误报成 hookFailed。
+    // 清掉 header 缓存并退避重试，等流 flush 完再删夹具目录。
+    asar.uncacheAll?.();
+    for (let attempt = 0; attempt < 12; attempt++) {
+      try {
+        rmSync(root, { recursive: true, force: true });
+        return;
+      } catch (error) {
+        if (!["EBUSY", "EPERM", "EACCES"].includes(error?.code)) throw error;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
   const put = (file, contents) => {
     mkdirSync(dirname(join(root, file)), { recursive: true });
     writeFileSync(join(root, file), contents);
@@ -103,17 +134,15 @@ function fixture(t) {
   put("renderer/assets/app.js", "console.log('fresh')");
   put("dist/main/index.cjs", "module.exports = {};");
   put("dist/preload/index.cjs", "module.exports = {};");
-  const elf = Buffer.alloc(64);
-  elf.write("\x7fELF"); elf[4] = 2; elf[5] = 1; elf.writeUInt16LE(62, 18);
-  put("resources/bin/qaqh-daemon", elf);
-  chmodSync(join(root, "resources/bin/qaqh-daemon"), 0o755);
+  put(`resources/bin/${daemonName}`, daemonStub());
+  if (targetPlatform !== "win32") chmodSync(join(root, "resources/bin", daemonName), 0o755);
   // native addon：verifyNativeAddon 断言 asar 外副本与构建树逐字节一致。
-  const addonName = process.platform === "win32"
+  const addonName = targetPlatform === "win32"
     ? "qaqh_napi_client.win32-x64-msvc.node"
-    : `qaqh_napi_client.${process.platform}-x64-gnu.node`;
+    : `qaqh_napi_client.${targetPlatform}-x64-gnu.node`;
   put(join("native", addonName), "native-addon-bytes");
   put(join("output/resources/app.asar.unpacked/native", addonName), "native-addon-bytes");
-  return { root, put, addonName };
+  return { root, put, addonName, daemonName };
 }
 
 test("preflight rejects missing resources, wrong architecture and missing metadata", t => {
@@ -123,8 +152,8 @@ test("preflight rejects missing resources, wrong architecture and missing metada
   rmSync(join(root, "renderer/index.html"));
   assert.throws(() => assertInputs(root), /renderer\/index.html/);
   put("renderer/index.html", "index");
-  put("resources/bin/qaqh-daemon", "not an ELF executable");
-  assert.throws(() => assertInputs(root), /Linux x64 ELF/);
+  put(`resources/bin/${daemonName}`, "not an executable");
+  assert.throws(() => assertInputs(root), badHeaderError);
 });
 
 test("preflight rejects missing author metadata", t => {
@@ -134,21 +163,22 @@ test("preflight rejects missing author metadata", t => {
 });
 
 test("afterPack validates actual ASAR content and rejects stale renderer/daemon at the same version", async t => {
-  const { root, put } = fixture(t);
+  const { root, put, daemonName: daemon } = fixture(t);
   const appOutDir = join(root, "output");
-  put("output/resources/bin/qaqh-daemon", readFileSync(join(root, "resources/bin/qaqh-daemon")));
-  chmodSync(join(appOutDir, "resources/bin/qaqh-daemon"), 0o755);
+  const outputDaemon = `output/resources/bin/${daemon}`;
+  put(outputDaemon, readFileSync(join(root, "resources/bin", daemon)));
+  if (targetPlatform !== "win32") chmodSync(join(appOutDir, "resources/bin", daemon), 0o755);
   const input = join(root, "archive-input");
   for (const file of ["package.json", "dist", "renderer"]) {
     cpSync(join(root, file), join(input, file), { recursive: true });
   }
   const archive = join(appOutDir, "resources/app.asar");
   await asar.createPackage(input, archive);
-  const context = { packager: { projectDir: root }, appOutDir };
+  const context = { packager: { projectDir: root }, appOutDir, electronPlatformName: targetPlatform };
   await verify(context);
   put("renderer/assets/app.js", "changed");
   await assert.rejects(verify(context), /differs from current build/);
   put("renderer/assets/app.js", "console.log('fresh')");
-  put("output/resources/bin/qaqh-daemon", "stale daemon");
+  put(outputDaemon, "stale daemon");
   await assert.rejects(verify(context), /daemon missing, not executable or stale/);
 });

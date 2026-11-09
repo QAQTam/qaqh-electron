@@ -10,12 +10,16 @@ const asar = libRequire("@electron/asar");
 
 module.exports = async function verifyPackage(context) {
   const root = context.packager.projectDir;
-  assertInputs(root);
-  verifyAsar(context, root);
+  // 同一个平台口径贯穿预检、daemon 文件名与 addon 命名：assertInputs 默认只看
+  // 宿主 process.platform，若 builder 给出 electronPlatformName 却不一致会误判
+  // （Windows 上找 .exe、随后又按 Linux 名核对包内 daemon）。
+  const platform = context.electronPlatformName || process.platform;
+  assertInputs(root, platform);
+  verifyAsar(context, root, platform);
 };
 
 // 全量便携口径:asar 单包 + daemon。
-function verifyAsar(context, root) {
+function verifyAsar(context, root, platform) {
   const resources = join(context.appOutDir, "resources");
   const archive = join(resources, "app.asar");
   const files = ["dist/main/index.cjs", "dist/preload/index.cjs",
@@ -32,13 +36,13 @@ function verifyAsar(context, root) {
   if (packagedRenderer.length !== files.length - distEntries) {
     throw new Error("Packaged renderer contains missing/stale files.");
   }
-  const daemonName = context.electronPlatformName === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
+  const daemonName = platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
   if (existsSync(join(resources, "baseline")) ||
       JSON.stringify(readdirSync(join(resources, "bin")).sort()) !== JSON.stringify([daemonName])) {
     throw new Error("System package must contain only its bundled daemon, without component overlays or updater CLIs.");
   }
   const daemon = join(resources, "bin", daemonName);
-  if ((!process.platform.startsWith("win") && !(statSync(daemon).mode & 0o111)) ||
+  if ((platform !== "win32" && !(statSync(daemon).mode & 0o111)) ||
     digest(readFileSync(daemon)) !== digest(readFileSync(join(root, "resources/bin", daemonName)))) {
     throw new Error("Packaged daemon missing, not executable or stale.");
   }
@@ -48,13 +52,12 @@ function verifyAsar(context, root) {
   if (pkg.main !== "dist/main/index.cjs" || pkg.version !== expectedVersion) {
     throw new Error(`Packaged entrypoint/version mismatch: expected ${expectedVersion}, got ${pkg.version}.`);
   }
-  verifyNativeAddon(context, root, resources);
+  verifyNativeAddon(root, resources, platform);
   console.log(`[verify] ${files.length} shell/renderer files and daemon match the current build.`);
 }
 
 // native 协议客户端必须落在 asar 之外（asarUnpack），且与仓库构建产物逐字节一致。
-function verifyNativeAddon(context, root, resources) {
-  const platform = context.electronPlatformName || process.platform;
+function verifyNativeAddon(root, resources, platform) {
   const report = process.report?.getReport?.();
   const musl = platform === "linux" && report?.header?.glibcVersionRuntime == null;
   const addonName = platform === "win32"

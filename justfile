@@ -41,6 +41,11 @@ build target="all" *options:
 nsis *options:
     @node scripts/build-all.mjs nsis {{options}}
 
+# 前端-only 滚动打包：版本号由 .tmp/deb-version.json 账本自动分配（北京日期+当天修订），
+# 不重编后端、不走 sdk-check；--wizard 出带安装目录选择的安装包。
+frontend-rolling *options:
+    @node scripts/package-frontend.mjs {{options}}
+
 # 常用目标的短命令，等价于 just build <target>。
 dir *options:
     @just build dir {{options}}

@@ -110,6 +110,13 @@ test("installed application ignores old overlay and daemon environment overrides
 });
 
 test("same path/version cannot hide a replaced running executable", t => {
+  // 该判定读取 /proc/<pid>/exe 的 (dev, ino)，只在 Linux 存在；生产代码也以
+  // `process.platform === "linux"` 为前置条件（见 DaemonManager.ensureDaemonRunning）。
+  // Windows/macOS 上跳过，而不是把「查不到 inode」误判成「二进制被替换」。
+  if (process.platform !== "linux") {
+    t.skip("inode identity check is Linux-only (/proc/<pid>/exe)");
+    return;
+  }
   const f = execFixture(t);
   assert.equal(f.daemonMatchesExecutable(process.pid, process.execPath), true);
   assert.equal(f.daemonMatchesExecutable(process.pid, f.executable), false);

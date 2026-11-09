@@ -73,10 +73,12 @@ async function main() {
     return;
   }
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  // 所有本地 target 共用一份账本：北京日期 + 当天递增修订号，版本号不用手改。
+  // CI 显式注入 QAQH_BUILD_VERSION 时保留其已预留的版本，不重新分配。
   if (!process.env.QAQH_BUILD_VERSION) {
-    process.env.QAQH_BUILD_VERSION = ["deb", "all"].includes(options.target)
-      ? reserveLocalVersion(manifest.version, join(root, ".tmp/deb-version.json"))
-      : manifest.version;
+    process.env.QAQH_BUILD_VERSION = reserveLocalVersion(
+      manifest.version, join(root, ".tmp/deb-version.json"),
+    );
   }
   process.env.QAQH_BUILD_DATE ||= process.env.QAQH_BUILD_VERSION.split(".")[2].split("-")[0];
   const build = parseBuildIdentity(process.env);
