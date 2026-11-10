@@ -10,7 +10,7 @@ import { createSignal, For, Show, type Component } from "solid-js";
 
 import { Select } from "../ui/Select";
 import { createByokProvider } from "./byok";
-import { Field, TextInput } from "./controls";
+import { Field, Switch, TextInput } from "./controls";
 import { WIRE_LABELS, WIRE_PROTOCOLS } from "./patch";
 import { registryBusy } from "./registry";
 import { fetchLiveModels } from "./registry/model-fetcher";
@@ -41,6 +41,12 @@ export const ByokProviderForm: Component<{
   const [model, setModel] = createSignal("");
   const [contextLength, setContextLength] = createSignal("");
   const [maxTokens, setMaxTokens] = createSignal("");
+  // 能力声明：reasoning 是设置思考档位的资格（resolver fail-fast 校验），
+  // tool_calls/image_input 是目录声明——装配门在端点 compat 与会话工具模式。
+  // 默认勾选工具调用：当代 agent 模型的主场景。
+  const [supportsTools, setSupportsTools] = createSignal(true);
+  const [supportsReasoning, setSupportsReasoning] = createSignal(false);
+  const [supportsImages, setSupportsImages] = createSignal(false);
   const [liveModels, setLiveModels] = createSignal<Array<{ id: string; label: string }>>([]);
   const [fetching, setFetching] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
@@ -115,6 +121,9 @@ export const ByokProviderForm: Component<{
         modelLabel: liveModels().find((item) => item.id === modelId)?.label ?? null,
         contextWindow: context,
         maxOutputTokens: tokens,
+        supportsTools: supportsTools(),
+        supportsReasoning: supportsReasoning(),
+        supportsImages: supportsImages(),
       });
       if (!result.ok) { setError(result.error); return; }
       setApiKey("");
@@ -195,6 +204,26 @@ export const ByokProviderForm: Component<{
           </div>
         </Show>
       </Field>
+      <div class="settings-row-wide byok-capability-switches">
+        <Switch
+          label="支持工具调用"
+          hint="目录声明；回合是否带工具由会话工具模式决定"
+          checked={supportsTools()}
+          onToggle={setSupportsTools}
+        />
+        <Switch
+          label="支持思考档位"
+          hint="资格声明：开启后可在设置里为该模型选择思考强度（档位表可在模型编辑中调整）"
+          checked={supportsReasoning()}
+          onToggle={setSupportsReasoning}
+        />
+        <Switch
+          label="支持图片输入"
+          hint="目录声明：供界面判断可粘贴截图的模型"
+          checked={supportsImages()}
+          onToggle={setSupportsImages}
+        />
+      </div>
       <Field label="上下文窗口" hint="按当前模型可用的上下文窗口手动填写">
         <TextInput type="number" value={contextLength()} onInput={setContextLength} />
       </Field>

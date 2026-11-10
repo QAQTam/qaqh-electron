@@ -24,6 +24,15 @@ export type ByokFormInput = {
   modelLabel: string | null;
   contextWindow: number;
   maxOutputTokens: number;
+  /**
+   * 能力声明三态。语义分层（后端 resolver.rs 实测）：`reasoning` 是**资格**——
+   * 关掉后给该模型设思考档位会被 resolver 拒绝；`tool_calls`/`image_input`
+   * 是目录声明（装配门在端点 compat 与会话 tool_mode，不在这里）。
+   * 声明错了比不声明更糟：全 false 会让新模型永远配不了思考档位。
+   */
+  supportsTools: boolean;
+  supportsReasoning: boolean;
+  supportsImages: boolean;
 };
 
 export type ByokCreateResult =
@@ -52,12 +61,16 @@ export async function createByokProvider(input: ByokFormInput): Promise<ByokCrea
     display_name: input.modelLabel,
     context_window: input.contextWindow,
     max_output_tokens: input.maxOutputTokens,
-    reasoning_levels: [],
+    // 通用 OpenAI 档词汇；gate 的 normalize/allowlist 会吸附端点差异，
+    // 厂商特殊词汇（qwen 的 xhigh/max 映射等）留给模型编辑改这张表。
+    reasoning_levels: input.supportsReasoning
+      ? ["minimal", "low", "medium", "high", "xhigh"]
+      : [],
     capabilities: {
-      tool_calls: false,
-      image_input: false,
+      tool_calls: input.supportsTools,
+      image_input: input.supportsImages,
       native_web_search: false,
-      reasoning: false,
+      reasoning: input.supportsReasoning,
     },
     defaults: { max_output_tokens: input.maxOutputTokens, native_web_search: false },
   };
