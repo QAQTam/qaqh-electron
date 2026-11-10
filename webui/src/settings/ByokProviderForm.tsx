@@ -14,6 +14,7 @@ import { Field, TextInput } from "./controls";
 import { WIRE_LABELS, WIRE_PROTOCOLS } from "./patch";
 import { registryBusy } from "./registry";
 import { fetchLiveModels } from "./registry/model-fetcher";
+import { ensurePresetsLoaded, presetTemplates } from "./registry/provider-presets";
 import { PROVIDER_TEMPLATES } from "./registry/templates";
 
 const messageOf = (cause: unknown): string =>
@@ -29,6 +30,9 @@ export const ByokProviderForm: Component<{
   onSaved?: (providerId: string) => void;
 }> = (props) => {
   const firstTemplate = PROVIDER_TEMPLATES[0]!;
+  // 芯片列表：后端 presets（真源）异步合并进静态兜底，见 registry/provider-presets。
+  ensurePresetsLoaded();
+  const templates = presetTemplates;
   const [templateId, setTemplateId] = createSignal(firstTemplate.id);
   const [providerName, setProviderName] = createSignal(firstTemplate.name);
   const [baseUrl, setBaseUrl] = createSignal(firstTemplate.baseUrl);
@@ -43,10 +47,10 @@ export const ByokProviderForm: Component<{
   const [error, setError] = createSignal<string | null>(null);
 
   const keyHint = (): string =>
-    PROVIDER_TEMPLATES.find((item) => item.id === templateId())?.keyHint ?? "sk-...";
+    templates().find((item) => item.id === templateId())?.keyHint ?? "sk-...";
 
   const applyTemplate = (id: string): void => {
-    const template = PROVIDER_TEMPLATES.find((item) => item.id === id);
+    const template = templates().find((item) => item.id === id);
     if (template == null) return;
     setTemplateId(id);
     setProviderName(template.name);
@@ -125,7 +129,7 @@ export const ByokProviderForm: Component<{
   return (
     <>
       <div class="settings-row-wide provider-template-chips">
-        <For each={PROVIDER_TEMPLATES}>
+        <For each={templates()}>
           {(template) => (
             <button
               type="button"

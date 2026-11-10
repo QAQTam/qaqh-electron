@@ -1,3 +1,14 @@
+/**
+ * 「设置 → 服务商」模板芯片的数据源。
+ *
+ * 后端 `provider.presets.list`（qaqh-profile PROVIDER_PRESETS 静态表）是
+ * 端点事实（id/name/baseUrl/wire/credential）的**唯一真源**；本文件的静态
+ * 表退居两个角色：
+ * 1. UX 字段供给——badge/keyHint/keyRequired 这些界面体验后端不建模，按 id
+ *    富化进 preset；
+ * 2. 降级与补集——后端未覆盖的厂商（硅基流动等聚合/本地端点）保留在这里，
+ *    后端命令不可用（版本错位）时整个静态表兜底，表单永远可用。
+ */
 export interface ProviderTemplate {
   id: string;
   name: string;
@@ -46,6 +57,15 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     keyRequired: true,
   },
   {
+    id: "qianwen",
+    name: "千问 AI 平台",
+    badge: "Anthropic 兼容面",
+    baseUrl: "https://maas.qianwenaiapi.com/apps/anthropic",
+    wire: "messages",
+    keyHint: "sk-...",
+    keyRequired: true,
+  },
+  {
     id: "siliconflow",
     name: "SiliconFlow (硅基流动)",
     badge: "云聚合端点",
@@ -91,3 +111,45 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     keyRequired: false,
   },
 ];
+
+/** `provider.presets.list` 快照形状（后端 ProviderPreset，serde camelCase）。 */
+export interface ProviderPresetWire {
+  id: string;
+  name: string;
+  baseUrl: string;
+  wire: string;
+  credential: string;
+}
+
+/**
+ * 以后端 presets 为序合并：端点事实取后端值，UX 字段按 id 从静态表富化，
+ * 缺省给 api_key 通用体验（新预设第一次出现时静态表可能还没有它的行）。
+ * 非 api_key 凭据类型（oauth 套餐 / chatgpt_plan）不进 BYOK 表单——创建流
+ * 只能写 api_key 槽（byok.ts 的 credential 固定值），让它们出现在芯片里
+ * 只会制造一个必然建坏的入口。
+ * 后端未覆盖的静态条目保序追加；custom 永远垫底。
+ */
+export function mergeProviderPresets(presets: readonly ProviderPresetWire[]): ProviderTemplate[] {
+  const fallback = new Map(PROVIDER_TEMPLATES.map((item) => [item.id, item]));
+  const merged: ProviderTemplate[] = [];
+  for (const preset of presets) {
+    if (preset.credential !== "api_key") continue;
+    const ux = fallback.get(preset.id);
+    merged.push({
+      id: preset.id,
+      name: preset.name,
+      baseUrl: preset.baseUrl,
+      wire: preset.wire,
+      badge: ux?.badge ?? "预设",
+      keyHint: ux?.keyHint ?? "sk-...",
+      keyRequired: ux?.keyRequired ?? true,
+    });
+    fallback.delete(preset.id);
+  }
+  const extras = [...fallback.values()];
+  merged.push(
+    ...extras.filter((item) => item.id !== "custom"),
+    ...extras.filter((item) => item.id === "custom"),
+  );
+  return merged;
+}
