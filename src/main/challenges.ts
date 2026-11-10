@@ -36,7 +36,7 @@ export class ChallengeManager {
     const views: ApprovalView[] = [];
     for (const item of pendingItems) {
       requireId(item.internalId, "approval_id");
-      if (!["tool_permission", "ask", "plan"].includes(item.kind)) throw new Error("invalid_approval_kind");
+      if (!["tool_permission", "ask"].includes(item.kind)) throw new Error("invalid_approval_kind");
       let stored = [...next.values()].find(value => value.sessionId === sessionId && value.kind === item.kind && value.internalId === item.internalId
         && value.detailsUnavailable === (item.detailsUnavailable ?? false) && isDeepStrictEqual(value.details, item.details));
       if (!stored) {

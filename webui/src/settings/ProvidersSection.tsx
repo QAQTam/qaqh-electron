@@ -254,8 +254,7 @@ const ProviderRow: Component<{
   const referenced = (): number => props.provider.referencedBy.length;
   const modelInUse = (modelId: string): boolean => {
     const value = registry();
-    return value?.defaultSelection?.provider_id === props.provider.id && value.defaultSelection.model_id === modelId
-      || value?.profiles.some((profile) => profile.providerId === props.provider.id && profile.model === modelId) === true;
+    return value?.defaultSelection?.provider_id === props.provider.id && value.defaultSelection.model_id === modelId;
   };
   const isDefaultModel = (modelId: string): boolean => {
     const value = registry();
@@ -347,7 +346,7 @@ const ProviderRow: Component<{
                   <span class="profile-active-tag">默认模型</span>
                 </Show>
                 <button type="button" class="ghost-mini" disabled={registryBusy()} onClick={() => { setAddingModel(false); setEditingModelId(model.id); }}>编辑模型</button>
-                <button type="button" class="ghost-mini is-danger" disabled={registryBusy() || modelInUse(model.id)} title={modelInUse(model.id) ? "全局默认或存档仍引用此模型" : undefined} onClick={() => void deleteModel(props.provider.id, model.id)}>删除</button>
+                <button type="button" class="ghost-mini is-danger" disabled={registryBusy() || modelInUse(model.id)} title={modelInUse(model.id) ? "全局默认仍引用此模型" : undefined} onClick={() => void deleteModel(props.provider.id, model.id)}>删除</button>
               </div>
             </div>
           )}

@@ -427,42 +427,9 @@ export const AskCard: Component<{
   );
 };
 
-export const PlanCard: Component<{ view: ApprovalView; pendingCount: number; busy: () => boolean; error: () => string | null; respond: (approved: boolean, message: string) => void }> = (props) => {
-  let root: HTMLDivElement | undefined;
-  const [message, setMessage] = createSignal("");
-  const onGamepadAction = (event: Event): void => {
-    const action = (event as CustomEvent<GamepadAction>).detail;
-    if (props.busy() || props.view.verified === false) return;
-    if (action.kind === "confirm" && !unavailable()) props.respond(true, message());
-    else if (action.kind === "cancel") props.respond(false, message());
-  };
-  createEffect(() => root, () => {
-    window.addEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
-    return () => window.removeEventListener(GAMEPAD_ACTION_EVENT, onGamepadAction);
-  });
-  const unavailable = () => props.view.details_unavailable === true || props.view.details?.details_unavailable === true;
-  const verified = () => props.view.verified !== false;
-  useCardKeys(() => unavailable() || !verified(), () => props.respond(true, message()), () => props.respond(false, message()), () => root, () => verified() && !props.busy());
-  return (
-    <div class="card plan" tabindex={-1} ref={root}>
-      <div class="card-head"><span id="approval-dialog-title">{STR.planTitle}</span><Show when={props.pendingCount > 1}><span class="card-more">{STR.morePending(props.pendingCount - 1)}</span></Show></div>
-      <div class="card-body">
-        <Show when={!verified()}><p class="card-error" role="status">{STR.approvalUnverified}</p></Show>
-        <Show when={unavailable()}><p class="card-error" role="status">{STR.planDetailsUnavailable}</p></Show>
-        <pre class="card-plan">{props.view.details?.plan_content ?? "(缺少计划内容)"}</pre>
-        <input class="card-message" type="text" placeholder={STR.planPlaceholder} disabled={!verified() || unavailable()} value={message()} onInput={(e) => setMessage(e.currentTarget.value)} />
-        <Show when={props.error() != null}><p class="card-error" role="alert">{props.error()}</p></Show>
-      </div>
-      <div class="card-actions" aria-busy={props.busy() ? "true" : "false"}>
-        <button type="button" class="primary button-primary" disabled={props.busy() || unavailable() || !verified()} onClick={() => props.respond(true, message())}>{STR.allowOnce}</button>
-        <button type="button" class="button-secondary" disabled={props.busy() || !verified()} onClick={() => props.respond(false, message())}>{STR.reject}</button>
-      </div>
-    </div>
-  );
-};
-
 /** 卡片组:只展示最早一个,头部显示「还有 N 个待处理」;滚动滚入视野。
- *  授权/计划评审/AskUser 共用同一个居中模态(`#approval-slot`)。 */
+ *  授权/AskUser 共用同一个居中模态(`#approval-slot`)。计划评审已随
+ *  `plan.review.respond` 退役(ringing-commands-7)。 */
 export const ApprovalStack: Component<{
   pending: ApprovalView[];
   respond: (challengeId: string, decision: string, payload?: Record<string, unknown>) => Promise<void>;
@@ -519,8 +486,6 @@ export const ApprovalStack: Component<{
           <div class="approval-wrap" role="dialog" aria-modal="true" aria-labelledby="approval-dialog-title" tabindex={-1} onKeyDown={trapTab}>
             {view.kind === "tool_permission" ? (
               <ApprovalCard view={view} pendingCount={props.pending.length} busy={() => busy(view.challenge_id)} error={() => errorFor(view.challenge_id)} respond={(decision) => void send(view, decision)} />
-            ) : view.kind === "plan" ? (
-              <PlanCard view={view} pendingCount={props.pending.length} busy={() => busy(view.challenge_id)} error={() => errorFor(view.challenge_id)} respond={(approved, message) => void send(view, approved ? "approve" : "reject", { message: message || null })} />
             ) : (
               <AskCard
                 view={view}

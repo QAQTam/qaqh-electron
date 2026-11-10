@@ -38,6 +38,8 @@ export type MainServiceMap = {
   "fs.list": { params: { path: string }; result: FsEntry[] };
   "fs.read": { params: { path: string; max_bytes?: number }; result: FsReadResult };
   "config.load": { params: Record<never, never>; result: ConfigDto };
+  // qaqh-client 的 QueryRequest 封闭枚举仍列有 profile.list（daemon 侧已无
+  // 实现，调用只会得到服务错误）；白名单与 addon serviceMethods() 对齐。
   "profile.list": { params: Record<never, never>; result: unknown };
   "skills.catalog": { params: { cwd?: string }; result: unknown };
   "skills.list_tools": { params: Record<never, never>; result: unknown };
@@ -88,7 +90,12 @@ export const MAIN_SERVICE_METHODS: readonly MainServiceMethod[] = [
 export const CONTROL_PROTOCOL_VERSION = 1;
 export type { RingingV2CommandStatus };
 
-export type ApprovalKind = "tool_permission" | "ask" | "plan";
+/**
+ * Host 审批面词表：admin 投影只有 permission（tool_call_id 键控）与 ask 两类。
+ * `plan` 只存在于 device challenge 词表（`RingingV2DeviceApprovalKind`），
+ * 桌面壳不走 device 面。
+ */
+export type ApprovalKind = "tool_permission" | "ask";
 
 export interface ApprovalView {
   challenge_id: string;

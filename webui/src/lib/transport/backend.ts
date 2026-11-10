@@ -31,6 +31,7 @@ export type RendererRingingCommand = Exclude<RingingCommand, { type: "conversati
 /** Public service methods not yet present in the current generated ServiceMap. */
 export type ElectronServiceMap = SdkServiceMap & {
   "config.load": { params: Record<never, never>; result: ConfigDto };
+  /** qaqh-client QueryRequest 枚举仍列有 profile.list（daemon 已无实现；仅对齐白名单）。 */
   "profile.list": { params: Record<never, never>; result: unknown };
   "skills.list_tools": { params: Record<never, never>; result: unknown };
   "todo.status": { params: { session_id: string }; result: unknown };
@@ -57,7 +58,9 @@ export const sessionTarget = (sessionId: string): CommandTarget => ({ kind: "ses
 export const workspaceTarget = (workspaceId: string): CommandTarget => ({ kind: "workspace", workspace_id: workspaceId });
 export const execSessionTarget = (id: string): CommandTarget => ({ kind: "exec_session", id });
 
-export type ApprovalKind = "tool_permission" | "ask" | "plan";
+/** Host 审批面词表：admin 投影只有 permission/ask 两类（plan 已随
+ *  `plan.review.respond` 退役，仅存于 device challenge 词表）。 */
+export type ApprovalKind = "tool_permission" | "ask";
 
 export type ApprovalView = {
   challenge_id: string;

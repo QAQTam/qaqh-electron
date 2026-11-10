@@ -15,6 +15,7 @@ display_name: string | null,
  */
 context_window: number, 
 /**
- * 单次回合最大输出 Token 上限，默认 8,192
+ * 单次回合最大输出 Token 上限。**必填**：缺失/为 0 在解析与选择时
+ * 一律报错，不做 default/alias 兜底（模型配置统一重构 Spec §3.5）。
  */
 max_output_tokens: number, reasoning_levels: Array<string>, capabilities: ModelCapabilities, defaults: ModelDefaults, };

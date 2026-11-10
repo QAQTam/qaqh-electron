@@ -84,13 +84,6 @@ type Sink = Record<string, unknown>;
 
 const norm = (value: string | null): string => value ?? "";
 
-/** 空串/掩码 = 保持现值的字符串字段:只在「填了真正的新值」时入 patch。 */
-function keepIfBlank(patch: Sink, key: string, baseline: string, next: string | null): void {
-  const value = norm(next);
-  if (value === "" || value === MASK || value === baseline) return;
-  patch[key] = value;
-}
-
 /** 空串 = 显式清除的字段(lang/theme/tokenizerPath):与基线不同就发,含发空串。 */
 function clearable(patch: Sink, key: string, baseline: string | null, next: string | null): void {
   const value = norm(next);
@@ -106,13 +99,11 @@ function changed<T>(patch: Sink, key: string, baseline: T, next: T): void {
 const toolsChanged = (a: readonly string[], b: readonly string[]): boolean =>
   a.length !== b.length || a.some((item, index) => item !== b[index]);
 
-/** 子代理段:任一字段有变化才发,否则整段缺席(缺失 = 不动)。 */
+/** 子代理段:任一字段有变化才发,否则整段缺席(缺失 = 不动)。
+ *  端点族字段（model/baseUrl/apiKey/maxTokens）已随 providers.toml 目录退役，
+ *  子代理模型选择只走会话行 `model_selection`（ringing-commands-7）。 */
 export function buildSubagentPatch(baseline: SubagentDto, draft: SubagentDto): SubagentPatchWire | null {
   const raw: Sink = {};
-  keepIfBlank(raw, "model", baseline.model, draft.model);
-  keepIfBlank(raw, "baseUrl", baseline.baseUrl, draft.baseUrl);
-  keepIfBlank(raw, "apiKey", baseline.apiKey, draft.apiKey);
-  changed(raw, "maxTokens", baseline.maxTokens, draft.maxTokens);
   changed(raw, "timeoutSecs", baseline.timeoutSecs, draft.timeoutSecs);
   changed(raw, "maxDepth", baseline.maxDepth, draft.maxDepth);
   changed(raw, "messageInFlightPerPair", baseline.messageInFlightPerPair, draft.messageInFlightPerPair);
@@ -171,9 +162,6 @@ export function validatePatch(patch: ConfigPatchWire): string | null {
   }
   const sub = patch.subagent;
   if (sub != null) {
-    if (sub.maxTokens != null && (!Number.isSafeInteger(sub.maxTokens) || sub.maxTokens <= 0)) {
-      return "subagent.maxTokens 必须是正整数";
-    }
     if (sub.timeoutSecs != null && (sub.timeoutSecs <= 0 || !Number.isInteger(sub.timeoutSecs))) {
       return "subagent.timeoutSecs 必须是大于 0 的整数";
     }

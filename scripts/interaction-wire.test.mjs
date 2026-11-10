@@ -8,9 +8,9 @@ const scenarios = [
   { kind: "tool_permission", decision: "approve", type: "tool.permission.respond", approved: true, trust_folder: false },
   { kind: "tool_permission", decision: "reject", type: "tool.permission.respond", approved: false, trust_folder: false },
   { kind: "tool_permission", decision: "trust", type: "tool.permission.respond", approved: true, trust_folder: true },
-  { kind: "plan", decision: "approve", payload: { message: "approved" }, type: "plan.review.respond", approved: true, message: "approved" },
-  { kind: "plan", decision: "reject", payload: { message: "revise" }, type: "plan.review.respond", approved: false, message: "revise" },
 ];
+// 计划评审已随 `plan.review.respond` 退役（ringing-commands-7）：宿主审批面
+// 只剩 permission/ask 两类，plan 只保留在 device challenge 词表（桌面壳不使用）。
 
 for (const scenario of scenarios) {
   test(`IPC -> canonical command into native submit: ${scenario.kind}/${scenario.decision}`, async t => {
@@ -44,11 +44,7 @@ for (const scenario of scenarios) {
       assert.equal(command.trust_folder, scenario.trust_folder);
     } else {
       assert.equal(command.interaction_id, canonicalId);
-      if (scenario.kind === "plan") {
-        assert.equal(command.approved, scenario.approved);
-        assert.equal(command.message, scenario.message);
-        assert.equal(command.autonomous, false);
-      } else if (scenario.decision === "submit") assert.deepEqual(command.answers, [{ question_id: "q1", answer: "yes" }]);
+      if (scenario.decision === "submit") assert.deepEqual(command.answers, [{ question_id: "q1", answer: "yes" }]);
     }
   });
 }

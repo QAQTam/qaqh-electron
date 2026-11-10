@@ -2,7 +2,6 @@
 import type { ExecDto } from "./ExecDto";
 import type { LspDto } from "./LspDto";
 import type { McpDto } from "./McpDto";
-import type { ProfileSummaryDto } from "./ProfileSummaryDto";
 import type { SandboxDto } from "./SandboxDto";
 import type { SubagentDto } from "./SubagentDto";
 
@@ -10,35 +9,7 @@ import type { SubagentDto } from "./SubagentDto";
  * 读模型：daemon `config.load` 的完整投影。所有消费者（设置页/Info 面板/
  * TUI/web）从这里取值；不做向前兼容——缺字段即解析失败（见 crate 级兼容策略）。
  */
-export type ConfigDto = { model: string, 
-/**
- * BYOK 的 endpoint：scheme + host + 可选前缀（不含 wire 自身路径）。
- */
-baseUrl: string, 
-/**
- * 该 endpoint 说的 wire，**规范拼写**：`chat` | `responses` | `messages` | `gemini`
- * （= `qaqh_types::Wire::as_str()`，也是写侧 [`canonical_wire`] 的返回值）。
- * 2026-10 之前这里写的是旧四名 `openai` / `anthropic`，与实际输出不一致：
- * 读侧回规范名、写侧只收旧名，于是每个客户端都得自带一层拼写桥。
- * 现在读写只收规范名，旧名仅由显式迁移入口处理。
- */
-wire: string, 
-/**
- * 该 endpoint 的**凭据来源**：`api_key`（BYOK，缺省）| `chatgpt_plan`（本机
- * ChatGPT 套餐额度）| `deepseek_account`（本机 DeepSeek 账号余额）。
- * 显式声明而不是从「apiKey 是否为空」推导——隐式推导会把一个配置错误变成
- * 「静默用了别的额度」。`chatgpt_plan` 只与 `responses` wire + 官方 base_url
- * 配套；请求期的权威判定在 `qaqh-runtime` 的 `provider_for`。
- */
-credential: string, maxTokens: number, 
-/**
- * 端点声明的上下文窗口——本地压缩的唯一分母（软阈值与硬 pre-flight 同源）。
- */
-contextLength: number, reasoningEffort: string, autoCompactThreshold: number, permissionLevel: number, 
-/**
- * 密钥永不出 daemon：空串 = 未配置、`"****"` = 已配置（掩码）。
- */
-apiKey: string, lang: string | null, fontFamily: string, 
+export type ConfigDto = { autoCompactThreshold: number, permissionLevel: number, lang: string | null, fontFamily: string, 
 /**
  * None/空 = 跟随系统。
  */
@@ -47,15 +18,7 @@ theme: string | null,
  * 语义缺省（开）由**产出侧**决定：`qaqh-config/src/dto.rs::to_dto` 里
  * `unwrap_or(true)`。读侧不再兜底——见 `dto_rejects_a_partial_payload`。
  */
-notificationsEnabled: boolean, activeProfile: string, 
-/**
- * profile 名列表（管理 UI 用；不含敏感字段）。
- */
-profiles: Array<string>, 
-/**
- * profile 详细元数据（管理与切换 UI 用；不含敏感密钥）。
- */
-profilesDetail: { [key in string]: ProfileSummaryDto }, complianceEnabled: boolean, subagent: SubagentDto, 
+notificationsEnabled: boolean, complianceEnabled: boolean, subagent: SubagentDto, 
 /**
  * MCP 客户端配置（Phase 1 只读；写模型随 workspace 隔离权限重构另立）。
  */

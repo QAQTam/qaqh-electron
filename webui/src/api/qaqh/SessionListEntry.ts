@@ -27,13 +27,7 @@ status: SessionRunStatus,
  * 所属 workspace id；`null` = 未分组。
  * 只有 `session.list` 带此键，`session.meta`（单条）不带。
  */
-workspace_id: string | null, session_id: string, created_at: number, updated_at: number, model: string, effort?: string | null, 
-/**
- * 会话选定的 BYOK profile（`config.toml` 的 `[profiles.<name>]`）。
- * `None`/空 = 跟随全局 `active_profile`。它决定本会话的
- * endpoint/model/wire，以及（若该 profile 自带密钥）用哪把 key。
- */
-profile?: string | null, model_selection?: ModelSelection | null, requested_model_selection?: ModelSelection | null, 
+workspace_id: string | null, session_id: string, created_at: number, updated_at: number, model: string, model_selection?: ModelSelection | null, requested_model_selection?: ModelSelection | null, 
 /**
  * Number of conversation turns (one user query + its assistant/tool chain).
  */
@@ -57,12 +51,7 @@ compact_skip: number,
  */
 compact_covered_through_msg_id?: number | null, 
 /**
- * Agent operating mode: 0=Code(默认), 1=Plan, 2=Code(旧编码兼容).
- * Persisted so PLAN/CODE mode survives agent restart within the same session.
- */
-mode: number, 
-/**
- * 工具模式：standard | minimal | custom（PLAN-TOOL-MODES.md）。
+ * 工具模式：standard | minimal | custom。
  * 空串 = standard（旧 session 零迁移兼容）；custom 时 `custom_tools` 生效。
  */
 tool_mode?: string, 

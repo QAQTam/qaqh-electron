@@ -113,11 +113,12 @@ describe("validatePatch", () => {
     expect(validatePatch({ permissionLevel: 4 })).toContain("permissionLevel");
   });
 
-  test("validates subagent depth, timeout and token limits", () => {
+  test("validates subagent depth and timeout limits", () => {
     expect(validatePatch({ subagent: { maxDepth: 17 } })).toContain("subagent.maxDepth");
     expect(validatePatch({ subagent: { maxDepth: 1 } })).toBeNull();
     expect(validatePatch({ subagent: { timeoutSecs: 0 } })).toContain("subagent.timeoutSecs");
-    expect(validatePatch({ subagent: { maxTokens: 0 } })).toContain("subagent.maxTokens");
+    // subagent.maxTokens 已随 providers.toml 目录退役（ringing-commands-7）。
+    expect(validatePatch({ subagent: {} })).toBeNull();
   });
 
   test("a clean generated patch passes validation", () => {

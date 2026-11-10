@@ -66,7 +66,7 @@ test("turn_started 复位 isStreaming 状态", () => {
   const { store, feedProjection } = createMetricsHarness();
   store.composerMetrics[1]((current) => ({ ...current, isStreaming: true }));
 
-  feedProjection({ seq: 1, type: "turn_started", turn_id: "t2", input_id: "in2", mode: "normal" });
+  feedProjection({ seq: 1, type: "turn_started", turn_id: "t2", input_id: "in2" });
 
   expect(store.composerMetrics[0]().isStreaming).toBe(false);
 });

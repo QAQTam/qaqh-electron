@@ -6,8 +6,6 @@
  * - 实时增量由 applySessionEvent 负责
  * - 连接状态来自 projection://status
  */
-import { loadConfigSnapshot } from "../lib/config-snapshot";
-
 import { createSignal, createStore } from "solid-js";
 import { transport, desktopHostSurface, execSessionTarget, sessionTarget, type ApprovalView, type StreamHandlers, type ProjectionStatusWire, type TodoItemWire } from "../lib/transport";
 import { now } from "../lib/time";
@@ -20,7 +18,6 @@ import { normalizeActivity, type SessionActivity } from "./projection";
 import type {
  ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch 
 } from "../api/contract";
-import type { ProfileSummaryDto } from "../api/qaqh/ProfileSummaryDto";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 import { registry, refreshRegistry } from "../settings/registry";
 
@@ -96,30 +93,23 @@ export function estimateTokens(text: string): number {
 }
 
 /**
- * 输入区 profile 选择器的视图(spec §1.5)。
+ * 输入区模型/参数选择器的会话视图。
  *
- * 三份来源拼一个数,各自都不能单独当真相:
- *  - `selected` 来自 `session.meta` 的 `profile_id`(会话级,落 meta.json);
- *  - `catalog`/`activeProfile`/`profilesDetail` 来自全局 `config.load`
- *    （都是稳定 Profile ID）;
- *  - `model`/`providerKind` 取**本会话有效 Profile** 的摘要；有效项不在名录
- *    （配置还没刷新）时才退回全局活跃项。绝不拿 `SessionMeta.model`（建会话
- *    那一刻的快照，`reload_config` 不回写它）冒充生效值。
+ * 全局真源是 `provider.list` 的 `default_model_selection`（providers.toml 目录，
+ * legacy profile 已退役）；`effective` 是会话当前生效 provider 的展示名，
+ * `providerKind` 驱动模型目录与档位特判。绝不拿 `SessionMeta.model`（建会话
+ * 那一刻的快照，`reload_config` 不回写它）冒充生效值。
  */
 export interface SessionProfileView {
-  selected: string | null;
-  /** 全局默认 Profile ID:「跟随全局」这一项实际会用到谁。 */
-  activeProfile: string | null;
+  /** 会话当前生效 provider 的展示名；未选择时为 null。 */
   effective: string | null;
   model: string | null;
-  /** 本会话有效 Profile 的 provider 类别（模型目录/档位特判按它算）。 */
+  /** 本会话有效 provider 的类别（模型目录/档位特判按它算）。 */
   providerKind: ProviderKind;
-  catalog: string[];
-  details?: Record<string, ProfileSummaryDto>;
 }
 
 /** Flattened `session.meta` fields used by the composer settings view. */
-type SessionMetaWire = Pick<SessionListEntry, "profile" | "model_selection" | "effort" | "settings_revision" | "tool_mode" | "custom_tools" | "model">;
+type SessionMetaWire = Pick<SessionListEntry, "model_selection" | "settings_revision" | "tool_mode" | "custom_tools" | "model">;
 
 /** 会话工具模式视图:composer 选择器的读面。`mode` 空串按 standard 语义归一。 */
 export interface SessionToolModeView {
@@ -164,12 +154,9 @@ export class SessionStore {
   activity = createSignal<SessionActivity | null>(null);
   composerMetrics = createSignal<ComposerMetrics>({ tokensPerSecond: null, isStreaming: false, contextPercent: null, contextWindow: null, cacheHitPercent: null, extras: {} });
   composerProfile = createSignal<SessionProfileView>({
-    selected: null,
-    activeProfile: null,
     effective: null,
     model: null,
     providerKind: "byok",
-    catalog: [],
   });
   /** 会话解析后的模型/参数视图（overrides → profile → global）。 */
   composerModel = createSignal<string | null>(null);
@@ -247,17 +234,16 @@ export class SessionStore {
   private activeOutputEndedAt: number | null = null;
   private activeOutputActiveMs = 0;
   private contextRefreshId = 0;
-  /** 分母:最近一次 `config.load` 读到的窗口。 */
+  /** 分母:会话有效模型目录里的 context_window(publishProfileView 维护)。 */
   private contextLength: number | null = null;
-  /** `session.meta.profile_id`(会话级选择);null = 跟随全局默认 Profile。 */
+  /** `session.meta.model_selection`(会话级选择);null = 跟随全局 default_model_selection。 */
   private metaModelSelection: ModelSelection | null = null;
   private metaSettingsRevision: number | null = null;
-  /** `session.meta.effort`(会话级选择);null = 跟随全局或 profile 默认。 */
   /** `session.meta.tool_mode`;空串按 standard 归一(后端零迁移语义)。 */
   private metaToolMode = "standard";
   /** `session.meta.custom_tools`(仅 tool_mode === "custom" 时后端消费)。 */
   private metaCustomTools: string[] = [];
-  /** 最近一次 `config.load` 的 profile 面:名录 + 活跃项 + 活跃项的 model。 */
+  /** profile 读模型的去重代际(refreshProfile 幂等)。 */
   private profileRefreshId = 0;
   /** 分子:上一轮服务端 usage 的 `prompt_tokens`,即真正发出去的上下文。 */
   private measuredContextTokens: number | null = null;
@@ -270,9 +256,9 @@ export class SessionStore {
     // 否则热路径上的 memo 只能靠调用栈认。
     this.state = createStore<SessionState>(emptySession(), { name: "session" });
     // 配置写口都不在本 store(设置页 / 接入页 / 输入区模型卡片),而 daemon 不推
-    // config-changed:靠 `notifyConfigChanged()` 广播。不订阅的话,设置页把「上下文
-    // 窗口」改完再点保存,百分比仍按旧分母算,要等**下一轮结束**(`refreshConfigView`
-    // 只挂在 attach 与 turn 边界)才纠正——"分母不是我刚设的值"就是这么来的。
+    // config-changed:靠 `notifyConfigChanged()` 广播。不订阅的话,设置页把服务商
+    // 目录改完再点保存,会话视图仍按旧目录算,要等**下一轮结束**才纠正——
+    // refreshConfigView 在这里重发 profile 视图(分母从模型目录推出)。
     this.unsubscribeConfig = onConfigChanged(() => {
       void this.refreshConfigView();
     });
@@ -546,7 +532,9 @@ export class SessionStore {
         this.activeTurnStartedAt = null;
         this.activeModelBlockIds.clear();
         this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
-        void this.refreshConfigView();
+        // refreshProfile 会重发 profile 视图（含模型目录推出的 context 窗口）；
+        // 这里不再额外调 refreshConfigView——同步重发会把未选择会话的分母清空，
+        // 盖掉刚结算的 usage 百分比。
         void this.refreshProfile();
         void this.refreshTodos();
         void this.refreshApprovals();
@@ -633,25 +621,18 @@ export class SessionStore {
   }
 
   /**
-   * 取全局配置的 composer 视图:窗口(百分比分母)+ profile 名录。
-   * 分子与「本会话选了哪个 profile」都不由这里产生。
+   * 取全局配置的 composer 视图。ConfigDto 已不再携带端点族字段
+   * （context_length 随 providers.toml 目录走），这里只剩广播刷新：
+   * 上下文窗口由 `publishProfileView` 按会话有效模型的 `context_window` 给出。
    */
   private async refreshConfigView(): Promise<void> {
     if (this.disposed) return;
     const refreshId = ++this.contextRefreshId;
-    try {
-      const config = await loadConfigSnapshot();
-      if (this.disposed || refreshId !== this.contextRefreshId) return;
-      const length = config?.contextLength;
-      if (length != null && Number.isFinite(length) && length > 0) this.contextLength = length;
-      this.publishContextPercent();
-      this.publishProfileView();
-    } catch {
-      // Keep the last known window; metrics are an optional HUD.
-    }
+    if (this.disposed || refreshId !== this.contextRefreshId) return;
+    this.publishProfileView();
   }
 
-  /** 三份来源拼一个视图:`session.meta` 的选择 + 全局名录 + profilesDetail。 */
+  /** 拼 composer 视图：`session.meta` 的 model_selection + provider 目录。 */
   private publishProfileView(): void {
     const selection = this.metaModelSelection;
     if (selection != null) {
@@ -665,8 +646,8 @@ export class SessionStore {
       this.composerMaxTokens[1](selection.options.max_output_tokens ?? definition?.defaults.max_output_tokens ?? definition?.max_output_tokens ?? null);
       this.composerContextLength[1](contextLength);
       if (contextLength != null) { this.contextLength = contextLength; this.publishContextPercent(); }
-      this.composerProfile[1]({ selected: null, activeProfile: null, effective: provider?.name ?? selection.provider_id,
-        model: selection.model_id, providerKind: providerKindOfCredential(provider?.credential), catalog: [] });
+      this.composerProfile[1]({ effective: provider?.name ?? selection.provider_id,
+        model: selection.model_id, providerKind: providerKindOfCredential(provider?.credential) });
       return;
     }
     this.composerModelOverride[1](false);
@@ -677,8 +658,8 @@ export class SessionStore {
     this.composerContextLength[1](null);
     this.contextLength = null;
     this.publishContextPercent();
-    this.composerProfile[1]({ selected: null, activeProfile: null, effective: null,
-      model: null, providerKind: providerKindOfCredential(undefined), catalog: [] });
+    this.composerProfile[1]({ effective: null,
+      model: null, providerKind: providerKindOfCredential(undefined) });
   }
 
   /**
@@ -706,11 +687,6 @@ export class SessionStore {
       // best-effort:选择器退回「跟随全局」,下一次 turn 结束再取。
     }
     this.publishProfileView();
-  }
-
-  /** 会话级换 profile;`null` = 清除选择、回到跟随全局默认 Profile。 */
-  async setSessionProfile(profileId: string | null): Promise<void> {
-    await this.patchSessionSettings({ profile: profileId ?? "" });
   }
 
   async setSessionSelection(providerId: string, modelId: string): Promise<void> {
@@ -960,7 +936,7 @@ export class SessionStore {
   /** 0→N 开区间 / N→0 闭区间,挂到当前运行回合(spec D3:已工作扣除等待)。 */
   private recordWaitTransition(previous: ApprovalView[], next: ApprovalView[]): void {
     if (previous.length === 0 && next.length > 0) {
-      const kind = next[0]!.kind === "ask" || next[0]!.kind === "plan" ? "ask" : "approval";
+      const kind = next[0]!.kind === "ask" ? "ask" : "approval";
       this.waitFrom = { kind, at: now() };
     } else if (previous.length > 0 && next.length === 0 && this.waitFrom) {
       const wait: Wait = { turnKey: this.stateGet.activeTurnKey, kind: this.waitFrom.kind, from: this.waitFrom.at, to: now() };

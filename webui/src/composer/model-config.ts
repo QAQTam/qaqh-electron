@@ -1,19 +1,18 @@
 /**
  * 作曲家侧的模型/强度**读模型**（只读）。
  *
- * `config.load` 给出当前默认存档的 credential/model/effort，作为会话没有覆写时的
- * 回退值。会话内的写入走 `SessionStore` 的 `session.settings.patch`；全局配置的
- * 写口是「设置 → 服务商 / 存档」（`../settings/registry`），**不经过这里**。
+ * 全局默认选择（provider+model+options）唯一真源是 `provider.list` 的
+ * `default_model_selection`（providers.toml 目录）；ConfigDto 已不再携带
+ * 端点族字段（ringing-commands-7）。会话内的写入走 `SessionStore` 的
+ * `session.settings.patch`；全局写口是「设置 → 服务商」与账号接入页
+ * （`../settings/registry`），**不经过这里**。
  *
- * 目录与档位按 **provider 类别**参数化：同一时刻不同会话可以选到不同 Profile，
- * 拿全局活跃项那一份会把模型目录与可用档位算到别的 provider 头上。可用档位由
+ * 目录与档位按 **provider 类别**参数化：同一时刻不同会话可以选到不同 provider，
+ * 拿全局默认项那一份会把模型目录与可用档位算到别的 provider 头上。可用档位由
  * 用户登记的模型定义或在线目录给出，不按模型名字推测。
  */
-import { loadConfigSnapshot } from "../lib/config-snapshot";
-
 import { createSignal } from "solid-js";
 
-import type { ConfigDto } from "../api/qaqh/ConfigDto";
 import {
   catalogKindOf,
   fetchModelCatalog,
@@ -25,8 +24,8 @@ import { reasoningTiers, type ReasoningTier } from "../models/reasoning";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 import { refreshRegistry, registry } from "../settings/registry";
 
-/** 已保存事实（`config.load`）。null = 还没读到（或读失败）。 */
-const [config, setConfig] = createSignal<ConfigDto | null>(null);
+/** 目录已读到（registry 非空）。false = 还没读到（或读失败）。 */
+const [configReady, setConfigReady] = createSignal(false);
 /** 按目录来源缓存：套餐与 DeepSeek 账号可以同时留在内存里，互不覆盖。 */
 const [catalogs, setCatalogs] = createSignal<Partial<Record<CatalogKind, ModelEntry[]>>>({});
 const [catalogErrors, setCatalogErrors] = createSignal<Partial<Record<CatalogKind, string>>>({});
@@ -37,18 +36,18 @@ export { error as configError };
 const messageOf = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-/** 全局活跃 provider 的类别；配置未到时按 BYOK（它没有账户级目录）。 */
+/** 全局默认 provider 的类别；目录未到或未设默认时按 BYOK（它没有账户级目录）。 */
 export function currentProviderKind(): ProviderKind {
   const current = registry();
   const provider = current?.providers.find((item) => item.id === current.defaultSelection?.provider_id);
-  return providerKindOfCredential(provider?.credential ?? config()?.credential);
+  return providerKindOfCredential(provider?.credential);
 }
 
-export const currentModel = (): string => registry()?.defaultSelection?.model_id ?? config()?.model ?? "";
+export const currentModel = (): string => registry()?.defaultSelection?.model_id ?? "";
 export const currentEffort = (): string => {
   const current = registry();
   const selection = current?.defaultSelection;
-  if (selection == null) return config()?.reasoningEffort ?? "";
+  if (selection == null) return "";
   const definition = current?.providers.find((provider) => provider.id === selection.provider_id)
     ?.models.find((model) => model.id === selection.model_id)?.definition;
   return selection.options.reasoning_effort ?? definition?.defaults.reasoning_effort ?? "";
@@ -106,8 +105,8 @@ export function modelMetadata(kind: ProviderKind, model: string): ModelEntry | u
   return online;
 }
 
-/** 后端那份配置**读到了没有**。没读到就不能对外报任何档名（见 `effortDisplayOf`）。 */
-export const configLoaded = (): boolean => config() != null;
+/** 后端 provider 目录**读到了没有**。没读到就不能对外报任何档名（见 `effortDisplayOf`）。 */
+export const configLoaded = (): boolean => configReady();
 
 let booted = false;
 
@@ -133,8 +132,8 @@ export function defaultTier(kind: ProviderKind, model: string): ReasoningTier | 
 
 export async function refreshConfig(): Promise<void> {
   try {
-    const [next] = await Promise.all([loadConfigSnapshot(), refreshRegistry()]);
-    setConfig(next);
+    await refreshRegistry();
+    setConfigReady(registry() != null);
     setError(null);
   } catch (cause) {
     setError(messageOf(cause));
@@ -162,23 +161,21 @@ async function loadCatalogKind(kind: CatalogKind): Promise<void> {
 /**
  * 拉一次账户级模型目录。BYOK 模式下**不拉**——那个目录是账户级的，与自带端点无关。
  *
- * 不传 `providerKind` 时按全局活跃 provider 取（启动预热）。会话卡片必须传
- * **本会话有效 Profile 的类别**：同一时刻不同会话可以选到不同 provider，
+ * 不传 `providerKind` 时按全局默认 provider 取（启动预热）。会话卡片必须传
+ * **本会话有效 provider 的类别**：同一时刻不同会话可以选到不同 provider，
  * 拿全局那一份会把模型目录与档位算到别的 provider 头上。
  *
- * 全局模式下配置还没读到时**先等它**：调用方（输入区打开卡片那一刻）是把
+ * 全局模式下目录还没读到时**先等它**：调用方（输入区打开卡片那一刻）是把
  * `refreshConfig()` 与 `loadCatalog()` 并排发出的。不等待就会拿着 `null`
  * 判成"没在用账号额度"，于是套餐明明连着、选择器却永远是空的。
  */
 export async function loadCatalog(providerKind?: ProviderKind | null): Promise<void> {
   let kind: ProviderKind | null = providerKind ?? null;
   if (kind == null) {
-    let current = config();
-    if (current == null) {
-      await refreshConfig();
-      current = config();
-    }
-    kind = current == null ? null : providerKindOfCredential(current.credential);
+    if (!configReady()) await refreshConfig();
+    const current = registry();
+    const provider = current?.providers.find((item) => item.id === current.defaultSelection?.provider_id);
+    kind = provider == null ? null : providerKindOfCredential(provider.credential);
   }
   const catalogKind = kind == null ? null : catalogKindOf(kind);
   if (catalogKind != null) await loadCatalogKind(catalogKind);

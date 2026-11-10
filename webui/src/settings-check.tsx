@@ -26,55 +26,16 @@ type CommandCall = {
 };
 
 const baseConfig = (): ConfigDto => ({
-  model: "ox-alpha-free",
-  baseUrl: "https://opencode.ai/zen/go/v1",
-  wire: "chat",
-  credential: "api_key",
-  maxTokens: 96000,
-  contextLength: 1000000,
-  reasoningEffort: "max",
   autoCompactThreshold: 0.95,
   permissionLevel: 2,
-  apiKey: "****",
   lang: null,
   fontFamily: "",
   theme: null,
   notificationsEnabled: true,
-  activeProfile: "default",
-  profiles: ["default", "fast"],
-  profilesDetail: {
-    default: {
-      name: "默认",
-      model: "ox-alpha-free",
-      baseUrl: "https://opencode.ai/zen/go/v1",
-      wire: "chat",
-      effort: "max",
-      contextLength: 1000000,
-      maxTokens: 96000,
-      apiKeySet: true,
-      credential: "api_key",
-    },
-    fast: {
-      name: "极速",
-      model: "ox-alpha-fast",
-      baseUrl: "https://opencode.ai/zen/go/v1",
-      wire: "chat",
-      effort: "medium",
-      contextLength: 200000,
-      maxTokens: 8192,
-      apiKeySet: true,
-      credential: "api_key",
-    },
-  },
   complianceEnabled: false,
   exec: { defaultShell: null },
   sessionIdleUnloadSecs: 0,
   subagent: {
-    model: "om-two",
-    baseUrl: "https://other.example/compat/v1",
-    apiKey: "",
-    apiKeySet: false,
-    maxTokens: 4096,
     timeoutSecs: 120,
     defaultTools: ["read", "write"],
     maxDepth: 1,
@@ -126,53 +87,7 @@ const probe = {
   calls: [] as CommandCall[],
   saves: [] as Record<string, unknown>[],
   config: baseConfig(),
-  /** Legacy profile service 与新 provider/model catalog 分开维护。 */
-  registry: {
-    revision: 1,
-    default_profile: "default",
-    providers: {
-      "default-provider": {
-        name: "OpenCode Zen",
-        base_url: "https://opencode.ai/zen/go/v1",
-        wire: "chat",
-        credential: "api_key",
-        api_key: "****",
-      },
-      "fast-provider": {
-        name: "OpenCode Zen",
-        base_url: "https://opencode.ai/zen/fast/v1",
-        wire: "chat",
-        credential: "api_key",
-        api_key: "****",
-      },
-    },
-    // profile.list 现返回 ProfileSummaryDto 摘要(camelCase、按 baseUrl 对回目录,
-    // 无 provider 指针);default_profile 仅供夹具内部的 config 投影使用。
-    profiles: {
-      default: {
-        name: "默认",
-        model: "ox-alpha-free",
-        baseUrl: "https://opencode.ai/zen/go/v1",
-        wire: "chat",
-        effort: "max",
-        contextLength: 1000000,
-        maxTokens: 96000,
-        apiKeySet: true,
-        credential: "api_key",
-      },
-      fast: {
-        name: "极速",
-        model: "ox-alpha-fast",
-        baseUrl: "https://opencode.ai/zen/fast/v1",
-        wire: "chat",
-        effort: "medium",
-        contextLength: 200000,
-        maxTokens: 8192,
-        apiKeySet: true,
-        credential: "api_key",
-      },
-    },
-  } as Record<string, any>,
+  /** 新 provider/model catalog（providers.toml 投影）。 */
   providerCatalog: {
     revision: 1,
     default_model_selection: {
@@ -227,44 +142,6 @@ const probe = {
   lanBusy: false,
 };
 
-/** 把 profiles.toml 快照投影回 `config.load` 的顶字段（与 daemon 的读模型一致）。 */
-function syncProbeProjection(): void {
-  const doc = probe.registry;
-  // 摘要没有 provider 指针,和 registry.ts 一样按 baseUrl 对回旧目录。
-  const providerIdOf = (baseUrl: string): string =>
-    Object.entries(doc.providers).find(([, item]: [string, any]) => item.base_url === baseUrl)?.[0] ?? "";
-  const defaultId = doc.default_profile == null ? null : String(doc.default_profile);
-  const profile = defaultId == null ? null : doc.profiles[defaultId];
-  const provider = profile == null ? null : doc.providers[providerIdOf(profile.baseUrl)];
-  probe.config.activeProfile = defaultId ?? "";
-  probe.config.profiles = Object.keys(doc.profiles);
-  probe.config.profilesDetail = Object.fromEntries(
-    Object.entries(doc.profiles).map(([id, item]: [string, any]) => [
-      id,
-      {
-        name: item.name,
-        model: item.model,
-        baseUrl: item.baseUrl ?? "",
-        wire: item.wire ?? "chat",
-        effort: item.effort ?? null,
-        contextLength: item.contextLength ?? null,
-        maxTokens: item.maxTokens ?? null,
-        apiKeySet: item.apiKeySet ?? false,
-        credential: item.credential ?? "api_key",
-      },
-    ]),
-  );
-  if (profile == null || provider == null) return;
-  probe.config.model = profile.model;
-  probe.config.baseUrl = provider.base_url;
-  probe.config.wire = provider.wire;
-  probe.config.credential = provider.credential;
-  probe.config.reasoningEffort = profile.effort ?? "";
-  probe.config.contextLength = profile.contextLength ?? 0;
-  probe.config.maxTokens = profile.maxTokens ?? 0;
-  probe.config.apiKey = provider.api_key == null ? "" : "****";
-}
-
 /** Skills 夹具直接采用 daemon `skills.catalog` 的完成态结果。 */
 const projectWorkspace = {
   id: "w1", title: "演示仓库", path: "E:/fixtures/demo-repo", order: 0, session_ids: [], missing_dir: false,
@@ -302,28 +179,11 @@ const skillsCatalogFixture = {
   diagnostics: [],
 };
 
-/** wire 落盘的读回形态与 daemon 一致:`Wire::parse` 收旧拼写,读模型恒回规范名。 */
-const CANONICAL_WIRE: Record<string, string> = {
-  openai: "chat",
-  "openai-compatible": "chat",
-  chat_completions: "chat",
-  anthropic: "messages",
-  claude: "messages",
-  "openai-responses": "responses",
-};
-
-/** 假宿主的 merge patch 应用:与 daemon 同语义——缺字段不动,`"****"`/空串密钥保持。 */
+/** 假宿主的 merge patch 应用:与 daemon 同语义——缺字段不动。 */
 function applyMergePatch(target: ConfigDto, patch: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(patch)) {
     if (key === "subagent" && value != null && typeof value === "object") {
       Object.assign(target.subagent, value as Record<string, unknown>);
-      continue;
-    }
-    if (key === "apiKey" && (value === "****" || value === "")) continue;
-    // 出网是旧拼写(`openai`/`anthropic`),回显恒为规范名——不换回来,设置页
-    // 下拉(只摆规范名)保存后就会丢选中态。
-    if (key === "wire" && typeof value === "string") {
-      (target as Record<string, unknown>)[key] = CANONICAL_WIRE[value] ?? value;
       continue;
     }
     (target as Record<string, unknown>)[key] = value;
@@ -334,10 +194,7 @@ function hostService(method: string, params: Record<string, unknown> = {}): unkn
   probe.calls.push({ command: { type: method }, params: structuredClone(params) });
   switch (method) {
     case "config.load":
-      syncProbeProjection();
       return structuredClone(probe.config);
-    case "profile.list":
-      return structuredClone(probe.registry);
     case "daemon.version":
       return "3.0.20261103-1";
     case "session.list":
@@ -409,17 +266,8 @@ function hostCommand(
         ...input,
         api_key: apiKey,
       };
-      probe.registry.providers[id] = {
-        ...(probe.registry.providers[id] ?? {}),
-        name: input.name,
-        base_url: input.base_url,
-        wire: input.wire,
-        credential: input.credential,
-        api_key: apiKey,
-      };
       probe.providerCatalog.revision += 1;
       revision = probe.providerCatalog.revision;
-      syncProbeProjection();
       break;
     }
     case "provider.model.upsert": {
@@ -443,44 +291,8 @@ function hostCommand(
     case "model.selection.set_default": {
       const selection = command.selection as Record<string, unknown>;
       probe.providerCatalog.default_model_selection = structuredClone(selection);
-      const providerIdOf = (baseUrl: string): string =>
-        Object.entries(probe.registry.providers).find(([, item]: [string, any]) => item.base_url === baseUrl)?.[0] ?? "";
-      const selectedProfile = Object.entries(probe.registry.profiles).find(([, profile]: [string, any]) =>
-        providerIdOf(profile.baseUrl) === selection.provider_id && profile.model === selection.model_id);
-      probe.registry.default_profile = selectedProfile?.[0] ?? null;
       probe.providerCatalog.revision += 1;
       revision = probe.providerCatalog.revision;
-      break;
-    }
-    case "profile.create": {
-      const id = String(command.id ?? command.name);
-      probe.registry.profiles[id] = {
-        name: command.name,
-        model: command.model,
-        baseUrl: command.base_url ?? "",
-        wire: command.wire ?? "chat",
-        effort: command.reasoning_effort ?? null,
-        contextLength: command.context_length ?? 0,
-        maxTokens: command.max_tokens ?? null,
-        apiKeySet: command.api_key != null,
-        credential: "api_key",
-      };
-      if (probe.registry.default_profile == null) probe.registry.default_profile = id;
-      syncProbeProjection();
-      break;
-    }
-    case "profile.delete": {
-      const id = String(command.name);
-      const profile = probe.registry.profiles[id];
-      const selection = probe.providerCatalog.default_model_selection;
-      const providerIdOf = (baseUrl: string): string =>
-        Object.entries(probe.registry.providers).find(([, item]: [string, any]) => item.base_url === baseUrl)?.[0] ?? "";
-      const profileProviderId = profile == null ? "" : providerIdOf(profile.baseUrl);
-      if (profile != null && selection?.provider_id === profileProviderId && selection?.model_id === profile.model) {
-        throw new Error("默认模型存档不可删除");
-      }
-      delete probe.registry.profiles[id];
-      syncProbeProjection();
       break;
     }
     case "diagnostics.memory.start":

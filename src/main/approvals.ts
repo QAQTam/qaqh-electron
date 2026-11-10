@@ -24,7 +24,7 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/** The admin response has independent permission and ask/plan slots. */
+/** The admin response has independent permission and ask slots. */
 export function flattenAdminApprovals(pending: RingingV2PendingApprovals): PendingApproval[] {
   const slots = record(pending, "pending_approvals");
   const items: PendingApproval[] = [];
@@ -46,8 +46,10 @@ export function flattenAdminApprovals(pending: RingingV2PendingApprovals): Pendi
   if (slots.pending_interaction !== null) {
     const interaction = record(slots.pending_interaction, "pending_interaction");
     // A permission interaction id is NOT a tool-call id. The daemon projects
-    // tool permissions through the canonical pending_permission slot.
-    if (interaction.kind !== "ask" && interaction.kind !== "plan") throw new Error("invalid_pending_interaction_kind");
+    // tool permissions through the canonical pending_permission slot; only
+    // ask interactions reach this slot (ringing-commands-7 词表里交互只剩
+    // ask|permission，plan 审批已随 plan.review.respond 一并退役)。
+    if (interaction.kind !== "ask") throw new Error("invalid_pending_interaction_kind");
     items.push({
       kind: interaction.kind,
       internalId: requireId(interaction.id, "interaction_id"),
@@ -87,15 +89,6 @@ export function approvalCommand(
       }
       return { type: "interaction.ask.respond", interaction_id: id, answers };
     }
-    case "plan":
-      if (decision !== "approve" && decision !== "reject") throw new Error("invalid_decision");
-      if (body.message != null && typeof body.message !== "string") throw new Error("invalid_plan_message");
-      return {
-        type: "plan.review.respond", interaction_id: id,
-        approved: decision === "approve",
-        message: typeof body.message === "string" ? body.message : null,
-        autonomous: false,
-      };
     default:
       throw new Error("invalid_approval_kind");
   }

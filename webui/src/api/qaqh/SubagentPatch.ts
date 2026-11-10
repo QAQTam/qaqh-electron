@@ -3,7 +3,7 @@
 /**
  * 子代理配置段（写模型），嵌套于 [`ConfigPatch::subagent`]。
  */
-export type SubagentPatch = { model: string | null, baseUrl: string | null, apiKey: string | null, maxTokens: number | null, timeoutSecs: number | null, 
+export type SubagentPatch = { timeoutSecs: number | null, 
 /**
  * 允许空数组（= 全部工具可用）。
  */

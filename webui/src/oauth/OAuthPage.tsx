@@ -59,6 +59,7 @@ import {
 import {
   ensureAccountProfile,
   refreshRegistry,
+  registry,
   registryError,
   registryBusy,
   syncAccountCatalog,
@@ -414,7 +415,11 @@ export const OAuthPage: Component<{ onOpenSettings?: () => void }> = (props) => 
       setConfig(next);
       setError(null);
       // 生效那一家的模型目录：不拉的话，接入页与输入区都只能显示"空列表"。
-      const kind = catalogKindOf(providerKindOfCredential(next.credential));
+      // credential 真源是 provider 目录（ConfigDto 已不再携带端点族字段）。
+      await refreshRegistry();
+      const current = registry();
+      const provider = current?.providers.find((item) => item.id === current.defaultSelection?.provider_id);
+      const kind = catalogKindOf(providerKindOfCredential(provider?.credential));
       if (kind != null) void ensureCatalog(kind);
     } catch (cause) {
       setError(messageOf(cause));

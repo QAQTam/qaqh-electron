@@ -12,7 +12,7 @@ import type { SidebarSession } from "../tabs/store";
 import type { ApprovalView } from "../lib/transport";
 import { STR } from "../lib/strings";
 
-export type PendingKind = "permission" | "ask" | "plan" | "interaction";
+export type PendingKind = "permission" | "ask" | "interaction";
 
 /** 卡片形态:`pending` = 待人响应;`working` = 回合在跑(沿用旧状态点)。 */
 export type PendingPhase = "pending" | "working";
@@ -50,8 +50,6 @@ export function pendingPresentation(
         return { kind: "permission", label: STR.pendingPermission, ariaLabel: `${title}:${STR.pendingPermission}`, phase: "pending" };
       case "ask":
         return { kind: "ask", label: STR.pendingAsk, ariaLabel: `${title}:${STR.pendingAsk}`, phase: "pending" };
-      case "plan":
-        return { kind: "plan", label: STR.pendingPlan, ariaLabel: `${title}:${STR.pendingPlan}`, phase: "pending" };
     }
   }
   return runStatusOf(session) === "waiting_user"

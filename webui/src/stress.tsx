@@ -264,58 +264,19 @@ const [draft, setDraft] = createSignal("");
 
 if (isVisualPreview) {
   const previewConfig: ConfigDto = {
-    model: "qaqh-visual-preview",
-    baseUrl: "https://api.example.test/v1",
-    wire: "responses",
-    credential: "api_key",
-    maxTokens: 8192,
-    contextLength: 128000,
-    reasoningEffort: "medium",
     autoCompactThreshold: 0.82,
     permissionLevel: 2,
-    apiKey: "****",
     lang: "zh-CN",
     fontFamily: "",
     theme: previewParams.get("theme") === "dark" ? "dark" : "light",
     notificationsEnabled: true,
     exec: { defaultShell: "pwsh" },
-  sessionIdleUnloadSecs: 1800,
-  activeProfile: "视觉验收",
-    profiles: ["视觉验收", "本地模型"],
-    profilesDetail: {
-      视觉验收: {
-        name: "视觉验收",
-        model: "qaqh-visual-preview",
-        baseUrl: "https://api.example.test/v1",
-        wire: "responses",
-        effort: "medium",
-        contextLength: 128000,
-        maxTokens: 8192,
-        apiKeySet: true,
-        credential: "api_key",
-      },
-      本地模型: {
-        name: "本地模型",
-        model: "qaqh-local-preview",
-        baseUrl: "http://127.0.0.1:11434/v1",
-        wire: "chat",
-        effort: null,
-        contextLength: 32768,
-        maxTokens: 4096,
-        apiKeySet: false,
-        credential: "api_key",
-      },
-    },
+    sessionIdleUnloadSecs: 1800,
     sandbox: { enabled: true },
     toolAllowlistEnabled: false,
     toolAllowlist: [],
     complianceEnabled: true,
     subagent: {
-      model: "qaqh-subagent-preview",
-      baseUrl: "https://api.example.test/v1",
-      apiKey: "",
-      apiKeySet: false,
-      maxTokens: 4096,
       timeoutSecs: 120,
       defaultTools: ["read", "write"],
       maxDepth: 3,
@@ -423,17 +384,6 @@ if (isVisualPreview) {
       },
     },
   };
-  const previewLegacyProfiles = {
-    default_profile: "视觉验收",
-    providers: {
-      "visual-provider": { name: "Preview", base_url: "https://api.example.test/v1", wire: "responses", credential: "api_key", api_key: "****" },
-      "local-provider": { name: "Local", base_url: "http://127.0.0.1:11434/v1", wire: "chat", credential: "api_key", api_key: null },
-    },
-    profiles: {
-      视觉验收: { name: "视觉验收", provider: "visual-provider", model: "qaqh-visual-preview", reasoning_effort: "medium", context_length: 128000, max_tokens: 8192 },
-      本地模型: { name: "本地模型", provider: "local-provider", model: "qaqh-local-preview", reasoning_effort: null, context_length: 32768, max_tokens: 4096 },
-    },
-  };
   const mockQuery = async <K extends ServiceMethod>(method: K, params?: ServiceParams<K>): Promise<ServiceResult<K>> => {
     // OAuth 截图使用启动脚本注入的宿主夹具，覆盖服务读取以验证真实切换流程。
     if (previewView === "oauth" && previewParams.has("oauthState") && window.qaqhHost != null) {
@@ -441,7 +391,6 @@ if (isVisualPreview) {
     }
     let result: unknown;
     if (method === "config.load") result = structuredClone(previewConfig);
-    else if (method === "profile.list") result = structuredClone(previewLegacyProfiles);
     else if (method === "skills.catalog") result = structuredClone(previewSkillsCatalog);
     else if (method === "diagnostics.memory.snapshot") result = simMemorySnapshot();
     else if (method === "daemon.version") result = "0.0.0-visual-fixture";
@@ -620,7 +569,7 @@ function feed(event: SessionEventPayload): void {
 }
 
 function startTurn(turnId: string, userText: string): void {
-  feed({ type: "turn_started", turn_id: turnId, input_id: null, mode: "normal" });
+  feed({ type: "turn_started", turn_id: turnId, input_id: null });
   feed({ type: "timeline_appended", entry: {
     kind: "input",
     data: {
@@ -1420,12 +1369,9 @@ const [previewProfile, setPreviewProfile] = createSignal<string | null>(null);
 const fixtureProfileView = (): import("./session/store").SessionProfileView => {
   const selected = previewProfile();
   return {
-    selected,
-    activeProfile: "视觉验收",
     effective: selected ?? "视觉验收",
     model: selected == null ? "qaqh-visual-preview" : null,
     providerKind: "byok",
-    catalog: ["视觉验收", "本地模型"],
   };
 };
 

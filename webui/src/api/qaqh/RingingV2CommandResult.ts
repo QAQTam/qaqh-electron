@@ -9,4 +9,4 @@ import type { RingingV2AskOutcome } from "./RingingV2AskOutcome";
  * source of truth; this payload exists so idempotent replay and status polling
  * do not degrade to string matching on `code`/`message`.
  */
-export type RingingV2CommandResult = { "kind": "ask_resolved", interaction_id: string, outcome: RingingV2AskOutcome, } | { "kind": "plan_review_resolved", interaction_id: string, approved: boolean, } | { "kind": "permission_resolved", interaction_id: string, approved: boolean, };
+export type RingingV2CommandResult = { "kind": "ask_resolved", interaction_id: string, outcome: RingingV2AskOutcome, } | { "kind": "permission_resolved", interaction_id: string, approved: boolean, };

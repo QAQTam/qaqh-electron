@@ -112,6 +112,44 @@ const setNewSessionCwd = (value: string | null): void => {
 const [drafts, setDrafts] = createStore<Record<string, string>>(readStoredDrafts());
 
 /**
+ * 草稿持久化节流(2026-11-10 性能修复):打字管线以 store 为唯一权威写口;
+ * `localStorage` 不再每键写全串(实测每键全量序列化的成本随草稿长度线性增长,
+ * 是 O(n²) 打字总成本的一层),改为尾沿合并:挂一个计时器,到点写「当下最新值」。
+ * pagehide/beforeunload 立即冲刷,窗口关闭不丢最后一段草稿。
+ */
+const DRAFT_PERSIST_DELAY_MS = 500;
+const draftPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const draftPersistLatest = new Map<string, string>();
+
+function persistDraftNow(seed: string): void {
+  const timer = draftPersistTimers.get(seed);
+  if (timer !== undefined) { clearTimeout(timer); draftPersistTimers.delete(seed); }
+  if (!draftPersistLatest.has(seed)) return;
+  const value = draftPersistLatest.get(seed) ?? "";
+  draftPersistLatest.delete(seed);
+  try {
+    if (value.trim()) localStorage.setItem(`${DRAFT_PREFIX}${seed}`, value);
+    else localStorage.removeItem(`${DRAFT_PREFIX}${seed}`);
+  } catch {}
+}
+
+/** 标签/会话消失:撤销在写计划,并**无条件**清掉存储里的旧草稿(修泄漏:此前删 tab 只清了 store)。 */
+function dropDraftPersistence(seed: string): void {
+  const timer = draftPersistTimers.get(seed);
+  if (timer !== undefined) { clearTimeout(timer); draftPersistTimers.delete(seed); }
+  draftPersistLatest.delete(seed);
+  try { localStorage.removeItem(`${DRAFT_PREFIX}${seed}`); } catch {}
+}
+
+if (typeof window !== "undefined") {
+  const flushDrafts = (): void => {
+    for (const seed of [...draftPersistLatest.keys()]) persistDraftNow(seed);
+  };
+  window.addEventListener("pagehide", flushDrafts);
+  window.addEventListener("beforeunload", flushDrafts);
+}
+
+/**
  * Startup 页暂存的附件路径(首条消息发出时才上传,见 `submitStartupSession`)。
  *
  * 这份列表原本是 `StartupView` 的组件局部信号,全局快捷键够不着它——于是"还没建
@@ -244,10 +282,15 @@ export const activeTab = (): Tab | null => tabs().find((tab) => tab.id === activ
 export const draftOf = (seed: string): string => drafts[seed] ?? "";
 export const setDraftOf = (seed: string, value: string): void => {
   setDrafts((draft) => { draft[seed] = value; });
-  try {
-    if (value.trim()) localStorage.setItem(`${DRAFT_PREFIX}${seed}`, value);
-    else localStorage.removeItem(`${DRAFT_PREFIX}${seed}`);
-  } catch {}
+  // 持久化走尾沿节流(见 DRAFT_PERSIST_DELAY_MS 注释):每键只做 O(1) 的 Map 记账。
+  draftPersistLatest.set(seed, value);
+  if (!draftPersistTimers.has(seed)) {
+    const timer = setTimeout(() => {
+      draftPersistTimers.delete(seed);
+      persistDraftNow(seed);
+    }, DRAFT_PERSIST_DELAY_MS);
+    draftPersistTimers.set(seed, timer);
+  }
 };
 
 export function openStartup(): void {
@@ -349,6 +392,7 @@ export async function closeTab(tabId: string): Promise<void> {
   if (lastActivatedSeed === tab.seed) lastActivatedSeed = null;
   setTabs(list.filter((item) => item.id !== tabId));
   setDrafts((draft) => { delete draft[tab.seed]; });
+  dropDraftPersistence(tab.seed);
   tab.store.dispose();
   if (wasActive) {
     const next = list[index - 1] ?? list[index + 1] ?? null;
@@ -359,9 +403,7 @@ export async function closeTab(tabId: string): Promise<void> {
 
 export interface CreateSessionOptions {
   cwd?: string | null;
-  profile?: string | null;
   modelSelection?: ModelSelection | null;
-  effort?: string | null;
   title?: string | null;
 }
 
@@ -377,9 +419,7 @@ export async function createSessionWithCwd(
   const ack = await transport.command({
     type: "session.create",
     cwd: options.cwd ?? null,
-    profile: options.profile ?? null,
     model_selection: options.modelSelection ?? null,
-    effort: options.effort ?? null,
     title: options.title ?? null,
   });
   const result = ack.result;
@@ -412,15 +452,13 @@ export async function createSession(cwd?: string | null): Promise<void> {
 export interface StartupSubmitOptions {
   cwd: string | null;
   modelSelection: ModelSelection;
-  profile?: string | null;
-  effort?: string | null;
   text: string;
   attachmentPaths?: string[];
 }
 
 /**
  * Startup 首页原子创建会话与首包发送事务:
- * 1. 原子创建会话并绑定目标 cwd / profile / effort
+ * 1. 原子创建会话并绑定目标 cwd / model_selection
  * 2. 上传本地暂存的附件 (若有)
  * 3. 打开会话并发送第一条用户消息
  */
@@ -432,7 +470,6 @@ export async function submitStartupSession(options: StartupSubmitOptions): Promi
     const fresh = await createSessionWithCwd({
       cwd: options.cwd,
       modelSelection: options.modelSelection,
-      effort: options.effort,
     });
       const uploadedRefs: SessionContentRef[] = [];
     if (options.attachmentPaths && options.attachmentPaths.length > 0) {

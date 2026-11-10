@@ -5,7 +5,8 @@ import { loadHost, mockNativeAddon, FakeTimers } from "./test-host.mjs";
 const empty = () => ({ pending_permission: null, pending_interaction: null });
 const ask = () => ({ pending_permission: null, pending_interaction: { id: "interaction-ask", kind: "ask", details: { questions: [{ id: "q1", question: "Proceed?", options: ["yes"], allow_custom: false }] } } });
 const permission = (detailsUnavailable = false) => ({ pending_permission: { tool_call_id: "tool-call", tool_name: "exec", action_summary: "run command", reason: "shell", paths: [], category: "exec", level: 2, risk: "high", consequence: "runs command", details_unavailable: detailsUnavailable, secret: "do-not-forward" }, pending_interaction: null });
-const plan = () => ({ pending_permission: null, pending_interaction: { id: "interaction-plan", kind: "plan", details: { plan_content: "Implement this", review_type: "plan" } } });
+// plan 审批已随 `plan.review.respond` 退役（ringing-commands-7）；
+// InteractionKind 只剩 ask|permission，plan 仅存于 device challenge 词表。
 
 async function ipcFixture(pending = ask()) {
   const host = await loadHost();
@@ -41,8 +42,6 @@ for (const [kind, pending, decision, payload, expected] of [
   ["tool_permission", permission, "approve", {}, { type: "tool.permission.respond", tool_call_id: "tool-call", approved: true, trust_folder: false }],
   ["tool_permission", permission, "reject", {}, { type: "tool.permission.respond", tool_call_id: "tool-call", approved: false, trust_folder: false }],
   ["tool_permission", permission, "trust", { tool_call_id: "forged" }, { type: "tool.permission.respond", tool_call_id: "tool-call", approved: true, trust_folder: true }],
-  ["plan", plan, "approve", { message: "ok", ignored: true }, { type: "plan.review.respond", interaction_id: "interaction-plan", approved: true, message: "ok", autonomous: false }],
-  ["plan", plan, "reject", { message: null }, { type: "plan.review.respond", interaction_id: "interaction-plan", approved: false, message: null, autonomous: false }],
 ]) {
   test(`IPC maps ${kind}/${decision} to the canonical command on the explicit session`, async () => {
     const host = await ipcFixture(pending());
@@ -144,7 +143,7 @@ test("IPC rejects malformed decisions, answers, ids and cross-session challenge 
   for (const answers of [null, [], [{ question_id: "q1", answer: 1 }], [{ question_id: "q1", answer: " " }], [{ question_id: "q1", answer: "a" }, { question_id: "q1", answer: "b" }]]) {
     assert.throws(() => host.approvalCommand({ kind: "ask", internalId: "id" }, "submit", { answers }), /invalid_/);
   }
-  assert.throws(() => host.approvalCommand({ kind: "plan", internalId: "id" }, "reject", { message: {} }), /invalid_plan_message/);
+  assert.throws(() => host.approvalCommand({ kind: "plan", internalId: "id" }, "reject", { message: {} }), /invalid_approval_kind/);
   await assert.rejects(host.invoke("pending_approvals", { seed: "" }), /invalid_session_id/);
   assert.throws(() => host.flattenAdminApprovals({}), /invalid_pending_permission/);
 });
@@ -158,7 +157,7 @@ test("IPC sender restrictions still reject untrusted origins and subframes", asy
 
 test("decision vocabularies do not cross kinds and renderer fields cannot override grants", async () => {
   const { approvalCommand } = await loadHost();
-  const decisions = { ask: ["submit", "dismiss"], tool_permission: ["approve", "reject", "trust"], plan: ["approve", "reject"] };
+  const decisions = { ask: ["submit", "dismiss"], tool_permission: ["approve", "reject", "trust"] };
   for (const [kind, allowed] of Object.entries(decisions)) {
     for (const decision of ["submit", "dismiss", "approve", "reject", "trust", "allow", "deny", "unknown"]) {
       if (!allowed.includes(decision)) assert.throws(() => approvalCommand({ kind, internalId: "canonical" }, decision), /invalid_decision/);

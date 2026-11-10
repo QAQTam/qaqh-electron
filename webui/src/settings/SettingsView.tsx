@@ -37,7 +37,7 @@ import {
   typography,
   updateTypography,
 } from "../lib/typography";
-import { MASK, PERMISSION_TIERS, THEME_OPTIONS, formatToolList, needsBypassConfirm, parseToolList } from "./patch";
+import { PERMISSION_TIERS, THEME_OPTIONS, formatToolList, needsBypassConfirm, parseToolList } from "./patch";
 import {
   baseline,
   busy,
@@ -126,9 +126,8 @@ export const SettingsView: Component<{
   onSectionChange?: (section: string) => void;
   showSectionPicker?: boolean;
 }> = (props) => {
-  // 子代理密钥与工具清单是「只进不出」的本地缓冲:它们的 DOM 文本不等于草稿值
-  // (掩码不能回填,逗号串要解析成数组),回填会让用户和输入框互相打架。
-  const [subKey, setSubKey] = createSignal("");
+  // 子代理工具清单是「只进不出」的本地缓冲:逗号串要解析成数组,回填会让
+  // 用户和输入框互相打架。
   const [toolsInput, setToolsInput] = createSignal("");
   const [themeChoice, setThemeChoice] = createSignal(storedTheme() ?? "");
   const [activeSection, setActiveSection] = createSignal<string>(
@@ -154,17 +153,13 @@ export const SettingsView: Component<{
     return () => previousFocus?.focus();
   });
 
-  // 基线换了(载入/保存/切 profile)才重置缓冲——它们不参与 patch 构建。
+  // 基线换了(载入/保存)才重置缓冲——它们不参与 patch 构建。
   createEffect(
     () => baseline(),
     (base) => {
-      setSubKey("");
       setToolsInput(base == null ? "" : formatToolList(base.subagent.defaultTools));
     },
   );
-
-  const secretPlaceholder = (masked: string): string =>
-    masked === MASK ? "已配置(留空保持不变)" : "未配置";
 
   const bypassPending = createMemo(() => requireBypass() && needsBypassConfirm(patch()));
 
@@ -469,35 +464,9 @@ export const SettingsView: Component<{
                     title="子代理"
                     desc={STR.settingsSubagentDesc}
                   >
-                    <Field label={STR.settingsSubagentModel} hint={STR.settingsSubagentNewOnlyHint}>
-                      <TextInput value={config().subagent.model} onInput={(value) => setSubagent("model", value)} />
-                    </Field>
-                    <Field label={STR.settingsSubagentBaseUrl} hint={STR.settingsSubagentNewOnlyHint}>
-                      <TextInput value={config().subagent.baseUrl} onInput={(value) => setSubagent("baseUrl", value)} />
-                    </Field>
-                    <Field label={STR.settingsSubagentApiKey} hint={STR.settingsSubagentApiKeyHint(config().subagent.apiKeySet)}>
-                      <TextInput
-                        type="password"
-                        value={subKey()}
-                        placeholder={secretPlaceholder(config().subagent.apiKey)}
-                        onInput={(value) => {
-                          setSubKey(value);
-                          setSubagent("apiKey", value.trim() === "" ? config().subagent.apiKey : value);
-                        }}
-                      />
-                    </Field>
-                    <Field
-                      label={STR.settingsSubagentMaxTokens}
-                      hint={STR.settingsSubagentNewOnlyHint}
-                      compact
-                    >
-                      <NumberInput
-                        value={config().subagent.maxTokens}
-                        min={1}
-                        onCommit={(value) => setSubagent("maxTokens", value)}
-                        ariaLabel={STR.settingsSubagentMaxTokens}
-                      />
-                    </Field>
+                    {/* 端点族设置（model/baseUrl/apiKey/maxTokens）已退役：
+                        子代理模型选择唯一真源是 providers.toml 目录 + 会话行
+                        model_selection（provider.* / session.settings.patch）。 */}
                     <Field label={STR.settingsSubagentTimeout} hint={STR.settingsSubagentNewOnlyHint} compact>
                       <NumberInput
                         value={config().subagent.timeoutSecs}

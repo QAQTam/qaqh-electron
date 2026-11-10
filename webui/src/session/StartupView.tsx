@@ -2,7 +2,7 @@ import { registry, refreshRegistry } from "../settings/registry";
 import type {
  ModelSelection 
 } from "../api/contract";
-import { createSignal, For, Show, type Component } from "solid-js";
+import { createEffect, createSignal, For, Show, type Component } from "solid-js";
 import IconFolder from "~icons/lucide/folder";
 import IconChevronDown from "~icons/lucide/chevron-down";
 import IconPaperclip from "~icons/lucide/paperclip";
@@ -87,12 +87,22 @@ export const StartupView: Component<{
     return `${provider?.name ?? selected.provider_id} · ${model?.definition.display_name ?? selected.model_id}`;
   };
 
-  const autoGrow = (): void => {
-    const el = textarea;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 8 * 22 + 20)}px`;
-  };
+  /**
+   * 与 Composer 同一套非受控化(2026-11-10 性能修复):打字期间 DOM 即事实源,
+   * 这个 effect 只桥接外部赋值(建议卡「应用」),击键按引用相等快速返回;
+   * 高度自适应交给 CSS `field-sizing: content`,不再每键读 scrollHeight。
+   */
+  let lastLocalDraft: string | null = null;
+  const [draftEmpty, setDraftEmpty] = createSignal(true);
+  createEffect(
+    draftText,
+    (value) => {
+      if (value === lastLocalDraft) return;
+      lastLocalDraft = null;
+      if (textarea != null && textarea.value !== value) textarea.value = value;
+      setDraftEmpty(value.trim() === "");
+    },
+  );
 
   const handlePickAttachments = async (): Promise<void> => {
     try {
@@ -108,10 +118,7 @@ export const StartupView: Component<{
 
   const handleApplySuggestion = (prompt: string): void => {
     setDraftText(prompt);
-    setTimeout(() => {
-      autoGrow();
-      textarea?.focus();
-    }, 50);
+    textarea?.focus();
   };
 
   const handleSubmit = async (): Promise<void> => {
@@ -251,10 +258,11 @@ export const StartupView: Component<{
               ref={textarea}
               rows={2}
               placeholder="输入你的任务需求，或直接提问…"
-              value={draftText()}
               onInput={(e) => {
-                setDraftText(e.currentTarget.value);
-                autoGrow();
+                const value = e.currentTarget.value;
+                lastLocalDraft = value;
+                setDraftEmpty(value.trim() === "");
+                setDraftText(value);
               }}
               onKeyDown={(e) => {
                 if (e.key !== "Enter" || e.shiftKey) return;
@@ -291,7 +299,7 @@ export const StartupView: Component<{
                 <button
                   type="button"
                   class="icon-btn send button-primary"
-                  disabled={creating() || draftText().trim() === ""}
+                  disabled={creating() || draftEmpty()}
                   onClick={() => void handleSubmit()}
                   title="发送并创建新会话"
                 >

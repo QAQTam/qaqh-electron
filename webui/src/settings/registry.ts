@@ -1,10 +1,10 @@
 /**
- * Provider/model catalog plus the separate legacy profile service.
+ * Provider/model catalog 的唯一读模型。
  *
- * `provider.list` is the authority for providers, model definitions, the global
- * default model selection, and its `config_revision`. `profile.list` remains a
- * separate read model for saved profile names; its revision is never used to
- * guard provider or model writes.
+ * `provider.list` 返回 `providers.toml` 目录（ringing-commands-7）：providers、
+ * 各 provider 的 models、全局 `default_model_selection` 与目录 `revision`。
+ * legacy profile 目录已退役——会话/子代理的模型选择只走
+ * `model_selection`（`session.settings.patch` / `model.selection.set_default`）。
  */
 import { createSignal } from "solid-js";
 
@@ -28,18 +28,6 @@ type ProviderWire = {
   compat?: unknown;
   models?: Record<string, ModelDef>;
 };
-type ProfileWire = {
-  name: string;
-  provider: string;
-  model: string;
-  reasoning_effort?: string | null;
-  max_tokens?: number | null;
-};
-type LegacyProfilesDocument = {
-  default_profile?: string | null;
-  providers?: Record<string, ProviderWire>;
-  profiles?: Record<string, ProfileWire>;
-};
 type ProviderCatalog = {
   revision: number;
   default_model_selection?: ModelSelection | null;
@@ -57,30 +45,16 @@ export type RegistryProvider = {
   headers: Record<string, string>;
   compat: unknown;
   models: RegistryModel[];
+  /** 引用方：目前只有全局默认选择（default_model_selection）。 */
   referencedBy: string[];
-};
-export type RegistryProfile = {
-  id: string;
-  name: string;
-  providerId: string;
-  providerName: string;
-  model: string;
-  effort: string | null;
-  contextLength: number | null;
-  maxTokens: number | null;
-  isDefault: boolean;
-  credential: string;
 };
 export type Registry = {
   /** Revision of providers.toml only. */
   revision: number;
   defaultSelection: ModelSelection | null;
-  /** Legacy profile reference matching defaultSelection, if one exists. */
-  defaultProfile: string | null;
   providers: RegistryProvider[];
-  profiles: RegistryProfile[];
 };
-export type ProviderRow = { provider: RegistryProvider; profiles: RegistryProfile[] };
+export type ProviderRow = { provider: RegistryProvider };
 
 const CREDENTIAL_LABELS: Record<string, string> = {
   api_key: "API key",
@@ -112,7 +86,7 @@ function readProviderCatalog(value: unknown): ProviderCatalog {
   };
 }
 
-function mapRegistry(catalog: ProviderCatalog, legacy: LegacyProfilesDocument): Registry {
+function mapRegistry(catalog: ProviderCatalog): Registry {
   const providers: RegistryProvider[] = Object.entries(catalog.providers).map(([id, provider]) => ({
     id,
     name: provider.name,
@@ -127,42 +101,15 @@ function mapRegistry(catalog: ProviderCatalog, legacy: LegacyProfilesDocument): 
   }));
   const byId = new Map(providers.map((provider) => [provider.id, provider]));
   const defaultSelection = catalog.default_model_selection ?? null;
-  const legacyProfiles = legacy.profiles ?? {};
-  const profiles = Object.entries(legacyProfiles).map(([id, profile]) => {
-    const provider = byId.get(profile.provider);
-    const model = provider?.models.find((entry) => entry.id === profile.model)?.definition;
-    provider?.referencedBy.push(id);
-    const isDefault = defaultSelection?.provider_id === profile.provider && defaultSelection.model_id === profile.model
-      && (defaultSelection.options.reasoning_effort ?? model?.defaults.reasoning_effort ?? null)
-        === (profile.reasoning_effort ?? model?.defaults.reasoning_effort ?? null)
-      && (defaultSelection.options.max_output_tokens ?? model?.defaults.max_output_tokens ?? model?.max_output_tokens ?? null)
-        === (profile.max_tokens ?? model?.defaults.max_output_tokens ?? model?.max_output_tokens ?? null);
-    return {
-      id,
-      name: profile.name !== "" ? profile.name : id,
-      providerId: profile.provider,
-      providerName: provider?.name ?? legacy.providers?.[profile.provider]?.name ?? profile.provider,
-      model: profile.model,
-      effort: profile.reasoning_effort ?? null,
-      contextLength: model?.context_window ?? null,
-      maxTokens: profile.max_tokens ?? null,
-      isDefault,
-      credential: provider?.credential ?? legacy.providers?.[profile.provider]?.credential ?? "api_key",
-    };
-  });
-  const defaultProfile = profiles.find((profile) => profile.isDefault)?.id ?? null;
   if (defaultSelection != null) {
     const provider = byId.get(defaultSelection.provider_id);
     if (provider && !provider.referencedBy.includes("default_model_selection")) provider.referencedBy.push("default_model_selection");
   }
-  return { revision: catalog.revision, defaultSelection, defaultProfile, providers, profiles };
+  return { revision: catalog.revision, defaultSelection, providers };
 }
 
 export function providerRows(value: Registry): ProviderRow[] {
-  return value.providers.map((provider) => ({
-    provider,
-    profiles: value.profiles.filter((profile) => profile.providerId === provider.id),
-  }));
+  return value.providers.map((provider) => ({ provider }));
 }
 
 let registryFlight: Promise<Registry> | null = null;
@@ -192,12 +139,8 @@ function readRegistry(): Promise<Registry> {
 async function fetchRegistry(): Promise<Registry> {
   const ack = await transport.command({ type: "provider.list" });
   if (ack.status !== "accepted") throw new Error(ack.message ?? ack.code ?? "provider.list was rejected");
-  // backend-v3(B08/D3):profile.list 返回 ProfileListSnapshot 摘要(camelCase,
-  // 无 provider 引用、无 default 指针);provider 归属按 baseUrl 对回新目录,
-  // default 指针在 config 的 activeProfile,不在此文件。
   const catalog = readProviderCatalog(ack.result);
-  const next = mapRegistry(catalog, {});
-  return next;
+  return mapRegistry(catalog);
 }
 
 export async function refreshRegistry(): Promise<void> {
@@ -260,13 +203,6 @@ export type ProviderInput = {
   /** undefined = keep; empty string = clear; otherwise set. */
   apiKey?: string;
 };
-export type ProfileInput = {
-  name: string;
-  provider: string;
-  model: string;
-  effort: string | null;
-  maxTokens: number | null;
-};
 
 export function modelSelectionIssue(model: ModelDef | undefined, effort: string | null, maxTokens: number | null): string | null {
   if (model == null || !model.enabled) return "引用的模型不在服务商目录中或已停用";
@@ -315,26 +251,11 @@ export async function deleteModel(providerId: string, modelId: string): Promise<
     setError("不能删除当前默认模型；请先选择其他默认模型");
     return false;
   }
-  if (current?.profiles.some((profile) => profile.providerId === providerId && profile.model === modelId)) {
-    setError("不能删除被存档引用的模型；请先删除或更换存档");
-    return false;
-  }
   const result = await perform(async () => {
     await configCommand({ type: "provider.model.delete", provider_id: providerId, model_id: modelId });
     return true;
   });
   return result === true;
-}
-
-function selectionFor(providerId: string, modelId: string, effort: string | null, maxTokens: number | null): ModelSelection {
-  return {
-    provider_id: providerId,
-    model_id: modelId,
-    options: {
-      ...(effort == null ? {} : { reasoning_effort: effort }),
-      ...(maxTokens == null ? {} : { max_output_tokens: maxTokens }),
-    },
-  };
 }
 
 async function setDefaultSelection(selection: ModelSelection): Promise<void> {
@@ -354,57 +275,6 @@ export async function setDefaultModel(providerId: string, modelId: string): Prom
   return result === true;
 }
 
-export async function saveProfile(input: ProfileInput, options: { makeDefault?: boolean } = {}): Promise<string | null> {
-  const value = registry();
-  const id = newId(input.name, (value?.profiles ?? []).map((profile) => profile.id));
-  const result = await perform(async () => {
-    if (!registry()?.providers.some((provider) => provider.id === input.provider)) throw new Error("所选 Provider 不存在");
-    const provider = registry()!.providers.find((item) => item.id === input.provider)!;
-    const model = provider.models.find((item) => item.id === input.model);
-    const issue = modelSelectionIssue(model?.definition, input.effort, input.maxTokens);
-    if (issue != null) throw new Error(issue);
-    await transport.command({
-      type: "profile.create",
-      id,
-      name: input.name.trim() || id,
-      provider: input.provider,
-      model: input.model.trim(),
-      reasoning_effort: input.effort,
-      max_tokens: input.maxTokens,
-    });
-    if (options.makeDefault === true) {
-      await setDefaultSelection(selectionFor(input.provider, input.model, input.effort, input.maxTokens));
-    }
-    return id;
-  });
-  return result;
-}
-
-export async function setDefaultProfile(id: string): Promise<boolean> {
-  const current = registry();
-  const profile = current?.profiles.find((item) => item.id === id);
-  if (profile == null) { setError(`profile not found: ${id}`); return false; }
-  const model = current?.providers.find((item) => item.id === profile.providerId)?.models.find((item) => item.id === profile.model);
-  const issue = modelSelectionIssue(model?.definition, profile.effort, profile.maxTokens);
-  if (issue != null) {
-    setError(`存档「${profile.name}」${issue}`);
-    return false;
-  }
-  const result = await perform(async () => {
-    await setDefaultSelection(selectionFor(profile.providerId, profile.model, profile.effort, profile.maxTokens));
-    return true;
-  });
-  return result === true;
-}
-
-export async function deleteProfile(id: string): Promise<boolean> {
-  const result = await perform(async () => {
-    await transport.command({ type: "profile.delete", name: id });
-    return true;
-  });
-  return result === true;
-}
-
 export async function deleteProvider(id: string): Promise<boolean> {
   const result = await perform(async () => {
     await configCommand({ type: "provider.delete", id });
@@ -417,7 +287,7 @@ const MAX_ID = 64;
 export function slugifyId(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, MAX_ID);
 }
-export function newId(name: string, existing: readonly string[], fallbackPrefix = "profile"): string {
+export function newId(name: string, existing: readonly string[], fallbackPrefix = "provider"): string {
   const taken = new Set(existing);
   const base = slugifyId(name) || `${fallbackPrefix}-${Date.now().toString(36)}`;
   if (!taken.has(base)) return base;
