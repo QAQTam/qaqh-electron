@@ -66,6 +66,12 @@ export const Composer: Component<{
   workspaces?: () => SidebarWorkspace[];
   workspacePath?: () => string | null;
   onWorkspace?: (path: string | null) => void;
+  /**
+   * 菜单每行行尾的「+」:把目标改成该工作区并去启动页开一条新对话。
+   * 与 `onWorkspace`(只改目标、留在原地)刻意分开——同一个菜单里两种意图
+   * 必须有两个不同的落点,否则用户分不清自己点的是哪一个。
+   */
+  onCreateInWorkspace?: (path: string) => void;
   onBrowseWorkspace?: () => void;
   /**
    * 会话级 profile 视图 + 写口(§1.5)。不传 `onProfile` 即不渲染选择器。
@@ -352,6 +358,7 @@ export const Composer: Component<{
                     selectedPath={props.workspacePath?.() ?? null}
                     workspaces={props.workspaces?.() ?? []}
                     onPick={(path) => { props.onWorkspace?.(path); setOpenMenu(null); }}
+                    onCreateIn={(path) => { setOpenMenu(null); props.onCreateInWorkspace?.(path); }}
                     onBrowse={() => { setOpenMenu(null); props.onBrowseWorkspace?.(); }}
                   />
                 </Show>

@@ -42,6 +42,11 @@ export const MessageSidebar: Component<{
   /** 活动会话当前的即时待办列表(fast path,无需等待 15s 轮询)。 */
   activePending?: () => ApprovalView[];
   onCreate?: () => void;
+  /**
+   * 在**指定工作区**新建会话:把该目录设为新会话的粘性目标,再去启动页。
+   * 不传即不渲染工作区行上的「+」(夹具页/宿主不合格时用这条关掉)。
+   */
+  onCreateIn?: (path: string) => void;
   creating?: boolean;
   canCreate?: boolean;
   onRename?: (seed: string, title: string) => Promise<void>;
@@ -81,6 +86,8 @@ export const MessageSidebar: Component<{
       id: workspace.id,
       title: workspace.title || pathName(workspace.path),
       path: workspace.path,
+      /** 目录已不存在:仍列出(里面的历史会话得看得见),但不给「在此新建会话」。 */
+      missingDir: workspace.missing_dir === true,
       sessions: sortSessions(sessions.filter((session) => sessionBelongsToWorkspace(session, workspace))),
     }));
     const ungrouped = sessions.filter((session) => !workspaces.some((workspace) => sessionBelongsToWorkspace(session, workspace)));
@@ -89,11 +96,22 @@ export const MessageSidebar: Component<{
         id: "__ungrouped",
         title: "未分组",
         path: "",
+        missingDir: false,
         sessions: sortSessions(ungrouped),
       });
     }
-    return grouped.filter((group) => group.sessions.length > 0);
+    /* 零会话的工作区**也列出**。此前这里过滤掉了空组,于是「给一个还没开过会话的
+     * 工作区起第一条对话」在侧栏根本没有落点——只能去输入区/启动页那颗目录 chip
+     * 的菜单里绕。列出来还顺带回答「这个工作区我注册过吗」,组头的「+」就是它自己的入口。
+     * 两类例外仍然不出现:「未分组」是伪组(零会话时上面那段 if 已经不放它进来),
+     * 以及**目录已不存在又一条会话都没有**的组——那里既没内容可看也没法新建,留着
+     * 只是一行再也点不动的死字。 */
+    return grouped.filter((group) => group.sessions.length > 0 || group.missingDir !== true);
   });
+
+  /** 「+」只在有明确目录、目录还在、且宿主允许新建时出现。 */
+  const canCreateIn = (group: { path: string; missingDir: boolean }): boolean =>
+    props.onCreateIn != null && group.path !== "" && group.missingDir !== true;
 
   const toggle = (id: string): void => {
     const next = new Set(collapsed());
@@ -138,18 +156,37 @@ export const MessageSidebar: Component<{
               卸载重建——悬停态、焦点、正在播的入场动画全被打断。 */}
           <For each={groups()} keyed={(group) => group.id}>{(group) => (
             <section class="message-workspace-group">
-              <button
-                class="message-workspace-toggle"
-                type="button"
-                aria-expanded={collapsed().has(group().id) ? "false" : "true"}
-                onClick={() => toggle(group().id)}
-                title={group().path || group().title}
-              >
-                <IconChevronDown class={{ collapsed: collapsed().has(group().id) }} />
-                <Show when={group().id !== "__ungrouped"}><IconFolder /></Show>
-                <span class="message-workspace-title">{group().title}</span>
-                <span class="message-workspace-count">{group().sessions.length}</span>
-              </button>
+              {/* 工作区行 = 折叠钮 + 「在此工作区新建会话」。动作钮常占位、悬停/聚焦才显形
+                  (与会话行的「…」同一条规则,见 sidebar.css):hover 只改表面不改布局,
+                  否则目录名会在鼠标经过时整段左右抖。 */}
+              <div class="message-workspace-row">
+                <button
+                  class="message-workspace-toggle"
+                  type="button"
+                  aria-expanded={collapsed().has(group().id) ? "false" : "true"}
+                  onClick={() => toggle(group().id)}
+                  title={group().missingDir
+                    ? `${group().path || group().title}（目录已不存在）`
+                    : group().path || group().title}
+                >
+                  <IconChevronDown class={{ collapsed: collapsed().has(group().id) }} />
+                  <Show when={group().id !== "__ungrouped"}><IconFolder /></Show>
+                  <span class="message-workspace-title">{group().title}</span>
+                  <span class="message-workspace-count">{group().sessions.length}</span>
+                </button>
+                <Show when={canCreateIn(group())}>
+                  <button
+                    type="button"
+                    class="message-workspace-create"
+                    aria-label={`在 ${group().title} 新建会话`}
+                    title={`在 ${group().title} 新建会话${group().sessions.length === 0 ? "（该工作区还没有会话）" : ""}`}
+                    disabled={props.creating === true || props.canCreate === false}
+                    onClick={() => props.onCreateIn?.(group().path)}
+                  >
+                    <IconPlus />
+                  </button>
+                </Show>
+              </div>
               {/* 分组收展(motion kit):走共用 Collapse(0fr↔1fr + opacity),
                   播完 out 过渡再卸载——历史会话列表的文本量不小,卸载纪律保留。 */}
               <Collapse open={!collapsed().has(group().id)}>

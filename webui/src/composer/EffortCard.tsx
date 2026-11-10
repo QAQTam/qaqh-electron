@@ -245,7 +245,7 @@ export const EffortCard: Component<{
           </div>
 
           <p class="effort-card__note">
-            本会话 · 模型{props.modelOverridden?.() ? "单独设置" : "跟随存档"} · 强度{props.effortOverridden?.() ? "单独设置" : "跟随存档"}
+            本会话 · 模型{props.modelOverridden?.() ? "单独设置" : "跟随存档"} · 强度{props.effortOverridden?.() ? "单独设置" : "跟随模型默认"}
           </p>
 
           <Show when={props.effortOverridden?.()}>
@@ -254,7 +254,7 @@ export const EffortCard: Component<{
               class="ghost-mini effort-card__inherit"
               onClick={() => void writeEffort(null)}
             >
-              强度跟随存档
+              强度跟随模型默认
             </button>
           </Show>
 
@@ -272,6 +272,7 @@ export const EffortCard: Component<{
               <button
                 type="button"
                 class="ghost-mini"
+                title="清除本会话的选择，落回全局默认的服务商和模型（后端写 Inherit 清列）"
                 onClick={() => void writeModel(null)}
               >
                 跟随存档
@@ -337,7 +338,7 @@ export const EffortCard: Component<{
                   <input
                     class="field-input"
                     inputmode="numeric"
-                    placeholder={props.maxTokens?.() == null ? "跟随存档" : String(props.maxTokens?.())}
+                    placeholder={props.maxTokens?.() == null ? "跟随模型默认" : String(props.maxTokens?.())}
                     value={maxTokensDraft()}
                     onInput={(event) => setMaxTokensDraft(event.currentTarget.value)}
                     onBlur={() =>
@@ -354,7 +355,7 @@ export const EffortCard: Component<{
               </Show>
             </div>
             <small class="effort-card__note">
-              仅影响本会话；留空 = 跟随存档。
+              仅影响本会话；留空 = 跟随该模型的默认上限。
             </small>
             <Show when={metadata()?.maxOutputTokens != null}>
               <small class="effort-card__note">模型输出上限：{metadata()?.maxOutputTokens?.toLocaleString()} tokens</small>

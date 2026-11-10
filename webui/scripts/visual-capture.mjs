@@ -100,8 +100,11 @@ async function spawnEdgeAndConnect() {
 
 await spawnEdgeAndConnect();
 
-async function waitForFixture(view) {
-  const selector = view === "settings" ? ".settings-page .settings-section" : view === "tools" ? ".tools-page" : view === "messages" ? "#messages .turn" : "#approval-slot .card";
+async function waitForFixture(view, readySelector = null) {
+  // 默认门槛是「消息树已经画出来」。但有些场景要看的根本不是消息树(例如侧栏
+  // 工作区行),让它们等 `.turn` 只会把一个与本场景无关的故障变成假失败。
+  const selector = readySelector
+    ?? (view === "settings" ? ".settings-page .settings-section" : view === "tools" ? ".tools-page" : view === "messages" ? "#messages .turn" : "#approval-slot .card");
   const started = Date.now();
   while (Date.now() - started < 30_000) {
     const ready = await cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)})) && document.fonts.status === "loaded"`);
@@ -111,7 +114,7 @@ async function waitForFixture(view) {
     }
     await delay(150);
   }
-  throw new Error(`Visual fixture did not become ready: ${view}`);
+  throw new Error(`Visual fixture did not become ready: ${view} (${selector})`);
 }
 
 async function clickTodo() {
@@ -125,16 +128,79 @@ async function clickTodo() {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
 }
 
-async function capture(name, { view, theme, material, width, height, section, closed = false, scale = 1, reduced = false, typography = false, pending = false, contextMenu = false, shellMenu = false, sidebarDrawer = false, railDrawer = false, sidebarResize = false } ) {
+async function capture(name, { view, theme, material, width, height, section, closed = false, scale = 1, reduced = false, typography = false, pending = false, contextMenu = false, shellMenu = false, sidebarDrawer = false, railDrawer = false, sidebarResize = false, workspaceCreate = false, ready = null } ) {
   await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
   await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: reduced ? "reduce" : "no-preference" }] });
   const url = `${BASE}?view=${view}&theme=${theme}&material=${material}${pending ? "&pending=1" : ""}${sidebarDrawer ? "&sidebarDrawer=1" : ""}${railDrawer ? "&railDrawer=1" : ""}`;
   await cdp.send("Page.navigate", { url });
-  await waitForFixture(view);
+  await waitForFixture(view, ready);
   // 阶段5:抽屉态断言——遮罩在、面板覆盖层就位、不出横向滚动。
   if (sidebarDrawer) {
     const ok = await cdp.evaluate("(() => { const el = document.querySelector('.app-sidebar.drawer.open'); return el != null && getComputedStyle(el).display !== 'none'; })()");
     if (!ok) throw new Error(`${name}: sidebar drawer did not open`);
+  }
+  // 侧栏「在此工作区新建会话」的四条硬事实:
+  // ① 零会话的工作区必须列出(这是本轮修掉的那条过滤);
+  // ② 目录已不存在且零会话的死组不占行;
+  // ③ 「+」不许嵌在选择钮里(button 套 button 是非法 HTML);
+  // ④ 静置隐藏、悬停揭形(动作钮**常占位**,所以悬停前后行宽不变)。
+  if (workspaceCreate) {
+    const state = await cdp.evaluate(`(() => {
+      const rows = [...document.querySelectorAll('.message-workspace-row')];
+      const title = (row) => row.querySelector('.message-workspace-title')?.textContent ?? '';
+      const fresh = rows.find((row) => title(row) === 'qaqh-telegram');
+      const button = fresh?.querySelector('.message-workspace-create');
+      const rect = button?.getBoundingClientRect();
+      return {
+        titles: rows.map(title),
+        withCreate: rows.filter((row) => row.querySelector('.message-workspace-create') != null).map(title),
+        opacity: button == null ? null : getComputedStyle(button).opacity,
+        reserved: button == null ? null : rect.width > 0,
+        nested: button == null ? null : button.closest('.message-workspace-toggle') != null,
+        rowWidth: fresh?.getBoundingClientRect().width ?? null,
+        // 「+」浮在选择钮的留白上,必须仍然接得住指针:落在自己的图标上也算,
+        // 但落到底下的选择钮就意味着点击会被「选目标」吃掉。
+        pointer: rect == null ? null : (button.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2))),
+        center: rect == null ? null : { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+      };
+    })()`);
+    if (!state.titles.includes('qaqh-telegram')) {
+      throw new Error(`${name}: 零会话的工作区没有列出 ${JSON.stringify(state.titles)}`);
+    }
+    if (state.titles.includes('gone-and-empty')) {
+      throw new Error(`${name}: 目录已不存在且零会话的死组仍在占位 ${JSON.stringify(state.titles)}`);
+    }
+    if (state.nested !== false) throw new Error(`${name}: 「+」嵌进了选择钮(button 不允许嵌套交互内容)`);
+    if (state.reserved !== true) throw new Error(`${name}: 「+」必须常占位——悬停/聚焦只改表面,不改布局`);
+    if (state.opacity !== '0') throw new Error(`${name}: 「+」静置必须隐藏,实测 opacity=${state.opacity}`);
+    if (state.pointer !== true) throw new Error(`${name}: 「+」接不住指针,点击会落到底下的行`);
+    // 悬停必须揭形。`:focus-visible` 在这里帮不上忙:程序化 focus() 不满足它的
+    // 「上一次输入是键盘」前提,只有真实鼠标移动才代表用户看到的这条路。
+    await cdp.send("Input.dispatchMouseEvent", { type: 'mouseMoved', ...state.center });
+    // opacity 是过渡量:读早了拿到的是中间帧(实测 0.69),固定 sleep 不是同步点。
+    // 轮询到落定为止,再断言「悬停只改表面、不改布局」。
+    const revealed = await cdp.evaluate(`new Promise((resolve) => {
+      const read = () => {
+        const rows = [...document.querySelectorAll('.message-workspace-row')];
+        const fresh = rows.find((row) => (row.querySelector('.message-workspace-title')?.textContent ?? '') === 'qaqh-telegram');
+        const button = fresh?.querySelector('.message-workspace-create');
+        return {
+          opacity: button == null ? null : getComputedStyle(button).opacity,
+          rowWidth: fresh?.getBoundingClientRect().width ?? null,
+        };
+      };
+      const step = (attempt) => {
+        const value = read();
+        if (value.opacity === '1' || attempt >= 24) resolve(value);
+        else setTimeout(() => step(attempt + 1), 50);
+      };
+      step(0);
+    })`);
+    if (revealed.opacity !== '1') throw new Error(`${name}: 悬停后「+」没有显形,实测 opacity=${revealed.opacity}`);
+    if (revealed.rowWidth !== state.rowWidth) {
+      throw new Error(`${name}: 悬停改变了布局(行宽 ${state.rowWidth} → ${revealed.rowWidth})`);
+    }
+    console.log(`${name}: workspace create ${JSON.stringify({ withCreate: state.withCreate, revealed })}`);
   }
   // 侧栏拖拽调宽(用户侧需求):真实鼠标拖拽 → 宽度生效;拖到阈值下 → 等效汉堡收回。
   if (sidebarResize) {
@@ -221,6 +287,11 @@ async function capture(name, { view, theme, material, width, height, section, cl
     })()`);
     if (closed) await clickTodo();
     await delay(300);
+    // 没有消息树就没有可量的主体:把话说清楚,而不是在 `null.getBoundingClientRect()`
+    // 上炸成 TypeError(评审看到的那种失败完全没有指向性)。
+    if (!await cdp.evaluate("Boolean(document.querySelector('#messages .turn'))")) {
+      throw new Error(`${name}: 消息树未画出(#messages .turn 不存在),消息列布局断言无从进行——需要宿主连接的夹具,或 typography 注入`);
+    }
     const geometry = await cdp.evaluate(`(() => {
       const turn = document.querySelector('#messages .turn');
       const composer = document.querySelector('.composer-surface');
@@ -444,6 +515,11 @@ try {
     ["sidebar-drawer-640", { view: "messages", theme: "light", material: "solid", width: 640, height: 480, sidebarDrawer: true }],
     // 侧栏拖拽调宽(用户侧需求):拖宽生效;拖到阈值下等效汉堡收回;再展开恢复记忆宽度。
     ["sidebar-resize-1280", { view: "messages", theme: "light", material: "solid", width: 1280, height: 900, sidebarResize: true }],
+    // 侧栏工作区行尾「+」:零会话组必须列出、死组不占位、动作钮常占位且悬停才显形。
+    // 就绪门槛换成侧栏自己(本机夹具的消息泵要连宿主,不产出 `.turn`);
+    // `typography` 那步是给 `#messages` 注入排期基准内容,顺带让后面的消息列布局
+    // 断言有主体可量——不然它们会在 null 上炸成 TypeError。
+    ["sidebar-workspace-create", { view: "messages", theme: "light", material: "solid", width: 1280, height: 900, workspaceCreate: true, typography: true, ready: ".message-workspace-row" }],
     // BUG-2026-10-28 回归:右键菜单必须在程序化滚动(流式跟随)下存活。
     ["context-menu-stream-scroll", { view: "messages", theme: "dark", material: "solid", width: 1280, height: 900, contextMenu: true }],
     // 阶段1(spec §5.5):壳层 ⋯ 菜单完整性。

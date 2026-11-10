@@ -1,13 +1,18 @@
 /**
- * 工作区下拉(新建目标 / 本会话目标共用的同一张菜单)。
+ * 工作区下拉(新建目标用的同一张菜单)。
  *
  * 为什么抽出来:输入区工具条与首页配置栏各有一份**完全相同**的条目结构,之前两份
  * 各自写着「名字一行 + 完整路径一行」——同一个词说两遍(标题默认就是目录末段名),
  * 而且谁改样式都得改两处。这里收成一份,调用方只负责开合与选中态。
+ *
+ * 行尾的「+」(`onCreateIn`)也是同一份实现的两个宿主共用:点条目 = 只改新会话的
+ * 目标目录;点「+」 = 改目标目录**并**去启动页开一条新对话。侧栏会话行的
+ * 「移动到工作区」那种纯选择语境不传这个 prop,就不会长出多余的动作钮。
  */
 import { For, Show, type Component } from "solid-js";
 import IconCheck from "~icons/lucide/check";
 import IconFolderPlus from "~icons/lucide/folder-plus";
+import IconPlus from "~icons/lucide/plus";
 import { STR } from "../lib/strings";
 import { tailName } from "../composer/identity";
 import type { SidebarWorkspace } from "../tabs/store";
@@ -45,9 +50,12 @@ const MenuCheck: Component = () => <IconCheck class="workspace-row-check" aria-h
  * (注册时按目录名起名,绝大多数情况)这就是完整路径,不必再把名字单独写一行。
  * 只有标题被改过、名字不再是路径的一部分时,才退回「名字 + 完整路径」两行。
  *
- * 三处共用:首页配置栏、输入区工具条、侧栏会话行的「移动到工作区」——所以行内
  * 样式统一叫 `workspace-row-*`,不跟任何一个宿主的容器类名绑定。
  * `data-copy-path` 让右键菜单能直接「复制路径」(见 `ui/contextMenu.tsx`)。
+ *
+ * 「+」是选择钮的**兄弟节点**,不在按钮里面:`<button>` 嵌 `<button>` 是非法 HTML,
+ * 浏览器会把内层钮顶到外层钮外面去,点击落点与无障碍树都跟着乱。行壳因此接管了
+ * 原本由 `.composer-menu > button` 直接提供的相对定位与右侧留白。
  */
 export const WorkspaceMenuItem: Component<{
   workspace: SidebarWorkspace;
@@ -59,49 +67,67 @@ export const WorkspaceMenuItem: Component<{
    * `title` 与右键「复制路径」,不占行。
    */
   compact?: boolean;
+  /** 「在此工作区新建会话」。不传即不渲染动作钮(纯选择的语境里没有这件事)。 */
+  onCreateIn?: () => void;
 }> = (props) => {
   const name = (): string => props.workspace.title || tailName(props.workspace.path);
   const dir = (): string => shortenDir(dirPrefix(props.workspace.path));
   const inline = (): boolean => dir() !== "" && name() === tailName(props.workspace.path);
+  /* 目录已经不在了就别给「+」:session.create 会以 canonical cwd 去建会话,
+     指向一个不存在的目录只是把一次必然失败的创建摆到用户手边。 */
+  const creatable = (): boolean => props.onCreateIn != null && props.workspace.missing_dir !== true;
   return (
-    <button
-      type="button"
-      role="menuitemradio"
-      aria-checked={props.selected ? "true" : "false"}
-      class={props.selected ? "selected" : undefined}
-      title={props.workspace.path}
-      data-copy-path={props.workspace.path}
-      onClick={() => props.onPick()}
-    >
-      <Show
-        when={props.compact === true}
-        fallback={
-          <Show
-            when={inline()}
-            fallback={
-              <>
-                <span class="workspace-row-name">{name()}</span>
-                <small class="workspace-row-path">{props.workspace.path}</small>
-              </>
-            }
-          >
-            <span class="workspace-row">
-              {/* 前缀再套一层:裁切要靠外层 flex 的 `justify-content:flex-end` 把溢出
-                  推到左边(text-align 在 overflow 容器里不改变溢出方向)。 */}
-              <span class="workspace-row-dir">
-                <span>{dir()}</span>
-              </span>
-              <span class="workspace-row-name">{name()}</span>
-            </span>
-          </Show>
-        }
+    <div class="workspace-row-shell">
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={props.selected ? "true" : "false"}
+        class={props.selected ? "workspace-row-pick selected" : "workspace-row-pick"}
+        title={props.workspace.path}
+        data-copy-path={props.workspace.path}
+        onClick={() => props.onPick()}
       >
-        <span class="workspace-row-name">{name()}</span>
+        <Show
+          when={props.compact === true}
+          fallback={
+            <Show
+              when={inline()}
+              fallback={
+                <>
+                  <span class="workspace-row-name">{name()}</span>
+                  <small class="workspace-row-path">{props.workspace.path}</small>
+                </>
+              }
+            >
+              <span class="workspace-row">
+                {/* 前缀再套一层:裁切要靠外层 flex 的 `justify-content:flex-end` 把溢出
+                    推到左边(text-align 在 overflow 容器里不改变溢出方向)。 */}
+                <span class="workspace-row-dir">
+                  <span>{dir()}</span>
+                </span>
+                <span class="workspace-row-name">{name()}</span>
+              </span>
+            </Show>
+          }
+        >
+          <span class="workspace-row-name">{name()}</span>
+        </Show>
+        <Show when={props.selected}>
+          <MenuCheck />
+        </Show>
+      </button>
+      <Show when={creatable()}>
+        <button
+          type="button"
+          class="workspace-row-create"
+          aria-label={STR.workspaceCreateHere(name())}
+          title={STR.workspaceCreateHereHint(name())}
+          onClick={() => props.onCreateIn?.()}
+        >
+          <IconPlus />
+        </button>
       </Show>
-      <Show when={props.selected}>
-        <MenuCheck />
-      </Show>
-    </button>
+    </div>
   );
 };
 
@@ -112,6 +138,8 @@ export const WorkspaceMenu: Component<{
   workspaces: SidebarWorkspace[];
   onPick: (path: string | null) => void;
   onBrowse: () => void;
+  /** 每行行尾的「+」:在此工作区新建会话。不传即整列不渲染该动作钮。 */
+  onCreateIn?: (path: string) => void;
 }> = (props) => (
   <div class={`composer-menu composer-workspace-menu${props.extraClass ? ` ${props.extraClass}` : ""}`} role="menu">
     <strong>{STR.workspacePickMenu}</strong>
@@ -134,6 +162,7 @@ export const WorkspaceMenu: Component<{
           workspace={workspace}
           selected={props.selectedPath === workspace.path}
           onPick={() => props.onPick(workspace.path)}
+          onCreateIn={props.onCreateIn ? () => void props.onCreateIn?.(workspace.path) : undefined}
         />
       )}
     </For>

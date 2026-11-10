@@ -181,12 +181,28 @@
   .message-session-menu-actions > button:hover { background: var(--surface-2); }
   .message-session-menu-actions > button:disabled { opacity: .55; }
   .message-workspace-group { margin-bottom: 6px; }
-  .message-workspace-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 0 8px; border-radius: var(--r-sm); color: var(--text); text-align: left; font-size: var(--fs-xs); font-weight: 600; }
+  /* 工作区行 = 折叠钮 + 「在此新建会话」。与 .message-session-row 同一排法:
+     动作钮**常占位**,悬停/聚焦只改表面不改布局——否则目录名会在鼠标经过时
+     整段左右抖(会话行的「…」早就是这么处理的)。 */
+  .message-workspace-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+  .message-workspace-toggle { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; min-height: 34px; padding: 0 8px; border-radius: var(--r-sm); color: var(--text); text-align: left; font-size: var(--fs-xs); font-weight: 600; }
   .message-workspace-toggle:hover { background: var(--surface-2); }
   .message-workspace-toggle > svg { flex: none; width: 14px; height: 14px; color: var(--muted); transition: transform var(--dur-fast) var(--ease); }
   .message-workspace-toggle > svg.collapsed { transform: rotate(-90deg); }
   .message-workspace-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .message-workspace-count { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 500; }
+  .message-workspace-create {
+    display: grid; place-items: center; flex: none;
+    width: 24px; height: 24px; border-radius: var(--r-sm);
+    color: var(--muted); opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  }
+  .message-workspace-create svg { width: 14px; height: 14px; }
+  .message-workspace-row:hover .message-workspace-create,
+  .message-workspace-create:focus-visible { opacity: 1; }
+  .message-workspace-create:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+  /* 禁用态仍然露出来(而不是消失):「这里能建会话,只是现在不行」比"根本没这个入口"诚实。 */
+  .message-workspace-row:hover .message-workspace-create:disabled { opacity: .45; }
   .message-workspace-sessions { display: grid; gap: 2px; padding: 2px 0 4px 18px; }
   .message-session-item {
     position: relative;

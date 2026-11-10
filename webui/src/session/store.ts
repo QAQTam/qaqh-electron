@@ -695,27 +695,52 @@ export class SessionStore {
     } } });
   }
 
-  /** 会话级换思考强度 effort;`null` = 清除选择、回到跟随 profile 默认。 */
+  /** 会话级换思考强度 effort;`null` = 清除覆写、回到**该模型的默认档**。 */
   async setSessionEffort(effort: string | null): Promise<void> {
     const current = this.metaModelSelection;
-    if (!current) throw new Error("请先选择服务商和模型");
+    if (current == null) {
+      /* 本会话没有独立的 model_selection = 已经在跟随全局默认,而 effort 是那个
+         选择里的叶子:没有选择就没有可清的叶子。清除当无操作处理(点「跟随模型
+         默认」不该报错),设新档才需要一个可依附的 provider/model 对。 */
+      if (effort == null) return;
+      throw new Error("本会话还没有选定服务商和模型：先在「模型」行选一个，再调强度");
+    }
     await this.patchSessionSettings({ model_selection: { kind: "use", value: {
       ...current, options: { ...current.options, reasoning_effort: effort },
     } } });
   }
 
-  /** Model selection is a full provider/model pair in the v3 settings patch. */
+  /**
+   * 会话级换模型(model_selection 是 provider/model 整对,这里只换 model_id)。
+   *
+   * `null` = **清除本会话的选择、跟随全局默认**:后端把 `SettingValue::Inherit`
+   * 落成"清列"(qaqh-session `db/store.rs:305`「`Use` 落 JSON、`Inherit` 清列
+   * (跟随全局默认)」),这才是卡上「跟随存档」那句话的权威语义。此前这里直接
+   * throw「请选择服务商和模型」,那个按钮一点就报错——全仓从没发出过 inherit。
+   *
+   * 反过来,清过之后 `metaModelSelection` 就是 null,而卡片里的模型行只带 model_id:
+   * 没有可继承的对就写不下去,「跟随存档」会变成一条回不来的路。所以这里在会话无
+   * 选择时**以存档默认那一对为底**落 `Use`——这正是后端此刻实际在用的解析结果
+   * (`session_config.rs:15-18` 同样回落 default_model_selection),不是替用户编一个
+   * 新选择。副作用要说清:这一步之后本会话就钉在当时的默认对上,不再跟随存档。
+   */
   async setSessionModel(model: string | null): Promise<void> {
-    if (model == null) throw new Error("请选择服务商和模型");
-    const current = this.metaModelSelection;
-    if (!current) throw new Error("当前会话没有可继承的 provider 选择，请先选择 Profile 或 provider");
+    if (model == null) {
+      await this.patchSessionSettings({ model_selection: { kind: "inherit" } });
+      return;
+    }
+    const current = this.metaModelSelection ?? registry()?.defaultSelection ?? null;
+    if (!current) throw new Error("还没有可继承的服务商：先在设置页选一个默认模型，再回本会话换模型");
     await this.patchSessionSettings({ model_selection: { kind: "use", value: { ...current, model_id: model } } });
   }
 
-  /** 会话级单回合输出上限;`null` = 跟随 Profile。 */
+  /** 会话级单回合输出上限;`null` = 清除覆写、回到该模型的默认上限。 */
   async setSessionMaxTokens(maxTokens: number | null): Promise<void> {
     const current = this.metaModelSelection;
-    if (!current) throw new Error("当前会话没有可继承的 model_selection，请先选择 Profile 或 provider");
+    if (current == null) {
+      if (maxTokens == null) return; // 已经是「跟随」,没有可清的覆写。
+      throw new Error("本会话还没有选定服务商和模型：先在「模型」行选一个，再改输出上限");
+    }
     await this.patchSessionSettings({
       model_selection: {
         kind: "use",

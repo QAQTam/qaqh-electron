@@ -121,8 +121,17 @@
     position: relative; display: grid; gap: 2px; width: 100%; padding: 7px;
     border-radius: var(--r-md); text-align: left; color: var(--text); font-size: var(--fs-sm);
   }
-  .composer-menu > button:hover, .composer-menu > button.selected { background: var(--surface-2); }
-  .composer-menu > button small, .composer-menu-note { color: var(--muted); font-size: 10px; line-height: 1.4; }
+  /* 工作区行是「行壳 + 选择钮 + 行尾动作钮」三件结构(button 不能套 button),选择钮
+     因此不再是 `.composer-menu` 的直接子元素,上面那条基础规则够不到它:这里显式续上
+     同一套表面,并把右侧 26px 留白一起搬过来(对勾与「+」共用那一格)。 */
+  .composer-menu .workspace-row-pick {
+    position: relative; display: grid; gap: 2px; width: 100%; padding: 7px 26px 7px 7px;
+    border-radius: var(--r-md); text-align: left; color: var(--text); font-size: var(--fs-sm);
+  }
+  .composer-menu > button:hover, .composer-menu > button.selected,
+  .composer-menu .workspace-row-pick:hover, .composer-menu .workspace-row-pick.selected { background: var(--surface-2); }
+  .composer-menu > button small, .composer-menu .workspace-row-pick small,
+  .composer-menu-note { color: var(--muted); font-size: 10px; line-height: 1.4; }
   .composer-menu-note { padding: 5px 7px 2px; }
   /* 新建会话的工作区选择:只作用于新建,和上面那个「本会话 profile」chip 语义
      不同(前者是待建目标,后者是当前会话),所以两者都留着、不合并(§1.5)。
@@ -165,7 +174,25 @@
   .workspace-row-check {
     position: absolute; right: 7px; top: 50%; translate: 0 -50%;
     width: 14px; height: 14px; color: var(--accent);
+    transition: opacity var(--dur-fast) var(--ease);
   }
+  /* 行尾动作钮「+」:绝对定位在同一格 26px 里,所以行宽、条目高度都不因它变化
+     (菜单是从 chip 左缘向右长的,多留一列就会把长路径挤出右缘)。
+     悬停/聚焦这一行时「+」进、选中对勾让位:两者共用一格,同时画就是两个小图标
+     挤在一起。`:focus-within` 让键盘用户 Tab 到行内任一钮都能揭出「+」。 */
+  .workspace-row-shell { position: relative; min-width: 0; }
+  .workspace-row-create {
+    position: absolute; right: 2px; top: 50%; translate: 0 -50%;
+    display: grid; place-items: center; width: 22px; height: 22px;
+    border-radius: var(--r-sm); color: var(--muted); opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  }
+  .workspace-row-create svg { width: 14px; height: 14px; }
+  .workspace-row-shell:hover .workspace-row-create,
+  .workspace-row-shell:focus-within .workspace-row-create { opacity: 1; }
+  .workspace-row-shell:hover .workspace-row-check,
+  .workspace-row-shell:focus-within .workspace-row-check { opacity: 0; }
+  .workspace-row-create:hover { background: color-mix(in srgb, var(--surface) 70%, transparent); color: var(--text); }
   .composer-menu > button.composer-menu-action {
     margin-top: 3px; padding-top: 9px;
     border-top: 1px solid var(--border); border-radius: 0;

@@ -43,7 +43,6 @@ import {
   isStartup,
   newSessionCwd,
   openSession,
-  openStartup,
   pollSessions,
   refreshWorkspaces,
   renameSession,
@@ -494,7 +493,7 @@ const App: Component = () => {
       if (event.key === "t" || event.key === "T") {
         event.preventDefault();
         setSection("messages");
-        void createSession();
+        createSession();
       } else if (event.key === "w" || event.key === "W") {
         event.preventDefault();
         setSection("messages");
@@ -895,7 +894,11 @@ const App: Component = () => {
         activeSeed={isStartup() ? null : (activeTab()?.seed ?? null)}
         activePending={() => activeTab()?.store.pending[0]() ?? []}
         onSelect={(seed) => { setSidebarDrawerOpen(false); setSection("messages"); void openSession(seed); }}
-        onCreate={() => { setSidebarDrawerOpen(false); setSection("messages"); openStartup(); }}
+        /* 两颗「+」都走 `createSession`:头部那颗保持当前粘性目标,工作区行那颗顺手
+           把目标改成该目录——两条路径的收口(退订其余会话、bump 焦点、清在飞激活)
+           只在 `tabs/store.ts` 里写一遍。 */
+        onCreate={() => { setSidebarDrawerOpen(false); setSection("messages"); createSession(); }}
+        onCreateIn={(path) => { setSidebarDrawerOpen(false); setSection("messages"); createSession(path); }}
         creating={creating()}
         canCreate={hostIncompatible() == null}
         onRename={renameSession}
@@ -1013,6 +1016,7 @@ const App: Component = () => {
                         workspaces={() => workspaceCatalog()}
                         workspacePath={() => newSessionCwd()}
                         onWorkspace={(path) => setNewSessionCwd(path)}
+                        onCreateInWorkspace={(path) => { setSection("messages"); createSession(path); }}
                         onBrowseWorkspace={() => void chooseNewSessionFolder()}
                         sessionWorkspace={() => sessionWorkspaceName(tab.seed)}
                         lanActive={lanActive}

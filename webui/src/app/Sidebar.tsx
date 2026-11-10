@@ -42,6 +42,8 @@ export const Sidebar: Component<{
   activePending?: () => ApprovalView[];
   onSelect?: (seed: string) => void;
   onCreate?: () => void;
+  /** 在指定工作区新建会话(见 MessageSidebar.onCreateIn)。 */
+  onCreateIn?: (path: string) => void;
   creating?: boolean;
   canCreate?: boolean;
   onRename?: (seed: string, title: string) => Promise<void>;
@@ -173,6 +175,7 @@ export const Sidebar: Component<{
         activePending={props.activePending}
         onSelect={props.onSelect!}
         onCreate={props.onCreate}
+        onCreateIn={props.onCreateIn}
         creating={props.creating}
         canCreate={props.canCreate}
         onRename={props.onRename}

@@ -442,11 +442,23 @@ export async function createSessionWithCwd(
 }
 
 /**
- * 新建会话：调用原子 session.create，落 SessionMeta 并触发 workspace 归属。
+ * 新建会话：可选地换目标工作区，然后回启动页。真正的 `session.create` 在首条
+ * 消息发出时才发生（`submitStartupSession`）。
+ *
+ * 两条纪律都写在这里，别再分头实现：
+ * 1. **不在这里建会话**。后端 `session.create` 末尾无条件 `registry.spawn_new`
+ *    （`service/handlers/session.rs:205-209`），先建后不说话的会话等于白拉一个
+ *    agent worker，还会以零轮次会话漏进 `sessions()` 列表。
+ * 2. **必须走 `openStartup()`**。它负责取消在飞激活、退订其余 store、bump 焦点
+ *    令牌；只写 `setIsStartup(true)` 会留下一批已 attach 却无人退订的会话——
+ *    此前 Ctrl+N 与侧栏「+」行为不一致正是这个原因。
+ *
+ * 不传 `cwd` = 保持当前粘性目标（「换个地方接着写」），传了就改目标；两者都
+ * 落 localStorage，连开几个会话时不必反复选目录。
  */
-export async function createSession(cwd?: string | null): Promise<void> {
+export function createSession(cwd?: string | null): void {
   if (cwd != null) setNewSessionCwd(cwd);
-  setIsStartup(true);
+  openStartup();
 }
 
 export interface StartupSubmitOptions {

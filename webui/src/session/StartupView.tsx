@@ -22,6 +22,7 @@ import { tailName } from "../composer/identity";
 import { WorkspaceMenu } from "../workspace/WorkspaceMenu";
 import {
   workspaceCatalog,
+  createSession,
   newSessionCwd,
   setNewSessionCwd,
   chooseNewSessionFolder,
@@ -173,6 +174,12 @@ export const StartupView: Component<{
               onPick={(path) => {
                 setNewSessionCwd(path);
                 setOpenMenu(null);
+              }}
+              onCreateIn={(path) => {
+                setOpenMenu(null);
+                // 已经在启动页:这一条的实际效果是改目标 + 把焦点交回输入框
+                // (`createSession` 走 `openStartup()` 的同一套收口)。
+                createSession(path);
               }}
               onBrowse={() => {
                 setOpenMenu(null);

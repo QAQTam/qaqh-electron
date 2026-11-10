@@ -115,6 +115,10 @@ export const STR = {
   workspaceChooseFolderHint: "注册为新工作区并设为新建目标",
   workspaceRegisterFailed: "注册工作区失败",
   workspacePickerFailed: "打开文件夹选择器失败",
+  // 工作区行尾的「+」:改目标目录 + 去启动页,和「点条目只改目标」是两件事,
+  // 所以文案要能分别读出来。
+  workspaceCreateHere: (name: string) => `在 ${name} 新建会话`,
+  workspaceCreateHereHint: (name: string) => `在 ${name} 新建会话;设为新会话的工作区并打开启动页`,
   // 输入区的会话级存档选择(只改本会话,默认存档不动)。
   profilePickTitle: (name: string) => `本会话的存档:${name}`,
   profilePickMenu: "本会话的存档",

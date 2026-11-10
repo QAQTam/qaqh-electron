@@ -241,6 +241,10 @@ for (let index = 2; index <= 20; index += 1) {
 const previewWorkspaces: SidebarWorkspace[] = [
   { id: "ws-web", title: "qaqh-desktop-app", path: "E:/qaqh-desktop-app", order: 0 },
   { id: "ws-backend", title: "qaqh-backend", path: "E:/qaqh-backend", order: 1 },
+  // 零会话的工作区:侧栏必须列出并给出「+」——「给这个工作区起第一条对话」的入口。
+  { id: "ws-fresh", title: "qaqh-telegram", path: "E:/qaqh-telegram", order: 2, missing_dir: false },
+  // 目录已不存在且一条会话都没有:不该占一行(有历史的死目录仍会列出,见单测)。
+  { id: "ws-gone", title: "gone-and-empty", path: "E:/gone-and-empty", order: 3, missing_dir: true },
 ];
 const previewSessions: SidebarSession[] = fixtureTabs.map((item, index) => {
   const working = item.store.activity[0]() === "working";
@@ -261,6 +265,10 @@ const previewSessions: SidebarSession[] = fixtureTabs.map((item, index) => {
 const [previewActiveSeed, setPreviewActiveSeed] = createSignal(tab.seed);
 const previewActiveTab = (): Tab => fixtureTabs.find((item) => item.seed === previewActiveSeed()) ?? tab;
 const [draft, setDraft] = createSignal("");
+/* 输入区那颗「新建会话的工作区」chip 在产线是恒传的(App 一直给 workspaces/
+   onWorkspace),夹具此前完全没传——于是这张菜单从来没被视觉评审覆盖过。
+   这里补上,并把「+」的落点做成「改目标目录」这种可观察的最小语义。 */
+const [fixtureWorkspacePath, setFixtureWorkspacePath] = createSignal<string | null>("E:/qaqh-backend");
 
 if (isVisualPreview) {
   const previewConfig: ConfigDto = {
@@ -1508,6 +1516,10 @@ render(
         workspaces={previewWorkspaces}
         activeSeed={previewActiveSeed()}
         onSelect={setPreviewActiveSeed}
+        /* 「+」两颗在夹具里是空动作:视觉评审要看的是它们**在不在、位置对不对、
+           禁用态长什么样**,真正的落点由 tests/workspace-*.test.ts 断言。 */
+        onCreate={() => {}}
+        onCreateIn={() => {}}
       />
       <div class={currentView() === "settings" ? "workspace workspace-settings" : "workspace"}>
         <Show when={currentView() === "settings"} fallback={
@@ -1548,6 +1560,11 @@ render(
                 onRemoveAttachment={(id) => previewActiveTab().store.removeAttachment(id)}
                 profileView={fixtureProfileView}
                 onSelection={(_provider, model) => setPreviewProfile(model)}
+                workspaces={() => previewWorkspaces}
+                workspacePath={fixtureWorkspacePath}
+                onWorkspace={setFixtureWorkspacePath}
+                onCreateInWorkspace={setFixtureWorkspacePath}
+                onBrowseWorkspace={() => {}}
                 sessionWorkspace={() => "qaqh"}
                 lanActive={() => false}
               />
