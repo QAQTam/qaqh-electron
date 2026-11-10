@@ -66,6 +66,15 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     keyRequired: true,
   },
   {
+    id: "qwen-token-plan-cn",
+    name: "Qwen (Token-Plan CN)",
+    badge: "Token Plan 包月专线",
+    baseUrl: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
+    wire: "messages",
+    keyHint: "sk-...",
+    keyRequired: true,
+  },
+  {
     id: "siliconflow",
     name: "SiliconFlow (硅基流动)",
     badge: "云聚合端点",
