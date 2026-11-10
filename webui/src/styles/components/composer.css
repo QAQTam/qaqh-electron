@@ -33,7 +33,11 @@
   .composer-surface:has(textarea:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   #composer textarea {
     display: block; width: 100%; flex: 1 0 auto;
-    min-height: 52px; max-height: 160px;
+    /* 自适应高度改由布局引擎做(2026-11-10 性能修复):原先每键 JS 写 height=auto 再读
+       scrollHeight,在 input 事件里强制全内容同步布局,草稿越大每键越贵(O(n)/键)。
+       field-sizing 让浏览器随内容定高,超上限自动内部滚动,零 JS、零强制布局。 */
+    field-sizing: content;
+    min-height: 52px; max-height: 160px; /* ≈8 行后内部滚动 */
     resize: none; overflow-y: auto;
     background: transparent;
     border: 0; border-radius: inherit;

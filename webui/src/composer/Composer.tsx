@@ -156,14 +156,26 @@ export const Composer: Component<{
   const showIdentity = (): boolean =>
     currentWorkspace() != null || props.lanActive?.() != null || props.metrics?.() != null;
 
-  const autoGrow = (): void => {
-    const el = textarea;
-    if (el == null) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 8 * 22 + 20)}px`; // ≈8 行后内部滚动
-  };
-
-  createEffect(() => props.draft(), () => autoGrow());
+  /**
+   * 输入非受控化(2026-11-10 性能修复):打字期间 textarea 的 DOM 值就是事实源,
+   * store 只接收 `onInput` 递来的同一字符串引用。此前每键经反应式 `value` 绑定把
+   * 整段草稿写回 `textarea.value`(Blink 全量替换编辑缓冲,成本随草稿长度线性),
+   * 顺带也有程序化写值打断输入法组合态的隐患。
+   * 下面的 effect 只桥接「外部改草稿」(发送后清空、启动页交接、标签恢复):
+   * 自己击键的更新按引用相等即刻返回,不做整串比对,更不写 DOM;高度自适应
+   * 已交给 CSS `field-sizing: content`(见 composer.css),不再读 scrollHeight。
+   */
+  let lastLocalDraft: string | null = null;
+  const [draftEmpty, setDraftEmpty] = createSignal(true);
+  createEffect(
+    () => props.draft(),
+    (value) => {
+      if (value === lastLocalDraft) return;
+      lastLocalDraft = null;
+      if (textarea != null && textarea.value !== value) textarea.value = value;
+      setDraftEmpty(value.trim() === "");
+    },
+  );
 
   createEffect(() => textarea, () => {
     const onGamepadAction = (event: Event): void => {
@@ -239,8 +251,12 @@ export const Composer: Component<{
           ref={textarea}
           rows={1}
           placeholder={props.placeholder ?? ""}
-          value={props.draft()}
-          onInput={(e) => props.onDraft(e.currentTarget.value)}
+          onInput={(e) => {
+            const value = e.currentTarget.value;
+            lastLocalDraft = value;
+            setDraftEmpty(value.trim() === "");
+            props.onDraft(value);
+          }}
           onKeyDown={(e) => {
             if (e.key !== "Enter" || e.shiftKey) return;
             // 输入法组合态不发送(§12):isComposing 或 keyCode 229。
@@ -351,7 +367,7 @@ export const Composer: Component<{
                   class="icon-btn send button-primary"
                   aria-label={props.blocked() == null ? STR.send : `${STR.send}，${blockTitle()}`}
                   title={uploading() ? STR.attachmentUploading : blockTitle()}
-                  disabled={submitting() || props.draft().trim() === "" || props.blocked() != null || uploading()}
+                  disabled={submitting() || draftEmpty() || props.blocked() != null || uploading()}
                   onClick={() => void submit()}
                 >
                   <IconArrowUp />
