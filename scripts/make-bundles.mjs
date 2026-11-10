@@ -13,14 +13,16 @@
  *   node scripts/make-bundles.mjs [--skip-frontend] [--skip-backend] [--skip-install]
  *
  * 产物: .qaqh-bundles/<releaseId>/bundles/<kind>-<buildId>.zip (+ bundle-root 目录)
- * 构建身份沿用 just 注入的 QAQH_BUILD_VERSION / QAQH_GIT_COMMIT,缺失时回退 git。
+ * 构建身份沿用 just 注入的 QAQH_BUILD_VERSION / QAQH_GIT_COMMIT；版本缺失时从
+ * .tmp/deb-version.json 日账本自动分配（与 just build / frontend-rolling 同一序列）。
  */
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join, resolve, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { collectBundle } from "./collect-bundle.mjs";
+import { reserveLocalVersion } from "./release-version.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 后端源目录由 justfile 的 QAQH_BACKEND_DIR 统一导出（冻结期默认 ../qaqh-backend-lts）。
@@ -48,10 +50,17 @@ function run(command, args, cwd = root, capture = false) {
 function buildIdentity() {
   const commit = process.env.QAQH_GIT_COMMIT?.trim()
     || spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
-  const version = process.env.QAQH_BUILD_VERSION?.trim() || "0.0.0-local";
+  // 本地热更构建与 just build / frontend-rolling 共用同一日账本（major.minor.YYYYMMDD-revision，
+  // 北京时间；失败的构建照常消耗编号）。CI/just 已注入 QAQH_BUILD_VERSION 时尊重其预留值。
+  const version = process.env.QAQH_BUILD_VERSION?.trim()
+    || reserveLocalVersion(
+        JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version,
+        join(root, ".tmp", "deb-version.json"),
+      );
   const dirty = process.env.QAQH_GIT_DIRTY === "1";
   const safeCommit = commit.slice(0, 8) + (dirty ? "-dirty" : "");
-  return { version, commit, releaseId: `${version}+${commit.slice(0, 8)}`, buildId: safeCommit };
+  // releaseId = 版本 + git 构建元数据：g 前缀沿用 git-describe 惯例，dirty 也上 UI。
+  return { version, commit, releaseId: `${version}+g${safeCommit}`, buildId: safeCommit };
 }
 
 function stagingPath(kind) {
