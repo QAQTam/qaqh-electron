@@ -780,6 +780,57 @@
     border-color: var(--border);
   }
 
+  /* ── 动效:WinUI 运动配方,逐参数移植 ──────────────────────────────────
+   * 出处:learn.microsoft.com「Motion in Windows」时序/缓动总表(2026-02),
+   * controls/dev/CommonStyles/ContentDialog_themeresources.xaml L73-114(收展
+   * 逐关键帧),dev/Repeater DefaultItemCollectionTransitionProvider(列表淡入)。
+   * 总表铁律:淡出永远先行 83ms linear;位移走 direct-in;退场必配淡出。 */
+
+  /* ContentDialog:WinUI 是"从 105% 收缩落位"而不是从小弹大——
+   * opacity 0→1 走 83ms linear,ScaleTransform 1.05→1 走 250ms OutSlowIn;
+   * 遮罩层同样 83ms 淡。离场反放(1→1.05 over 167ms + 83ms fade)。 */
+  html[data-platform="windows"] .quit-overlay { transition: opacity var(--dur-fast) linear; }
+  html[data-platform="windows"] .quit-dialog {
+    transition: opacity var(--dur-fast) linear,
+                transform var(--dur-enter) var(--ease-outslowin);
+  }
+  @starting-style {
+    html[data-platform="windows"] .quit-dialog { opacity: 0; transform: scale(1.05); }
+  }
+  @supports not (transition-behavior: allow-discrete) {
+    html[data-platform="windows"] .quit-overlay { animation: approval-fade var(--dur-fast) linear; }
+    html[data-platform="windows"] .quit-dialog { animation: win-dialog-in var(--dur-enter) var(--ease-outslowin); }
+  }
+  @keyframes win-dialog-in { from { opacity: 0; transform: scale(1.05); } to { opacity: 1; transform: none; } }
+
+  /* Toast/连接提示:任务栏 flyout 的原则是"统一向上滑入、退场淡出必配位移"。 */
+  html[data-platform="windows"] .toast,
+  html[data-platform="windows"] .connection-notice {
+    transition: opacity var(--dur-fast) linear, transform var(--dur) var(--ease);
+  }
+  @starting-style {
+    html[data-platform="windows"] .toast,
+    html[data-platform="windows"] .connection-notice { opacity: 0; transform: translateY(8px); }
+  }
+
+  /* 右键菜单与下拉:淡出 83 先行,位移 167 direct-in(与 XAML flyout 的
+   * fade+小幅滑出同构);select-flyout-in 关键帧复用,只换节奏。 */
+  html[data-platform="windows"] .context-menu {
+    transition: opacity var(--dur-fast) linear, transform var(--dur) var(--ease);
+  }
+  html[data-platform="windows"] .select-content {
+    animation: select-flyout-in var(--dur) var(--ease);
+  }
+
+  /* 会话列表入场 = ItemCollectionTransition 的 Add 相:官方实现是 300ms 纯
+   * opacity 淡入(无位移、无 stagger 延迟,新项同相位);混合 Add+Remove 时官方
+   * 用 50%/66% 保持关键帧让重排先走,那属于 JS 编排层,这里先取纯淡入。
+   * 只在挂载时播——Solid 的 keyed <For> 复用 DOM,状态变化不会重触发。 */
+  html[data-platform="windows"] .message-workspace-sessions .message-session-item {
+    animation: win-item-in 300ms linear;
+  }
+  @keyframes win-item-in { from { opacity: 0; } to { opacity: 1; } }
+
   /* ── 工具/接入页：标题交给 #top，内容头只留说明与动作 ───────────── */
   html[data-platform="windows"] .tools-page { padding: 16px 24px 32px; }
   html[data-platform="windows"] .tools-page-head h1,

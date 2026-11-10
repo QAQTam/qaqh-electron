@@ -89,6 +89,16 @@
     --dur-enter: 250ms;
     --dur-layout: 250ms;
     --ease: cubic-bezier(0, 0, 0, 1);
+    /* 运动总表(learn.microsoft「Motion in Windows」)余档与命名曲线:
+     *  --dur-slow 333 = 表内 "slow" 档;--ease-point/gentle-out 照抄总表。
+     *  outslowin/inslowout 即 generic.xaml 的 ControlFastOutSlowIn / FastInSlowOut
+     *  KeySpline(0.1,0.9,0.2,1 / 0.9,0.1,1,0.2)——也正是 selection-pill 沉降/拉伸
+     *  那两条,弹窗收缩落位与列表重排补间用它。 */
+    --dur-slow: 333ms;
+    --ease-point: cubic-bezier(0.55, 0.55, 0, 1);
+    --ease-gentle-out: cubic-bezier(1, 0, 1, 1);
+    --ease-outslowin: cubic-bezier(0.1, 0.9, 0.2, 1);
+    --ease-inslowout: cubic-bezier(0.9, 0.1, 1, 0.2);
 
     --pending-permission: #9d5d00;
     --pending-ask: var(--accent);
