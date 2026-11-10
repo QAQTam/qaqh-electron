@@ -763,6 +763,13 @@
   html[data-platform="windows"]:not(.has-mica) .settings-page {
     background: var(--bg);
   }
+  /* 壳容器本身必须一起透明:layout.css 的 `#app{background:var(--bg)}` 与
+     sidebar.css 的 `html.desktop .app-sidebar{background:var(--surface)}` 是
+     两层全屏/整列的实色涂层——只清 body/#top/子栏而漏掉它们,Mica 会被整窗
+     盖死(实测标题栏透出的是 #f3f3f3 而非壁纸色调)。抽屉态例外:浮在内容
+     之上,保留实底保证可读性。 */
+  html[data-platform="windows"].has-mica #app,
+  html[data-platform="windows"].has-mica .app-sidebar:not(.drawer),
   html[data-platform="windows"].has-mica .global-nav,
   html[data-platform="windows"].has-mica .message-sidebar,
   html[data-platform="windows"].has-mica #top {
