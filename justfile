@@ -4,7 +4,9 @@
 # Do not add packaging entry points to package.json.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 # Windows 上由 pwsh 7 执行 recipe 与 backtick，无需 Git Bash。
-# pwsh 没有 bash -e 语义，多步 recipe（install/check）用行尾 && 首败即停。
+# 注意：just 会把每行 recipe 行单独交给 pwsh（-Command），行尾裸 `&&` 是 pwsh 解析错误
+# 且吞掉全部输出（just 1.59 实测，exit 1 零输出）。多步 recipe 必须用行尾 `\` 把多行
+# 拼成一条命令，再以 `&&` 串联实现首败即停（bash 侧同样成立）。
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
 release_version := `node -p "require('./package.json').version"`
@@ -54,7 +56,7 @@ frontend-rolling *options:
 # update-source（默认 %LOCALAPPDATA%\QAQ-Harness\update-source，可用 QAQH_UPDATE_SOURCE
 # 覆盖）。壳启动/设置页「检查更新」扫到后即可暂存并重启应用。
 frontend-update *options:
-    node scripts/make-bundles.mjs --skip-backend {{options}} &&
+    node scripts/make-bundles.mjs --skip-backend {{options}} && \
     node scripts/make-update-source.mjs --publish
 
 # 常用目标的短命令，等价于 just build <target>。
@@ -76,7 +78,7 @@ alias desktop-build := build
 
 # 安装依赖；build 默认也会按需安装。
 install:
-    pnpm install --frozen-lockfile &&
+    pnpm install --frozen-lockfile && \
     pnpm --dir webui install --frozen-lockfile
 
 # 本地开发（先执行一次 just build dir 准备 daemon/renderer/native 资源）。
@@ -85,11 +87,11 @@ dev:
 
 # 独立质量闸；打包本身只做必要类型检查，不重复跑全量测试。
 check:
-    pnpm run typecheck &&
-    pnpm test &&
-    pnpm --dir webui run typecheck &&
-    pnpm --dir webui run test &&
-    cargo test -p qaqh-client --lib --manifest-path {{backend_dir}}/Cargo.toml &&
+    pnpm run typecheck && \
+    pnpm test && \
+    pnpm --dir webui run typecheck && \
+    pnpm --dir webui run test && \
+    cargo test -p qaqh-client --lib --manifest-path {{backend_dir}}/Cargo.toml && \
     cargo check --manifest-path crates/qaqh-napi-client/Cargo.toml
 
 # 显式重新生成 SDK 契约并同步 WebUI DTO；打包只检查，不修改源码。
