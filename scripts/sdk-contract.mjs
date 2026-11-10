@@ -5,7 +5,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const backend = resolve(root, '../qaqh-backend');
+// 后端源目录由 justfile 的 QAQH_BACKEND_DIR 统一导出（冻结期默认 ../qaqh-backend-lts）。
+const backend = resolve(root, process.env.QAQH_BACKEND_DIR ?? "../qaqh-backend-lts");
 // 协议运行时已由 native 绑定直接编译进 qaqh-client（同一 workspace，无副本）；
 // 唯一需要物化的契约产物是 renderer 的 TS 类型镜像。
 const mirror = join(root, 'webui/src/api/qaqh');

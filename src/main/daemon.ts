@@ -179,12 +179,16 @@ export function resolveDaemonExecutable(): string | null {
     ? []
     : [join("/usr/local/bin", binName), join("/usr/bin", binName)];
 
-  // 本地开发路径（同级项目 qaqh-backend）
+  // 本地开发路径（冻结期优先 ../qaqh-backend-lts，兼容活跃仓与打包资源）
   const candidates = [
     ...systemCandidates,
+    resolve(process.cwd(), "../qaqh-backend-lts/target/release/qaqh-daemon"),
+    resolve(process.cwd(), "../qaqh-backend-lts/target/debug/qaqh-daemon"),
     resolve(process.cwd(), "../qaqh-backend/target/release/qaqh-daemon"),
     resolve(process.cwd(), "../qaqh-backend/target/debug/qaqh-daemon"),
     resolve(process.cwd(), "resources/bin/qaqh-daemon"),
+    resolve(process.cwd(), "../qaqh-backend-lts/target/release/qaqh-daemon.exe"),
+    resolve(process.cwd(), "../qaqh-backend-lts/target/debug/qaqh-daemon.exe"),
     resolve(process.cwd(), "../qaqh-backend/target/release/qaqh-daemon.exe"),
     resolve(process.cwd(), "../qaqh-backend/target/debug/qaqh-daemon.exe"),
     resolve(process.cwd(), "resources/bin/qaqh-daemon.exe"),

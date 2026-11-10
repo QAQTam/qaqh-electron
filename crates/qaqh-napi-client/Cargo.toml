@@ -15,7 +15,7 @@ doctest = false
 [dependencies]
 napi = { version = "3.16", features = ["async", "serde-json"] }
 napi-derive = "3.7"
-qaqh-client = { path = "../../../qaqh-backend/crates/qaqh-client" }
+qaqh-client = { path = "../../../qaqh-backend-lts/crates/qaqh-client" }
 serde = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }

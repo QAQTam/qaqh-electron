@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "qaqh-client"
-version = "3.0.20261104-1"
+version = "3.0.20261110-g1842986"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1127,7 +1127,7 @@ dependencies = [
 
 [[package]]
 name = "qaqh-profile"
-version = "3.0.20261104-1"
+version = "3.0.20261110-g1842986"
 dependencies = [
  "log",
  "qaqh-types",
@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "qaqh-ringing"
-version = "3.0.20261104-1"
+version = "3.0.20261110-g1842986"
 dependencies = [
  "qaqh-profile",
  "qaqh-ringing-contract",
@@ -1150,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "qaqh-ringing-contract"
-version = "3.0.20261104-1"
+version = "3.0.20261110-g1842986"
 dependencies = [
  "qaqh-types",
  "serde",
@@ -1162,7 +1162,7 @@ dependencies = [
 
 [[package]]
 name = "qaqh-types"
-version = "3.0.20261104-1"
+version = "3.0.20261110-g1842986"
 dependencies = [
  "serde",
  "serde_json",

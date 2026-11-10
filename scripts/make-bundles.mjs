@@ -23,7 +23,8 @@ import { fileURLToPath } from "node:url";
 import { collectBundle } from "./collect-bundle.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const backend = resolve(root, "../qaqh-backend");
+// 后端源目录由 justfile 的 QAQH_BACKEND_DIR 统一导出（冻结期默认 ../qaqh-backend-lts）。
+const backend = resolve(root, process.env.QAQH_BACKEND_DIR ?? "../qaqh-backend-lts");
 const frontend = resolve(root, "webui");
 const outRoot = resolve(root, ".qaqh-bundles");
 const require = createRequire(import.meta.url);
@@ -131,7 +132,7 @@ async function main() {
   const skipInstall = skip.has("--skip-install");
   const identity = buildIdentity();
   console.log(`Bundle identity: ${identity.releaseId} (version ${identity.version})`);
-  if (!existsSync(join(backend, "Cargo.toml"))) throw new Error(`qaqh-backend missing: ${backend}`);
+  if (!existsSync(join(backend, "Cargo.toml"))) throw new Error(`backend repo missing (QAQH_BACKEND_DIR): ${backend}`);
   if (!skip.has("--skip-frontend")) await buildFrontend(identity, skipInstall);
   if (!skip.has("--skip-backend")) await buildBackend(identity);
   // 末步组装 update-source（bundles/ + catalog.json），qaqh-update stage 的输入端。

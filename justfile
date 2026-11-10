@@ -11,6 +11,9 @@ release_version := `node -p "require('./package.json').version"`
 release_date := `node -p "require('./package.json').version.split('.')[2].split('-')[0]"`
 build_date := env_var_or_default("QAQH_BUILD_DATE", "")
 build_version := env_var_or_default("QAQH_BUILD_VERSION", "")
+# 后端冻结分支：打包/契约导出/check 一律走 ../qaqh-backend-lts；
+# 解冻或改验证另一份后端时用 QAQH_BACKEND_DIR 覆盖（相对仓根或绝对路径）。
+backend_dir := env_var_or_default("QAQH_BACKEND_DIR", "../qaqh-backend-lts")
 build_commit := `git rev-parse HEAD`
 build_short := `git rev-parse --short=8 HEAD`
 # 跨 shell 写法：pwsh/bash 下等价，避免依赖 bash 的 if/printf。
@@ -21,6 +24,7 @@ export QAQH_BUILD_VERSION := build_version
 export QAQH_GIT_COMMIT := build_commit
 export QAQH_GIT_DIRTY := build_dirty
 export QAQH_BUILD_ID := build_commit
+export QAQH_BACKEND_DIR := backend_dir
 
 default:
     @just --list
@@ -85,7 +89,7 @@ check:
     pnpm test &&
     pnpm --dir webui run typecheck &&
     pnpm --dir webui run test &&
-    cargo test -p qaqh-client --lib --manifest-path ../qaqh-backend/Cargo.toml &&
+    cargo test -p qaqh-client --lib --manifest-path {{backend_dir}}/Cargo.toml &&
     cargo check --manifest-path crates/qaqh-napi-client/Cargo.toml
 
 # 显式重新生成 SDK 契约并同步 WebUI DTO；打包只检查，不修改源码。

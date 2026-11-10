@@ -18,7 +18,7 @@ The Rust client owns protocol work: Ringing handshake/lease renewal, service met
 
 ## Development
 
-Requirements: Node.js >=22.12, pnpm, Rust/Cargo, `just`, and sibling repositories `qaqh-sdk` and `qaqh-backend`. The renderer lives in this repository under `webui/`. `just` is the only supported packaging entry point; `pnpm` remains the package manager and runs the JavaScript internals.
+Requirements: Node.js >=22.12, pnpm, Rust/Cargo, `just`, and sibling repositories `qaqh-sdk` and `qaqh-backend`（打包冻结期使用 `qaqh-backend-lts`：napi 路径依赖与 `just` 的 `QAQH_BACKEND_DIR` 默认值都指向它，临时切回活跃仓用 `QAQH_BACKEND_DIR=../qaqh-backend just ...`）. The renderer lives in this repository under `webui/`. `just` is the only supported packaging entry point; `pnpm` remains the package manager and runs the JavaScript internals.
 
 ```bash
 just install             # install all three workspaces
@@ -144,7 +144,8 @@ The renderer uses context isolation and no Node integration. `app://` responses 
 
 协议运行时已由原生绑定（`crates/qaqh-napi-client` → `qaqh-client`）直接编译进
 主进程，与打包的 daemon 同源；renderer 消费的 TS 类型来自 backend exporter 的
-唯一镜像（`webui/src/api/qaqh`）。打包会从当前 `../qaqh-backend` 导出契约并逐
+唯一镜像（`webui/src/api/qaqh`）。打包会从冻结仓 `../qaqh-backend-lts`（由
+`just` 导出的 `QAQH_BACKEND_DIR` 决定，默认见 justfile）导出契约并逐
 文件校验该镜像，漂移时列出全部差异、不自动修改源码。后端提交或契约变更后：
 
 ```bash
