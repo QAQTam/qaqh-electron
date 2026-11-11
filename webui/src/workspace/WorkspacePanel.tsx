@@ -88,13 +88,18 @@ export const WorkspacePanel: Component<{ store: SessionStore;
     const host = root?.closest("#app");
     if (host == null) return;
     const sidebar = host.querySelector<HTMLElement>(".app-sidebar");
-    // 注意:setter 返回被赋的布尔值,回调绝不能是表达式箭头体(会被当成 cleanup)。
-    const measure = (): void => {
+    // 注意:setter 无返回值,箭头体绝不能是表达式(会被当成 cleanup)。
+    const apply = (hostWidth: number): void => {
       const sidebarWidth = sidebar?.getBoundingClientRect().width ?? 288;
-      setNarrow(host.clientWidth - sidebarWidth < NARROW_RAIL_MAX);
+      setNarrow(hostWidth - sidebarWidth < NARROW_RAIL_MAX);
     };
-    measure();
-    const observer = new ResizeObserver(measure);
+    // RO 回调在布局后运行:host 宽用入参 contentRect,不再自读 clientWidth
+    // (拖宽卡顿根因之一:回调里读几何触发强制同步布局乒乓)。
+    apply(host.clientWidth);
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect != null) apply(rect.width);
+    });
     observer.observe(host);
     return () => observer.disconnect();
   });

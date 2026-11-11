@@ -54,21 +54,29 @@ export const Sidebar: Component<{
   onWidthCommit?: (width: number | null) => void;
 }> = (props) => {
   let asideEl: HTMLElement | undefined;
-  /* 拖拽调宽(用户侧需求,卡顿防线):pointermove 不进 signal、不触发重渲染,
-     rAF 合帧后直写 #app 的 --sidebar-width;html.sidebar-resizing 关掉轨道过渡
-     (过渡会拖住光标产生橡皮筋感)。松手才提交,App 落盘并决定是否收回。 */
-  let drag: { startX: number; startWidth: number; width: number; frame: number } | null = null;
+  /* 拖拽调宽(卡顿根因修复 2026-11-11):拖拽期**不碰布局**——过去每帧写
+     #app 的 --sidebar-width(继承型自定义属性)会把整棵子树的变量计算标脏,
+     叠上 1fr 主列每帧全文重排 + RO 强制同步布局,长会话必卡。
+     现在是 VSCode/Files 式幽灵线:跟手的只是一根 fixed 指示条(逐帧只动
+     transform),pointerup 才提交真实宽度,主列全程只在松手后重排一次。
+     html.sidebar-resizing 照旧挂(关轨道过渡,防橡皮筋)。 */
+  let drag: { startX: number; startWidth: number; width: number } | null = null;
+  let ghostEl: HTMLElement | null = null;
+  const dropGhost = (): void => {
+    ghostEl?.remove();
+    ghostEl = null;
+  };
   onCleanup(() => {
-    if (drag != null && drag.frame !== 0) cancelAnimationFrame(drag.frame);
     drag = null;
+    dropGhost();
     document.documentElement.classList.remove("sidebar-resizing");
   });
   const appEl = (): HTMLElement | null => asideEl?.closest("#app") ?? null;
   const commitResize = (): void => {
     if (drag == null) return;
-    if (drag.frame !== 0) cancelAnimationFrame(drag.frame);
     const width = drag.width;
     drag = null;
+    dropGhost();
     document.documentElement.classList.remove("sidebar-resizing");
     // pointerup 之后 lostpointercapture 还会来一次,drag 已置 null,自然幂等。
     props.onWidthCommit?.(width);
@@ -79,20 +87,20 @@ export const Sidebar: Component<{
     if (app == null) return;
     const computed = Number.parseFloat(getComputedStyle(app).getPropertyValue("--sidebar-width"));
     const startWidth = Number.isFinite(computed) ? computed : 288;
-    drag = { startX: event.clientX, startWidth, width: startWidth, frame: 0 };
+    drag = { startX: event.clientX, startWidth, width: startWidth };
+    dropGhost();
+    ghostEl = document.createElement("div");
+    ghostEl.className = "sidebar-resize-ghost";
+    ghostEl.style.left = `${startWidth}px`;
+    document.body.append(ghostEl);
     document.documentElement.classList.add("sidebar-resizing");
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   };
   const onResizePointerMove = (event: PointerEvent): void => {
     if (drag == null) return;
     drag.width = dragSidebarWidth(drag.startX, drag.startWidth, event.clientX);
-    if (drag.frame === 0) {
-      drag.frame = requestAnimationFrame(() => {
-        if (drag == null) return;
-        drag.frame = 0;
-        appEl()?.style.setProperty("--sidebar-width", `${drag.width}px`);
-      });
-    }
+    // 逐帧直写幽灵线 transform:元素是 fixed 的 2px 条,无子树,代价可忽略。
+    if (ghostEl != null) ghostEl.style.transform = `translateX(${drag.width - drag.startWidth}px)`;
   };
   const onResizeKeyDown = (event: KeyboardEvent): void => {
     if (props.onWidthCommit == null) return;
