@@ -5,6 +5,7 @@ import IconEdit from "~icons/lucide/file-pen-line";
 import IconSearch from "~icons/lucide/search";
 import IconTerminal from "~icons/lucide/square-terminal";
 import IconWrench from "~icons/lucide/wrench";
+import IconHandoff from "~icons/lucide/package-check";
 import IconChevronRight from "~icons/lucide/chevron-right";
 import IconCopy from "~icons/lucide/copy";
 import IconLoader from "~icons/lucide/loader-circle";
@@ -17,8 +18,9 @@ import { STR, formatWorkDuration } from "../lib/strings";
 import { now } from "../lib/time";
 import { DiffList } from "../diff/DiffView";
 import type { ToolStep, Turn } from "../session/types";
+import { handoffToolErrorCode } from "../session/handoff";
 import { primaryArg, toolLabel } from "./registry";
-import { isSkillStep, semanticLabel, shellContent, shellLive, toolPaths, toolPresentation, toolPhaseLabel } from "./presentation";
+import { handoffSummary, isSkillStep, semanticLabel, shellContent, shellLive, toolPaths, toolPresentation, toolPhaseLabel } from "./presentation";
 import { toolCommandIcon } from "./command-icons";
 
 type ReadOnlyTerminalView = Component<ReadOnlyTerminalProps>;
@@ -116,7 +118,9 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
   const semantic = () => semanticLabel(step());
   const commandIcon = () => kind() === "shell" ? toolCommandIcon(step().argsJson) : undefined;
   const paths = createMemo(() => ["read", "edit"].includes(kind()) ? toolPaths(step(), props.cwd) : []);
-  const summary = () => semantic() ? "" : paths().length ? paths().join(" · ") : primaryArg(step().argsJson);
+  // 交接行的摘要 = 模型的 work_summary;primaryArg 会拿整篇 handoff_doc 的第一个字符串。
+  const summary = () => kind() === "handoff" ? handoffSummary(step())
+    : semantic() ? "" : paths().length ? paths().join(" · ") : primaryArg(step().argsJson);
   const isLatest = createMemo(() => {
     if (props.isLatest !== undefined) return props.isLatest;
     const toolSteps = (props.turn?.steps ?? []).filter((s) => s.kind === "tool");
@@ -161,8 +165,11 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
     <button type="button" class="tool-head" disabled={!hasDetails()} aria-expanded={hasDetails() ? open() ? "true" : "false" : undefined} onClick={() => setOverride(!open())}>
       <Switch>
         <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running" || step().status === "cancelling"}><span class="tool-icon spin"><IconLoader /></span></Match>
-        <Match when={step().status === "finished"}><span class="tool-icon muted" title={yielded() ? yieldedLabel() : "已完成"}><Switch fallback={<IconWrench />}>
+        <Match when={step().status === "finished"}><span class="tool-icon muted" title={yielded() ? yieldedLabel() : kind() === "handoff" ? STR.handoffSealed : "已完成"}><Switch fallback={<IconWrench />}>
           <Match when={kind() === "shell"}><IconTerminal /></Match><Match when={kind() === "read" || kind() === "skill"}><IconFile /></Match><Match when={kind() === "edit"}><IconEdit /></Match><Match when={kind() === "search"}><IconSearch /></Match>
+          {/* 交接工具在 minimal/custom 档也会被后端声明(控制面工具不吃 allowlist),
+              按工具名给图标,不再套一层白名单,否则模型真会调的这行少个图标。 */}
+          <Match when={kind() === "handoff"}><IconHandoff /></Match>
         </Switch></span></Match>
         <Match when={step().status === "failed"}><span class="tool-icon err"><IconX /></span></Match>
         <Match when={step().status === "cancelled" || step().status === "interrupted"}><span class="tool-icon muted"><IconChevronRight /></span></Match>
@@ -187,11 +194,19 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
       <Show when={stats()}><span class="tool-diffstat"><b class="diff-stat-add">+{stats()!.add}</b><b class="diff-stat-del">−{stats()!.del}</b></span></Show>
       <Switch>
         <Match when={yielded()}><span class="tool-state">{yieldedLabel()}</span></Match>
+        {/* 封箱成功的那一行状态位直说「已封箱交接」:loop 到此为止是事实,
+            不是"任务完成"——用户得知道接下来要靠交接会话继续。 */}
+        <Match when={kind() === "handoff" && step().status === "finished"}><span class="tool-state">{STR.handoffSealed}</span></Match>
         <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running" || step().status === "cancelling"}>
           <span class="tool-state">{toolPhaseLabel(step())}</span>
           <LiveElapsed startedAt={step().startedAt} />
         </Match>
-        <Match when={step().status === "failed"}><span class="tool-state err">{STR.failed}</span></Match>
+        <Match when={step().status === "failed"}>
+          {/* 交接类失败(`handoff_invalid_args` / `handoff_write_failed`)走工具错误、
+              不走 TurnError:回合继续、模型可重试。这里把 code 摆进状态位,正文留在
+              展开区(`step.error`),不做任何自动补救。 */}
+          <span class="tool-state err" title={step().error ?? undefined}>{handoffToolErrorCode(step()) ?? STR.failed}</span>
+        </Match>
         <Match when={step().status === "cancelled" || step().status === "interrupted"}><span class="tool-state">{STR.aborted}</span></Match>
       </Switch>
       <Show when={hasDetails()}><IconChevronRight class={`tool-chevron${open() ? " is-open" : ""}`} /></Show>

@@ -12,10 +12,17 @@ import IconX from "~icons/lucide/x";
 
 export type ToastKind = "ok" | "err" | "info";
 
+/** 可选动作按钮:通知→一键到达动作(如「去安装」跳设置页)。点击后 toast 自关。 */
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
 interface ToastItem {
   id: number;
   kind: ToastKind;
   text: string;
+  action?: ToastAction;
 }
 
 const [toasts, setToasts] = createSignal<ToastItem[]>([]);
@@ -30,17 +37,21 @@ function dismiss(id: number): void {
   for (const [key, value] of dedupe) if (value === id) dedupe.delete(key);
 }
 
-export function toast(text: string, kind: ToastKind = "info", options?: { dedupeKey?: string; durationMs?: number }): number {
+export function toast(
+  text: string,
+  kind: ToastKind = "info",
+  options?: { dedupeKey?: string; durationMs?: number; action?: ToastAction },
+): number {
   const id = options?.dedupeKey != null ? (dedupe.get(options.dedupeKey) ?? nextId++) : nextId++;
   if (options?.dedupeKey != null) dedupe.set(options.dedupeKey, id);
   setToasts((prev) => {
     const existing = prev.findIndex((item) => item.id === id);
     if (existing >= 0) {
       const next = [...prev];
-      next[existing] = { id, kind, text };
+      next[existing] = { id, kind, text, action: options?.action };
       return next;
     }
-    return [...prev, { id, kind, text }];
+    return [...prev, { id, kind, text, action: options?.action }];
   });
   const duration = options?.durationMs ?? DEFAULT_DURATION_MS[kind];
   // 超时回调对已移除的 id 是幂等空操作,无需保存 timer 句柄。
@@ -69,6 +80,18 @@ export const ToastHost: Component = () => {
               </Show>
             </span>
             <span class="toast-text">{item.text}</span>
+            <Show when={item.action != null}>
+              <button
+                type="button"
+                class="toast-action"
+                onClick={() => {
+                  item.action?.run();
+                  dismiss(item.id);
+                }}
+              >
+                {item.action?.label}
+              </button>
+            </Show>
             <button type="button" class="toast-close" aria-label="关闭" onClick={() => dismiss(item.id)}>
               <IconX />
             </button>

@@ -26,6 +26,7 @@ import { processGroup } from "./process-metrics.js";
 import { readGpuStatus } from "./gpu-info.js";
 import type { ApprovalView, MainServiceMap, MainServiceMethod } from "./types.js";
 import { MAIN_SERVICE_METHODS } from "./types.js";
+import type { BrowserPaneControl, PaneRect } from "./browser-host/engine.js";
 
 const DEFAULT_LAN_PORT = 64413;
 const RESTART_TIMEOUT_MS = 20_000;
@@ -284,13 +285,14 @@ export async function reconnectAndRestoreSession(client: RingingClient, discover
 export function registerIpcHandlers(
   clientOrConnect: RingingClient | (() => Promise<RingingClient>),
   daemonMgr: DaemonManager,
-  challenges: ChallengeManager
+  challenges: ChallengeManager,
+  browser: BrowserPaneControl | null = null
 ): void {
   const getClient = () => typeof clientOrConnect === "function" ? clientOrConnect() : Promise.resolve(clientOrConnect);
   // Compatibility command name is intentionally closed to a fixed allowlist.
   ipcMain.handle("qaqh:invoke", async (event, cmd: string, args: Record<string, any> = {}) => {
     if (event.senderFrame !== event.sender.mainFrame || !isTrustedRenderer(event.senderFrame?.url ?? "")) throw new Error("IPC sender is not the application renderer");
-    return handleCommand(cmd, args, await getClient(), daemonMgr, challenges);
+    return handleCommand(cmd, args, await getClient(), daemonMgr, challenges, browser);
   });
 }
 
@@ -315,7 +317,8 @@ async function handleCommand(
   args: Record<string, any>,
   client: RingingClient,
   daemonMgr: DaemonManager,
-  challenges: ChallengeManager
+  challenges: ChallengeManager,
+  browser: BrowserPaneControl | null
 ): Promise<any> {
   switch (cmd) {
     case "session_list": {
@@ -655,8 +658,55 @@ async function handleCommand(
       return applyNativeMica(dark, followSystem);
     }
 
+    // ── 浏览器面板（docs/browser-control-design.md）：renderer 只驱动可见性
+    //    与视口；agent 的页面操作走 MCP 工具面，两侧不交叉。 ──
+    case "browser_view_show": {
+      if (browser == null) throw new Error("浏览器控制本次启动不可用");
+      browser.showPane(rectArg(args?.rect));
+      return browser.state();
+    }
+
+    case "browser_view_hide": {
+      if (browser == null) throw new Error("浏览器控制本次启动不可用");
+      browser.hidePane();
+      return browser.state();
+    }
+
+    case "browser_view_viewport": {
+      if (browser == null) throw new Error("浏览器控制本次启动不可用");
+      const rect = rectArg(args?.rect);
+      if (rect == null) throw new Error("browser_view_viewport 需要 rect");
+      browser.setViewport(rect);
+      return browser.state();
+    }
+
+    case "browser_view_navigate": {
+      if (browser == null) throw new Error("浏览器控制本次启动不可用");
+      const url = String(args?.url ?? "");
+      if (!url) throw new Error("browser_view_navigate 需要 url");
+      return browser.navigate(url);
+    }
+
+    case "browser_view_state": {
+      return browser?.state() ?? { visible: false, url: "", title: "", unavailable: true };
+    }
+
     default:
       console.warn(`[ipc] Unhandled command: ${cmd}`, args);
       throw new Error(`Command ${cmd} not implemented in Electron shell`);
   }
+}
+
+/** 视口矩形入参校验：非有限正数一律拒绝（渲染层测量错值不该悄悄落位）。 */
+function rectArg(raw: unknown): PaneRect | undefined {
+  if (raw == null || typeof raw !== "object") return undefined;
+  const rect = raw as Record<string, unknown>;
+  const x = Number(rect.x);
+  const y = Number(rect.y);
+  const width = Number(rect.width);
+  const height = Number(rect.height);
+  if (![x, y, width, height].every((value) => Number.isFinite(value)) || width <= 0 || height <= 0) {
+    throw new Error("browser_view rect 需要有限的 x/y/width/height 且宽高为正");
+  }
+  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
 }

@@ -6,6 +6,20 @@
  * 展示层绝不改写参数含义——argv 展开仅用于预览,完整入参在二次折叠中保留。
  */
 import { parseJsonish } from "../session/reducer";
+import { STR } from "../lib/strings";
+
+/** qaqh-browser MCP 工具（wire 名 mcp__qaqh-browser__<tool>）的展示名。 */
+const BROWSER_TOOL_LABELS: Record<string, string> = {
+  browser_navigate: "打开网页",
+  browser_snapshot: "读取页面",
+  browser_click: "点击页面",
+  browser_type: "输入文本",
+  browser_press_key: "按键",
+  browser_scroll: "滚动页面",
+  browser_screenshot: "网页截图",
+  browser_console: "页面控制台",
+  browser_close: "关闭浏览器",
+};
 
 const LABELS: Record<string, string> = {
   exec_command: "执行命令",
@@ -25,9 +39,15 @@ const LABELS: Record<string, string> = {
   todo_write: "更新计划",
   note: "记录",
   subagent: "子代理",
+  // 控制面工具:任何 tool_mode 都会被后端声明,所以任何档位都可能撞上这一行。
+  handoff: STR.handoffTool,
 };
 
 export function toolLabel(name: string): string {
+  if (name.startsWith("mcp__qaqh-browser__")) {
+    const tool = name.slice("mcp__qaqh-browser__".length);
+    return BROWSER_TOOL_LABELS[tool] ?? tool;
+  }
   return LABELS[name] ?? name;
 }
 
@@ -60,7 +80,7 @@ export function primaryArgFull(argsJson: string | undefined): string {
       && args.argv.every((entry) => typeof entry === "string")) {
       return args.argv.join(" ");
     }
-    for (const key of ["path", "file_path", "file", "filename", "query", "pattern", "url", "name", "exec_session_id"]) {
+    for (const key of ["path", "file_path", "file", "filename", "query", "pattern", "url", "name", "exec_session_id", "uid", "key", "direction"]) {
       if (typeof args[key] === "string" && args[key]) return args[key];
     }
     if (Array.isArray(args.items) || Array.isArray(args.todos)) {

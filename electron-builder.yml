@@ -29,6 +29,12 @@ extraResources:
       # 拒绝 linux 包里出现 updater CLI)。
       - "qaqh-update"
       - "qaqh-update.exe"
+  # 插件(只带 manifest + 构建产物,源码不进包)。
+  - from: plugins/
+    to: plugins/
+    filter:
+      - "**/plugin.json"
+      - "**/dist/**"
 
 linux:
   icon: build/icons

@@ -8,7 +8,9 @@
   "desktopName": "com.qaqh.desktop.desktop",
   "scripts": {
     "test": "node --test scripts/*.test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "plugins": "node scripts/plugins-watch.mjs",
+    "plugins:build": "node scripts/plugins-watch.mjs --once"
   },
   "keywords": [
     "qaqh",

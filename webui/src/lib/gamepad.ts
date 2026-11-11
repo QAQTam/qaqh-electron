@@ -232,3 +232,31 @@ export class GamepadController {
     }
   }
 }
+
+/**
+ * Raw per-frame pad feed for plugin hosts: hands the connected pad (or null) to
+ * the caller every animation frame. Unlike the navigation controller it carries
+ * analog values and simultaneous buttons — menu throttling does not apply.
+ * Each caller owns its feed; an unsubscribe stops its own loop only.
+ */
+export function startGamepadRawFeed(onFrame: (pad: Gamepad | null) => void): () => void {
+  let frame = 0;
+  const tick = (): void => {
+    frame = 0;
+    let pad: Gamepad | null = null;
+    try {
+      const pads = Array.from(navigator.getGamepads());
+      pad = pads.find((candidate) => candidate != null && candidate.connected) ?? null;
+    } catch {
+      // Chromium/Linux 控制器栈热拔出会 throw；下一帧自然恢复，与导航控制器同语义。
+    }
+    onFrame(pad);
+    frame = requestAnimationFrame(tick);
+  };
+  if (typeof navigator !== "undefined" && typeof navigator.getGamepads === "function") tick();
+  else onFrame(null);
+  return () => {
+    if (frame !== 0) cancelAnimationFrame(frame);
+    frame = 0;
+  };
+}

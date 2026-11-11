@@ -99,10 +99,12 @@ import {
   type GamepadAction,
   type GamepadDeviceState,
 } from "../lib/gamepad";
+import { startPluginHost } from "../plugins/loader";
 import { notifyConfigChanged, onConfigChanged } from "../lib/config-events";
 import { toast, ToastHost } from "../ui/toast";
 import { buildContextMenu, ContextMenuHost, openContextMenu, type ContextMenuItem } from "../ui/contextMenu";
 import { DiffReviewDrawer } from "../diff/DiffReviewDrawer";
+import BrowserPane from "../browser/BrowserPane";
 import "../styles/app.css";
 
 const isDesktop = isDesktopRuntime();
@@ -338,6 +340,7 @@ const App: Component = () => {
       setGamepadDevice,
     );
     const stopGamepad = gamepad.start();
+    startPluginHost();
     void bootTabs().catch((error: unknown) => {
       // boot() 只对「没有可用会话」写 bootError;bootstrap/网络异常在此兜底,
       // 给出可执行的下一步(§16 错误文案),而不是静默空屏。
@@ -347,6 +350,22 @@ const App: Component = () => {
     });
     // 后台标签状态点(§5.2):轮询 sessions 列表(turn_count/running/title)。
     const poll = setInterval(() => void pollSessions(), 15_000);
+    // 本地热更冷启动静默检查(5s 等首帧与连接稳定):发现新版本才出声(带「去安装」
+    // 直达设置→关于),已最新/已暂存/检查失败/开发环境一律静默——大厂纪律。
+    // 开关存 localStorage(AboutSection 拥有 UI),关掉即整个分支不进。
+    const autoUpdateTimer = window.setTimeout(() => {
+      const bridge = desktopHost()?.updates;
+      if (bridge == null || localStorage.getItem("qaqh.settings.autoCheckUpdates") === "off") return;
+      bridge.check().then((status) => {
+        const plan = status.plan;
+        if (status.error != null || !status.available || plan == null || plan.upToDate || status.staged) return;
+        toast(`发现新版本 ${plan.releaseId}`, "info", {
+          dedupeKey: "qaqh-autoupdate",
+          durationMs: 10_000,
+          action: { label: "去安装", run: () => openSettingsAt("section-about") },
+        });
+      }).catch(() => {});
+    }, 5_000);
     // 身份行的局域网判据读一次就够:开/关局域网都要重启 daemon,那是设置页的动作。
     void refreshLanStatus();
     // 模型与推理强度是**全局配置**的投影:不预读,输入区那颗强度 chip 首帧就只能按
@@ -538,6 +557,7 @@ const App: Component = () => {
     // onSettled 作用域禁止 onCleanup(rc.13:CLEANUP_IN_FORBIDDEN_SCOPE)——
     // 返回清理函数,由 owner disposal 调用。
     return () => {
+      clearTimeout(autoUpdateTimer);
       clearInterval(poll);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("contextmenu", onContextMenu);
@@ -1131,6 +1151,9 @@ const App: Component = () => {
       <DiffReviewDrawer />
       <ContextMenuHost />
       <ToastHost />
+      <Show when={isDesktop}>
+        <BrowserPane />
+      </Show>
       <Show when={onboardingVisible()}>
         <OnboardingView onOpenSettings={() => openSettingsAt("section-providers")} />
       </Show>

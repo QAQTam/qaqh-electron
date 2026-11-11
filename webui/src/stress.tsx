@@ -37,7 +37,8 @@ import type { SessionBootstrap } from "./api/qaqh/SessionBootstrap";
 import type { SessionEventFrame } from "./api/qaqh/SessionEventFrame";
 import { applySessionEvent, recomputeDerived } from "./session/reducer";
 import type { ToolStep } from "./session/types";
-import { pollSessions } from "./tabs/store";
+import { pollSessions, refreshWorkspaces, setNewSessionCwd, stageStartupAttachments } from "./tabs/store";
+import { StartupView } from "./session/StartupView";
 import type { ConfigDto } from "./api/qaqh/ConfigDto";
 import type { ApprovalView } from "./lib/transport";
 import type { Tab } from "./tabs/store";
@@ -49,12 +50,18 @@ markPlatform();
 /** 会话总回合数(权威 total_turns)。 */
 const previewParams = new URLSearchParams(window.location.search);
 const previewView = previewParams.get("view");
-const isVisualPreview = previewView === "messages" || previewView === "settings" || previewView === "approval" || previewView === "tools" || previewView === "oauth";
+const isVisualPreview = previewView === "messages" || previewView === "settings" || previewView === "approval" || previewView === "tools" || previewView === "oauth" || previewView === "startup";
 /** 侧栏待响应卡的预览开关(§6.2):见 `previewSessions` 的注释。 */
 const pendingPreview = previewParams.get("pending") === "1";
 const [currentView, setCurrentView] = createSignal<"messages" | "tools" | "oauth" | "settings">(
   previewView === "settings" || previewView === "tools" || previewView === "oauth" ? previewView : "messages",
 );
+/**
+ * 阶段B 视觉评审:`view=startup` 把主区换成**真·启动页**(StartupView 渲染共用
+ * Composer)。Sidebar 的 section 仍是 messages——生产中启动页就是消息栏的子态,
+ * 这里复刻同一句话。`currentView` 的联合类型刻意不动:切去设置页的行为与它一致。
+ */
+const [startupMode] = createSignal(previewView === "startup");
 /** 与 App 同位:汉堡收展侧栏(48px 图标栏),夹具不做 localStorage 记忆。 */
 const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
 /* 拖拽调宽(与 App 同位,无记忆):松手提交,< 阈值等效汉堡收回。 */
@@ -1078,7 +1085,7 @@ const scenarios = {
     };
     let acted = 0;
     if (target === "dock") {
-      const head = document.querySelector<HTMLElement>(".workspace-panel-head");
+      const head = document.querySelector<HTMLElement>(".rail-trigger");
       for (let i = 0; i < times && head != null; i += 1) {
         head.click();
         await settle(20); // 260ms 过渡 @60Hz ≈ 16 帧
@@ -1537,7 +1544,14 @@ render(
             <div id="messages" hidden />
           </Show>
           <Show when={currentView() === "oauth"}><OAuthPage onOpenSettings={() => navigatePreview("settings")} /></Show>
-          <Show when={currentView() === "messages"}>
+          <Show when={startupMode()}>
+            {/* 真·启动页:hero/配置条/建议卡/共用 Composer 全在组件里,夹具只负责
+                把 tabs/store 的信号喂好(工作区目录、粘性目标、暂存附件)。 */}
+            <div class="session-column" role="region" aria-label="启动页">
+              <StartupView onManageProfiles={() => navigatePreview("settings")} />
+            </div>
+          </Show>
+          <Show when={currentView() === "messages" && !startupMode()}>
             <div class="session-column" id={`panel-${previewActiveTab().id}`} role="region" aria-label="当前会话">
               <SessionView tab={previewActiveTab()} />
               <Show when={previewActiveTab().store.pending[0]().length > 0}>
@@ -1578,7 +1592,7 @@ render(
         </Show>
       </div>
       {/* 与 App 同位(spec §6.3):任务右栏 ≥1280 为第三列,<1280 抽屉按参数预设。 */}
-      <Show when={currentView() === "messages"}>
+      <Show when={currentView() === "messages" && !startupMode()}>
         <WorkspacePanel store={previewActiveTab().store} drawer={fixtureCols() < 3} drawerOpen={railDrawerPreview} />
       </Show>
       <ContextMenuHost />
@@ -1600,6 +1614,15 @@ void (async () => {
     await reloadSettings();
     // 视觉验收要拍到控制台本身,而不是只拍到「关于」里那个后门入口。
     if (previewParams.get("dev") === "1") openDevConsole();
+    return;
+  }
+  if (previewView === "startup") {
+    /* 启动页不发消息树泵:把真 tabs/store 的三件输入态喂好——注册目录(菜单
+       要有的选)、粘性目标(按钮上显示的就是发送将用的 cwd)、暂存附件
+       (PendingAttachment chip 在启动页 Composer 里的真实呈现)。 */
+    void refreshWorkspaces();
+    setNewSessionCwd("E:/fixtures/demo-repo");
+    stageStartupAttachments(["E:/fixtures/demo-repo/docs/visual-fixture.md"]);
     return;
   }
   // tools 视图:把夹具 workspace.list 灌进 tabs store 的注册表信号,

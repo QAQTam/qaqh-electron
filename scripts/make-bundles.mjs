@@ -60,7 +60,9 @@ function buildIdentity() {
   const dirty = process.env.QAQH_GIT_DIRTY === "1";
   const safeCommit = commit.slice(0, 8) + (dirty ? "-dirty" : "");
   // releaseId = 版本 + git 构建元数据：g 前缀沿用 git-describe 惯例，dirty 也上 UI。
-  return { version, commit, releaseId: `${version}+g${safeCommit}`, buildId: safeCommit };
+  // buildId 必须与 releaseId 同粒度：planner 只比 current==build_id（不比版本号），
+  // 指纹漏掉账本修订号会让同 commit 的重复构建永远判「无变化」→ 热更失灵。
+  return { version, commit, releaseId: `${version}+g${safeCommit}`, buildId: `${version}+g${safeCommit}` };
 }
 
 function stagingPath(kind) {

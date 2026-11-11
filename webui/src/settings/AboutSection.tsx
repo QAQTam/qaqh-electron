@@ -16,7 +16,11 @@ import { daemonLanStatus } from "../lib/pairing";
 import { toast } from "../ui/toast";
 import { devConsoleOpen, devMode, openDevConsole, pushUnlockClick } from "../lib/devmode";
 import { desktopHost, type UpdateStatus } from "../lib/desktop-host";
+import { Switch } from "../ui/Switch";
 import { DevConsole } from "./dev/DevConsole";
+
+/** 冷启动自动检查更新的 localStorage 键;缺省=开("off" 才关)。与 App 自动检查共用。 */
+const AUTO_CHECK_KEY = "qaqh.settings.autoCheckUpdates";
 
 export const AboutSection: Component = () => {
   const [build, setBuild] = createSignal<BuildInfo | null>(null);
@@ -31,6 +35,9 @@ export const AboutSection: Component = () => {
   /** 本地热更新状态(仅桌面壳;浏览器 dev 环境整块隐藏)。 */
   const [update, setUpdate] = createSignal<UpdateStatus | null>(null);
   const [updateBusy, setUpdateBusy] = createSignal(false);
+  const [autoCheck, setAutoCheck] = createSignal(
+    typeof localStorage === "undefined" || localStorage.getItem(AUTO_CHECK_KEY) !== "off",
+  );
 
   const toggleDevtools = (): void => {
     const bridge = desktopHost()?.devtools;
@@ -95,9 +102,36 @@ export const AboutSection: Component = () => {
   function applyUpdate(): void {
     const bridge = desktopHost()?.updates;
     if (bridge == null) return;
-    // 成功路径:主进程拉起 handoff 后自行退出,这里不会收到 resolve。
-    bridge.apply().catch((error: unknown) => {
-      toast(`应用更新失败：${String(error instanceof Error ? error.message : error)}`, "err");
+    const plan = update()?.plan;
+    // backend/full 计划会重启 daemon,掐断运行中的会话——与退出确认共用同一份
+    // session.activity 数据源做静默期门控(忙时推迟,由用户空闲后手动重试)。
+    // 查询失败按忙处理:误放行的代价(半程回合被掐)高于晚点再更。
+    const touchesBackend = plan?.artifacts.includes("backend") === true
+      || plan?.artifacts.includes("full") === true;
+    if (!touchesBackend) {
+      // 成功路径:主进程拉起 handoff 后自行退出,这里不会收到 resolve。
+      bridge.apply().catch((error: unknown) => {
+        toast(`应用更新失败：${String(error instanceof Error ? error.message : error)}`, "err");
+      });
+      return;
+    }
+    setUpdateBusy(true);
+    void transport.query("session.activity", {}).then((activities) => {
+      const busyCount = (activities as Array<{ state?: string }>).filter((item) =>
+        item.state === "running" || item.state === "waiting_user" || item.state === "cancelling",
+      ).length;
+      if (busyCount > 0) {
+        setUpdateBusy(false);
+        toast(`有 ${busyCount} 个进行中的会话，backend 更新已推迟；空闲后再点「重启并应用」`, "info");
+        return;
+      }
+      bridge.apply().catch((error: unknown) => {
+        setUpdateBusy(false);
+        toast(`应用更新失败：${String(error instanceof Error ? error.message : error)}`, "err");
+      });
+    }).catch(() => {
+      setUpdateBusy(false);
+      toast("无法确认会话状态，backend 更新已推迟；请稍后重试", "err");
     });
   }
 
@@ -193,7 +227,16 @@ export const AboutSection: Component = () => {
                 重启并应用
               </button>
             </Show>
-            <span class="settings-muted">暂存与安装只动本安装目录的 app.asar；daemon 会话不中断。</span>
+            <span class="settings-muted">frontend 更新只换 app.asar,daemon 会话不中断;backend/full 更新会重启 daemon,运行中会话会被推迟保护。</span>
+            <Switch
+              checked={autoCheck()}
+              onToggle={(value) => {
+                setAutoCheck(value);
+                try { localStorage.setItem(AUTO_CHECK_KEY, value ? "on" : "off"); } catch { /* 隐私模式等:开关本次会话内仍生效 */ }
+              }}
+              label="启动时自动检查更新"
+              hint="冷启动 5 秒后静默检查本地更新源;发现新版本提示,失败不出声"
+            />
           </div>
         </div>
       </Show>

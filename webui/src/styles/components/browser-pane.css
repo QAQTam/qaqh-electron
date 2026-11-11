@@ -1,0 +1,78 @@
+/* 内嵌浏览器面板（docs/browser-control-design.md）。
+ * 镀铬件浮层：页面内容本身是主进程原生 WebContentsView（盖在 HTML 之上），
+ * 这里的 .browser-pane-viewport 只是"给原生层让位的占位矩形"。 */
+@layer components {
+  .browser-pane {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 45vw;
+    min-width: 320px;
+    display: flex;
+    flex-direction: column;
+    z-index: 60;
+    pointer-events: none;
+  }
+  .browser-pane-bar {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-strong);
+    border-bottom: none;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    background: var(--surface);
+    box-shadow: var(--shadow-panel);
+  }
+  .browser-pane-agent {
+    flex: none;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--surface);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+  }
+  .browser-pane-url {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: var(--fs-xs);
+  }
+  .browser-pane-url:focus { outline: 1px solid var(--accent); }
+  .browser-pane-close {
+    flex: none;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--muted);
+  }
+  .browser-pane-close:hover { color: var(--text); }
+  .browser-pane-viewport {
+    pointer-events: none;
+    flex: 1;
+    border: 1px solid var(--border-strong);
+    border-top: none;
+    border-radius: 0 0 var(--r-lg) var(--r-lg);
+    background: var(--surface);
+  }
+  .browser-pane-reopen {
+    position: fixed;
+    top: 10px;
+    right: 12px;
+    z-index: 60;
+    padding: 3px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--fs-xs);
+    box-shadow: var(--shadow-panel);
+  }
+  .browser-pane-reopen:hover { color: var(--accent); }
+}

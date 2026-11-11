@@ -18,7 +18,12 @@ export interface Turn {
   key: string;
   /** 会话内全局序号;实时路径开出来的回合先为 null,由权威页补记(也是翻页游标)。 */
   turnIndex: number | null;
-  user: { text: string; contentRef?: string };
+  /**
+   * 回合主输入(用户那句话)。`blockId` 是喂它的那条 timeline input 条目 id——
+   * **同回合再来的任何 input**(看门狗插话、用户 steer/排队)都不许顶掉它,
+   * 只能另立插话条目,见 `InterjectionStep`。
+   */
+  user: { text: string; contentRef?: string; blockId?: string | null };
   /** 按 seq 升序(后端真相)。 */
   steps: Step[];
   /** 最终作答:最后一个文本块;运行中指向当前流式文本块,若其后又开了工具则回退为中间叙述。 */
@@ -28,7 +33,12 @@ export interface Turn {
   status: TurnStatus;
   phase?: import("../api/contract").TurnPhase;
   workStartedAt?: number;
-  error?: { message: string };
+  /**
+   * 失败回合的后端事实。`code` 是现成 `TurnError.code`（如 `context_overflow`、
+   * `handoff_missing`）：只用于把「需要人看一眼的失败」和一般失败分开呈现，
+   * 正文永远直显后端 `message`，前端不编文案、更不静默重试。
+   */
+  error?: { message: string; code?: string };
   usage?: import("../api/contract").UsageInfo | null;
   /** 时间线里是否被用户展开。 */
   expanded: boolean;
@@ -130,7 +140,34 @@ export interface ToolStep {
   effects?: import("../api/contract").ToolEffectInfo[];
 }
 
-export type Step = ThinkingStep | TextStep | ToolStep;
+export type Step = ThinkingStep | TextStep | ToolStep | InterjectionStep;
+
+/**
+ * 一条**插话**输入条目:同回合里除主输入以外的 timeline `input`。
+ *
+ * 后端把看门狗提醒/折叠提示也按普通输入条目落库(契约里 `purpose: "interject"`
+ * + `actor.kind: "api"`),它不是"用户说的话"——按用户气泡渲染会把用户的原话
+ * 顶掉,并让人以为用户自己发了一句系统提示。所以它进 steps 单独成行。
+ */
+export interface InterjectionStep {
+  kind: "interject";
+  /** timeline input 的 `block_id`(稳定键,重放同一条不产生第二行)。 */
+  id: string;
+  seq: Seq;
+  startedAt?: number;
+  /** 插话是一瞬间的事:与 startedAt 同值,只为让共用时长谓词的调用方不必特判。 */
+  endedAt?: number;
+  /** 现成 `InputPurpose` 原值(trigger_turn/queue_only/steer/interject)。 */
+  purpose: string;
+  /** 现成 `ActorKind` 原值(user/api/system/agent/subagent)。 */
+  actorKind: string;
+  /** `ActorRef.id`(看门狗是 `handoff-watchdog`)。 */
+  actorId: string;
+  /** `ActorRef.display_name`,没有就按 kind/id 推标签。 */
+  actorName?: string | null;
+  text: string;
+  contentRef?: string;
+}
 
 /** 用户等待区间(授权/AskUser),挂在其发生时正在运行的回合上。 */
 export interface Wait {
@@ -198,9 +235,10 @@ export function gapHeight(spans: GapSpan[]): number {
  * 时间线/折叠行的工作步骤谓词:作答以外的全部 step。被提升为最终作答的文本块
  * 已在作答区渲染,再进时间线就是同一段文字出现两遍(数据模型里 text 块要么是
  * 答案、要么是中间叙述,见本文件顶部的归约注释);answerStepId 为 null(运行中
- * 未提升/已降级)时全部文本块都按中间叙述算。
+ * 未提升/已降级)时全部文本块都按中间叙述算。插话条目不是工作步骤——它自己成行。
  */
 export function isWorkStep(turn: Turn, step: Step): boolean {
+  if (step.kind === "interject") return false;
   return step.kind !== "text" || step.id !== turn.answerStepId;
 }
 

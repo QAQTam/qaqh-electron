@@ -9,10 +9,12 @@
  */
 import { createMemo, createSignal, Show, type Component } from "solid-js";
 import IconFolder from "~icons/lucide/folder";
+import IconFork from "~icons/lucide/git-fork";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import IconCopy from "~icons/lucide/copy";
 import IconEdit from "~icons/lucide/file-pen-line";
 import { localTitleOf, renameSession, sessionCatalog, type Tab } from "../tabs/store";
+import { parentSessionOf } from "../session/handoff-journal";
 import { STR } from "../lib/strings";
 import { useDismissable } from "../ui/dismissable";
 
@@ -44,6 +46,16 @@ export const SessionHeader: Component<SessionHeaderProps> = (props) => {
   });
 
   const cwd = createMemo(() => session()?.cwd || "");
+
+  /**
+   * fork 交接对话标记。后端没有 `parent` 字段可读(§六),血缘来自本地交接账本。
+   */
+  const forkFrom = createMemo(() => {
+    const parentSeed = parentSessionOf(props.tab.seed);
+    if (parentSeed == null) return null;
+    const parentTitle = sessionCatalog().find((item) => item.session_id === parentSeed)?.title?.trim();
+    return parentTitle ? `${STR.forkBadgeTitle} · ${STR.forkFrom(parentTitle)}` : STR.forkBadgeTitle;
+  });
 
   const startRename = () => {
     setMenuOpen(false);
@@ -131,6 +143,17 @@ export const SessionHeader: Component<SessionHeaderProps> = (props) => {
             onKeyDown={handleKeyDown}
             onBlur={commitRename}
           />
+        </Show>
+
+        {/* fork 交接对话标记:一眼看出这条会话是从别处接过来的(施工单 §六)。
+            后端 `session.create` 没有 parent 字段,血缘只能读本地交接账本。 */}
+        <Show when={forkFrom()}>
+          {(lineage) => (
+            <span class="session-header-fork" title={lineage()}>
+              <IconFork />
+              {STR.forkBadge}
+            </span>
+          )}
         </Show>
 
         <div class="session-header-menu-wrap">

@@ -273,14 +273,16 @@ function ensureTurn(draft: SessionState, turnId: string | null | undefined, inpu
   return turn;
 }
 
-function statusFromOutcome(outcome: TurnOutcome | null | undefined): { status: TurnStatus; error?: { message: string }; usage?: Turn["usage"] } {
+function statusFromOutcome(outcome: TurnOutcome | null | undefined): { status: TurnStatus; error?: { message: string; code?: string }; usage?: Turn["usage"] } {
   if (!outcome) return { status: "running" };
   if (outcome.kind === "interrupted") return { status: "aborted" };
   const { terminal, error, usage } = outcome.data;
   const status: TurnStatus = terminal === "completed" ? "done" : terminal === "cancelled" ? "aborted" : "failed";
+  // 错误正文一律直显后端 message(`context_overflow` / `handoff_missing` 这些
+  // code 只跟着一起露出来给人看):交接类失败需要人看一眼,前端不静默重试。
   return {
     status,
-    ...(error ? { error: { message: error.message || error.code || "回合失败" } } : {}),
+    ...(error ? { error: { message: error.message || error.code || "回合失败", ...(error.code ? { code: error.code } : {}) } } : {}),
     usage,
   };
 }
@@ -393,16 +395,68 @@ function toolStatusFromState(state: ToolCallState): Extract<Step, { kind: "tool"
   }
 }
 
+/** timeline `input` 条目的载荷形状(契约里是匿名内联联合,这里按结构取)。 */
+type InputEntryData = Extract<TimelineEntry, { kind: "input" }>["data"];
+
+/**
+ * 一条 `input` 时间线条目。
+ *
+ * **只有**「用户actor 的第一条 input」是回合主输入,其余一律另立插话条目:
+ * - 上下文看门狗/折叠提示是 `purpose:"interject"` + `actor.kind:"api"`,
+ *   它是系统插话,不是用户说的话;按老路径写进 `turn.user` 会把用户原话顶掉,
+ *   并在转录里看起来像用户自己发了一句系统提示(本仓最容易出问题的接缝);
+ * - 用户自己的 `steer` / `queue_only` 同样是同回合后来的声音,也不能顶掉主输入。
+ *
+ * 判据只看契约里已有的 `actor.kind` / `purpose`;`actor.id` 只用来挑更准的名字。
+ */
+function applyInputEntry(draft: SessionState, data: InputEntryData): void {
+  const actor = data.actor;
+  // 老快照可能不带 actor(缺省 = 用户说的话),不能因为字段缺省就当系统插话。
+  const actorKind = actor?.kind ?? "user";
+  const fromUser = actorKind === "user";
+  const turn = data.turn_id == null
+    ? (fromUser ? ensureTurn(draft, null) : getActiveTurn(draft))
+    : ensureTurn(draft, data.turn_id);
+  if (turn == null) return;
+  const text = contentValueToText(data.content);
+  const ref = contentRefOf(data.content);
+  const isPrimary = fromUser && (turn.user.blockId == null || turn.user.blockId === data.block_id);
+  if (isPrimary) {
+    turn.user = { text, ...(ref != null ? { contentRef: ref } : {}), blockId: data.block_id };
+    turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+    return;
+  }
+  const existing = turn.steps.find((step) => step.id === data.block_id);
+  if (existing != null && existing.kind === "interject") {
+    // 同一 block 重放(权威页校正/事件补发):就地更新,不产生第二行。
+    existing.text = text;
+    if (ref != null) existing.contentRef = ref; else delete existing.contentRef;
+    turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+    return;
+  }
+  if (existing != null) return;
+  turn.steps.push({
+    kind: "interject",
+    id: data.block_id,
+    seq: turn.steps.length,
+    // 不盖时间戳:bootstrap 重放时 `now()` 会把历史回合的工作段时长拉成加载时刻
+    // 与实际开始的差值(实测会把"已工作 3 秒"变成"已工作 2 小时")。顺序事实来自
+    // steps 数组本身(后端 timeline 顺序),插话也不参与工作段计时。
+    purpose: data.purpose,
+    actorKind,
+    actorId: actor?.id ?? "",
+    actorName: actor?.display_name ?? null,
+    text,
+    ...(ref != null ? { contentRef: ref } : {}),
+  });
+  turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+}
+
 function applyTimelineEntry(draft: SessionState, entry: TimelineEntry, tools: Map<string, ToolCallView>): void {
   switch (entry.kind) {
-    case "input": {
-      const data = entry.data;
-      const turn = ensureTurn(draft, data.turn_id);
-      turn.user.text = contentValueToText(data.content);
-      turn.user.contentRef = contentRefOf(data.content);
-      turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+    case "input":
+      applyInputEntry(draft, entry.data);
       break;
-    }
     case "assistant_block":
       upsertAssistantBlock(draft, entry.data.turn_id, entry.data.block_id, entry.data.block_kind, entry.data.content, true);
       if (entry.data.block_kind === "answer" && entry.data.usage) {

@@ -130,6 +130,27 @@ files if startup reports a schema error.
 - LAN mode restarts the daemon via the Electron host, waits for the new discovery/endpoint, then reconnects and restores the active seed. Pairing tokens are requested and assembled in main; token material is returned only inside the one-time QR payload for the user.
 - Native screenshot capture and native window materials are not currently implemented in Electron; the UI hides the screenshot action and falls back to CSS themes. Process-tree memory enumeration is explicitly reported unsupported rather than fabricated.
 
+## Browser control (embedded IAB)
+
+The shell hosts an embedded browser (in-app pane) and exposes it to the daemon's agent
+as an MCP tool surface — `docs/browser-control-design.md` is the design source of truth.
+
+- At bootstrap the main process starts a streamable-HTTP MCP server on `127.0.0.1:<ephemeral>`
+  (per-boot bearer token) and writes the `[mcp.servers.qaqh-browser]` entry into
+  `<data_dir>/config.toml` before the daemon starts; the daemon picks the tools up via its
+  normal MCP wake rescan. Ringing and the daemon are untouched.
+- Tools (wire prefix `mcp__qaqh-browser__`): `browser_navigate`, `browser_snapshot`,
+  `browser_click`, `browser_type`, `browser_press_key`, `browser_scroll`, `browser_screenshot`
+  (PNG lands under `<data_dir>/browser/shots/`, view it with `read_image`), `browser_console`,
+  `browser_close`. The engine is the shell's own Chromium (`WebContentsView`, partition
+  `persist:qaqh-browser`) — no Playwright, no browser download.
+- The agent's first navigation auto-shows the pane so the user can watch; the renderer draws
+  the URL bar and viewport frame (`browser-view://state` events, `browser_view_*` host
+  commands). Hiding the pane parks it offscreen while the agent keeps working; `browser_close`
+  destroys it and frees the memory.
+- Boundaries (MVP): one tab, no iframe-internal interaction, popup requests navigate the same
+  view, screenshot on a minimized window may be blank.
+
 ## User interactions
 
 Ask, tool permission requests and plan reviews share the renderer approval surface but use distinct Ringing commands. The host owns the one-shot challenges, validates decisions and payloads, and explicitly targets the session that issued the challenge. See [interaction semantics and acceptance](docs/interaction-semantics.md) for the decision matrix, trust/autonomous boundaries, recovery policy and remaining GUI checks.

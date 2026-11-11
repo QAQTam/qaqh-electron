@@ -1,17 +1,25 @@
+/**
+ * 启动页:hero + 配置条(工作区 / 服务商模型下拉)+ 建议卡 + **共用 Composer**。
+ *
+ * 阶段B(2026-11-10):手搓的输入区(建议卡之外整段 textarea、附件 chip、工具条、
+ * 发送钮)删掉了,换成会话页那一份 `composer/Composer`。理由不是审美——每键卡顿
+ * 那次修复(`44177da`)要在两个文件各写一遍同样的非受控化,预检卡每加一个 prop
+ * 也要接两处。输入面从此只有一个。
+ *
+ * 卡片读写的是**预检态**(`tabs/store:startupPreflight`),不是任何会话:
+ * 还没有 seed,`session.settings.patch` 无处可发;发送首条消息时经
+ * `preflightCreateArgs` 随 `session.create` 一次性带上。「跟随存档」在这里是
+ * 真值而不是占位——null 就是不发该字段,后端回落 `default_model_selection`
+ * (`session.rs:173-176`),旧的「请先选择服务商和模型」硬闸因此删掉了。
+ */
 import { registry, refreshRegistry } from "../settings/registry";
 import type {
- ModelSelection 
+  ModelSelection 
 } from "../api/contract";
-import { createEffect, createSignal, For, Show, type Component } from "solid-js";
+import { createSignal, For, Show, type Component } from "solid-js";
 import IconFolder from "~icons/lucide/folder";
 import IconChevronDown from "~icons/lucide/chevron-down";
-import IconPaperclip from "~icons/lucide/paperclip";
-import IconCamera from "~icons/lucide/camera";
-import IconPlus from "~icons/lucide/plus";
-import IconArrowUp from "~icons/lucide/arrow-up";
-import IconX from "~icons/lucide/x";
 import IconSparkles from "~icons/lucide/sparkles";
-import IconLoader from "~icons/lucide/loader-circle";
 import IconGitBranch from "~icons/lucide/git-branch";
 import IconBug from "~icons/lucide/bug";
 import IconGauge from "~icons/lucide/gauge";
@@ -20,18 +28,32 @@ import { transport } from "../lib/transport";
 import { STR } from "../lib/strings";
 import { tailName } from "../composer/identity";
 import { WorkspaceMenu } from "../workspace/WorkspaceMenu";
+import { Composer } from "../composer/Composer";
+import { modelMetadata } from "../composer/model-config";
+import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 import {
-  workspaceCatalog,
-  createSession,
-  newSessionCwd,
-  setNewSessionCwd,
-  chooseNewSessionFolder,
-  submitStartupSession,
-  creating,
-  startupAttachments,
-  stageStartupAttachments,
-  removeStartupAttachment,
+  preflightCreateArgs,
+  writePreflightEffort,
+  writePreflightMaxTokens,
+  writePreflightModel,
+  writePreflightToolMode,
+  type StartupPreflight,
+} from "../composer/startup-preflight";
+import {
   clearStartupAttachments,
+  chooseNewSessionFolder,
+  createSession,
+  creating,
+  focusToken,
+  newSessionCwd,
+  removeStartupAttachment,
+  setNewSessionCwd,
+  setStartupPreflight,
+  stageStartupAttachments,
+  startupAttachments,
+  startupPreflight,
+  submitStartupSession,
+  workspaceCatalog,
 } from "../tabs/store";
 import { toast } from "../ui/toast";
 
@@ -67,9 +89,7 @@ export const StartupView: Component<{
   onScreenshot?: () => void;
   onManageProfiles?: () => void;
 }> = (props) => {
-  let textarea: HTMLTextAreaElement | undefined;
   const [draftText, setDraftText] = createSignal("");
-  const [selectedModel, setSelectedModel] = createSignal<ModelSelection | null>(null);
   const [openMenu, setOpenMenu] = createSignal<"workspace" | "profile" | null>(null);
   void refreshRegistry();
 
@@ -80,30 +100,33 @@ export const StartupView: Component<{
     return found?.title || tailName(cwd);
   };
 
-  const modelLabel = (): string => {
-    const selected = selectedModel();
-    if (selected == null) return "选择服务商和模型";
-    const provider = registry()?.providers.find((item) => item.id === selected.provider_id);
-    const model = provider?.models.find((item) => item.id === selected.model_id);
-    return `${provider?.name ?? selected.provider_id} · ${model?.definition.display_name ?? selected.model_id}`;
+  const preflightSelection = (): ModelSelection | null => startupPreflight().modelSelection;
+
+  /** 预检整对的 provider 类别;跟随存档时按存档默认的类别(卡片目录/档位按它算)。 */
+  const preflightKind = (): ProviderKind => {
+    const current = registry();
+    const providerId = preflightSelection()?.provider_id ?? current?.defaultSelection?.provider_id;
+    const provider = current?.providers.find((item) => item.id === providerId);
+    return providerKindOfCredential(provider?.credential);
   };
 
-  /**
-   * 与 Composer 同一套非受控化(2026-11-10 性能修复):打字期间 DOM 即事实源,
-   * 这个 effect 只桥接外部赋值(建议卡「应用」),击键按引用相等快速返回;
-   * 高度自适应交给 CSS `field-sizing: content`,不再每键读 scrollHeight。
-   */
-  let lastLocalDraft: string | null = null;
-  const [draftEmpty, setDraftEmpty] = createSignal(true);
-  createEffect(
-    draftText,
-    (value) => {
-      if (value === lastLocalDraft) return;
-      lastLocalDraft = null;
-      if (textarea != null && textarea.value !== value) textarea.value = value;
-      setDraftEmpty(value.trim() === "");
-    },
-  );
+  /** 下拉钮的字:钉了预检就说预检;跟随存档就说**真正生效的那一对**,不含糊。 */
+  const modelLabel = (): string => {
+    const selected = preflightSelection();
+    const describe = (selection: ModelSelection): string => {
+      const provider = registry()?.providers.find((item) => item.id === selection.provider_id);
+      const model = provider?.models.find((item) => item.id === selection.model_id);
+      return `${provider?.name ?? selection.provider_id} · ${model?.definition.display_name ?? selection.model_id}`;
+    };
+    if (selected != null) return describe(selected);
+    const archiveDefault = registry()?.defaultSelection ?? null;
+    if (archiveDefault == null) return "跟随存档默认（未设置）";
+    return `跟随存档默认 · ${describe(archiveDefault)}`;
+  };
+
+  /** 当前「生效中」的那一对:预检钉住它,或跟随存档时是存档默认(单选点用)。 */
+  const effectiveSelection = (): ModelSelection | null =>
+    preflightSelection() ?? registry()?.defaultSelection ?? null;
 
   const handlePickAttachments = async (): Promise<void> => {
     try {
@@ -113,31 +136,46 @@ export const StartupView: Component<{
     }
   };
 
-  const handleRemoveAttachment = (pathToRemove: string): void => {
-    removeStartupAttachment(pathToRemove);
-  };
-
   const handleApplySuggestion = (prompt: string): void => {
     setDraftText(prompt);
-    textarea?.focus();
+    // Composer 的 textarea 不在本组件的 ref 手里;输入区就在 #composer 里,这是
+    // 夹具与会话页共用的稳定挂点(见 Composer 的 id="composer")。
+    const node = document.querySelector("#composer textarea");
+    if (node instanceof HTMLTextAreaElement) node.focus();
   };
 
-  const handleSubmit = async (): Promise<void> => {
-    const text = draftText().trim();
-    if (!text || creating()) return;
-    const selected = selectedModel();
-    if (selected == null) { toast("请先选择服务商和模型", "err"); return; }
-    const model = registry()?.providers.find((provider) => provider.id === selected.provider_id)
-      ?.models.find((item) => item.id === selected.model_id);
-    if (model == null || !model.definition.enabled) {
-      toast("所选模型不存在或已停用，请重新选择", "err");
-      return;
+  /** 预检写口的统一收口:判合失败要出声(消息本身可照做,见 startup-preflight)。 */
+  const runPreflightWrite = (write: () => StartupPreflight): void => {
+    try {
+      setStartupPreflight(write());
+    } catch (cause) {
+      toast(cause instanceof Error ? cause.message : String(cause), "err");
     }
+  };
+
+  const handleSubmit = async (raw: string): Promise<void> => {
+    const text = raw.trim();
+    if (!text || creating()) return;
+    const preflight = startupPreflight();
+    const selected = preflight.modelSelection;
+    if (selected != null) {
+      const model = registry()?.providers.find((provider) => provider.id === selected.provider_id)
+        ?.models.find((item) => item.id === selected.model_id);
+      if (model == null || !model.definition.enabled) {
+        toast("预检的模型不存在或已停用，请在输入区的「模型」行重新选择", "err");
+        return;
+      }
+    }
+    // 未选 = 不发 model_selection,后端回落存档默认;存档默认也没有才由创建失败
+    // 报「请先在电脑端设置默认服务商和模型」——那才是该出声的时刻。
+    const args = preflightCreateArgs(preflight);
     const ok = await submitStartupSession({
       cwd: newSessionCwd(),
-      modelSelection: selected,
+      modelSelection: args.modelSelection,
+      toolMode: args.toolMode,
+      customTools: args.customTools,
       text,
-      attachmentPaths: startupAttachments(),
+      attachments: startupAttachments(),
     });
     if (!ok) return; // 失败保留草稿,用户改完重试
     setDraftText("");
@@ -189,6 +227,10 @@ export const StartupView: Component<{
           </Show>
         </div>
 
+        {/* 服务商与模型的目录菜单。阶段C 会把目录并进强度卡的模型行、连这颗钮
+            一起摘掉;在此之前它是预检态的另一个写口,与卡片共用同一份信号,
+            两处显示天然同步。换模型整对清叶子(跨模型沿用旧档位会被 resolver
+            400 拒),与会话页同规。 */}
         <div class="composer-control-wrap composer-profile-wrap">
           <button type="button" class="composer-tool-button composer-profile-button"
             aria-expanded={openMenu() === "profile" ? "true" : "false"}
@@ -202,12 +244,27 @@ export const StartupView: Component<{
                 <small>{provider.name}</small>
                 <For each={provider.models.filter((model) => model.definition.enabled)}>{(model) =>
                   <button type="button" role="menuitemradio"
-                    aria-checked={selectedModel()?.provider_id === provider.id && selectedModel()?.model_id === model.id ? "true" : "false"}
-                    onClick={() => { setSelectedModel({ provider_id: provider.id, model_id: model.id, options: {} }); setOpenMenu(null); }}>
+                    aria-checked={effectiveSelection()?.provider_id === provider.id && effectiveSelection()?.model_id === model.id ? "true" : "false"}
+                    onClick={() => {
+                      runPreflightWrite(() => ({
+                        ...startupPreflight(),
+                        modelSelection: { provider_id: provider.id, model_id: model.id, options: {} },
+                      }));
+                      setOpenMenu(null);
+                    }}>
                     {model.definition.display_name || model.id}
                   </button>
                 }</For>
               </>}</For>
+              <Show when={preflightSelection() != null}>
+                <button type="button" title="清除预检，回到「跟随存档默认」(发送时省略 model_selection)"
+                  onClick={() => {
+                    runPreflightWrite(() => ({ ...startupPreflight(), modelSelection: null }));
+                    setOpenMenu(null);
+                  }}>
+                  跟随存档默认
+                </button>
+              </Show>
               <button type="button" onClick={() => { setOpenMenu(null); props.onManageProfiles?.(); }}>管理服务商和模型…</button>
             </div>
           </Show>
@@ -238,86 +295,44 @@ export const StartupView: Component<{
         </For>
       </div>
 
-      {/* 输入与发送卡片 */}
+      {/* 输入与发送:会话页同一份 Composer。busy 走 `sending`(建会话转 loader),
+          不走 `running`——会话还不存在,没有回合可停;`blocked` 恒 null 因为
+          启动页没有离线/待授权那面。 */}
       <div class="startup-composer-box">
-        <div id="composer">
-          <div class="composer-surface">
-            <Show when={startupAttachments().length > 0}>
-              <div class="composer-attachments" aria-label="待发送附件">
-                <For each={startupAttachments()}>
-                  {(filePath) => (
-                    <span class="composer-file-chip ready" title={filePath}>
-                      <IconPaperclip />
-                      <span>{tailName(filePath)}</span>
-                      <button
-                        type="button"
-                        aria-label={`移除 ${tailName(filePath)}`}
-                        onClick={() => handleRemoveAttachment(filePath)}
-                      >
-                        <IconX />
-                      </button>
-                    </span>
-                  )}
-                </For>
-              </div>
-            </Show>
-            <textarea
-              ref={textarea}
-              rows={2}
-              placeholder="输入你的任务需求，或直接提问…"
-              onInput={(e) => {
-                const value = e.currentTarget.value;
-                lastLocalDraft = value;
-                setDraftEmpty(value.trim() === "");
-                setDraftText(value);
-              }}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" || e.shiftKey) return;
-                if (e.isComposing || e.keyCode === 229) return;
-                e.preventDefault();
-                void handleSubmit();
-              }}
-            />
-            <div class="composer-toolbar">
-              <div class="composer-controls">
-                <button
-                  type="button"
-                  class="composer-tool-button composer-add-file"
-                  aria-label={STR.attachmentAdd}
-                  title={STR.attachmentAddTitle}
-                  onClick={() => void handlePickAttachments()}
-                >
-                  <IconPlus />
-                </button>
-                {/* 截图与「添加附件」并排:同一份附件状态机,只是来源换成系统截图。 */}
-                <Show when={props.onScreenshot != null}>
-                  <button
-                    type="button"
-                    class="composer-tool-button composer-shot"
-                    aria-label={STR.shotAdd}
-                    title={STR.shotAddTitle}
-                    onClick={() => props.onScreenshot?.()}
-                  >
-                    <IconCamera />
-                  </button>
-                </Show>
-              </div>
-              <div class="composer-submit-area">
-                <button
-                  type="button"
-                  class="icon-btn send button-primary"
-                  disabled={creating() || draftEmpty()}
-                  onClick={() => void handleSubmit()}
-                  title="发送并创建新会话"
-                >
-                  <Show when={creating()} fallback={<IconArrowUp />}>
-                    <IconLoader class="icon-spin" />
-                  </Show>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <Composer
+          draft={draftText}
+          onDraft={setDraftText}
+          blocked={() => null}
+          running={() => false}
+          sending={creating}
+          onSend={(text) => void handleSubmit(text)}
+          onStop={() => { /* running 恒 false:停止分支不会渲染,这个口不会被敲。 */ }}
+          focusToken={focusToken()}
+          placeholder="输入你的任务需求，或直接提问…"
+          onPickAttachments={() => void handlePickAttachments()}
+          attachments={startupAttachments}
+          onRemoveAttachment={(id) => removeStartupAttachment(id)}
+          onScreenshot={props.onScreenshot}
+          modelView={() => preflightSelection()?.model_id ?? null}
+          modelOverridden={() => preflightSelection() != null}
+          onModel={(model) => { runPreflightWrite(() => writePreflightModel(startupPreflight(), registry(), model)); }}
+          providerKind={preflightKind}
+          effortView={() => {
+            const selected = preflightSelection();
+            if (selected == null) return null; // 卡片退回全局生效值:那正是后端此刻会解析用的值
+            return selected.options.reasoning_effort
+              ?? modelMetadata(preflightKind(), selected.model_id)?.defaultEffort ?? null;
+          }}
+          effortOverridden={() => preflightSelection()?.options.reasoning_effort != null}
+          onEffort={(effort) => { runPreflightWrite(() => writePreflightEffort(startupPreflight(), registry(), effort)); }}
+          maxTokensView={() => preflightSelection()?.options.max_output_tokens ?? null}
+          onMaxTokens={(maxTokens) => { runPreflightWrite(() => writePreflightMaxTokens(startupPreflight(), registry(), maxTokens)); }}
+          toolModeView={() => {
+            const preflight = startupPreflight();
+            return { mode: preflight.toolMode === "" ? "standard" : preflight.toolMode, customTools: preflight.customTools };
+          }}
+          onToolMode={(mode, customTools) => { runPreflightWrite(() => writePreflightToolMode(startupPreflight(), mode, customTools)); }}
+        />
         {/* 快捷键提示:占位符里那句括注读起来像残句,挪到输入框下面用键帽摆出来。 */}
         <div class="startup-hints">
           <span>

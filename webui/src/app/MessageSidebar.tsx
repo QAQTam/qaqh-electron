@@ -7,6 +7,7 @@ import IconPlus from "~icons/lucide/plus";
 import { STR } from "../lib/strings";
 import type { ApprovalView } from "../lib/transport";
 import { sessionCatalog, workspaceCatalog, type SidebarSession, type SidebarWorkspace } from "../tabs/store";
+import { parentSessionOf } from "../session/handoff-journal";
 import { Collapse } from "../ui/Collapse";
 import { SessionPendingCard } from "./SessionPendingCard";
 import { createSelectionPill } from "./selection-pill";
@@ -33,6 +34,21 @@ function readStoredCollapsed(): Set<string> {
 
 const sessionName = (session: SidebarSession): string =>
   session.title?.trim() || `会话 ${session.session_id.slice(0, 8)}`;
+
+/**
+ * fork 血缘徽标文案;不是 fork 对话返回 null。
+ *
+ * `session.create` 没有 `parent` 字段(加它 = 改命令判别 = 契约破坏,LTS 禁),
+ * 所以 B 的后端 `parent_session_id` 恒为 NULL、`SessionListEntry` 也不导出它。
+ * 「【此对话为 fork 交接对话】」只能由本地交接账本(child→parent 映射)现算;
+ * v3.1 换锁补上 `SessionCreate.parent_session_id` 后这里改读后端字段。
+ */
+function forkLineage(seed: string, catalog: SidebarSession[]): string | null {
+  const parentSeed = parentSessionOf(seed);
+  if (parentSeed == null) return null;
+  const parentTitle = catalog.find((item) => item.session_id === parentSeed)?.title?.trim();
+  return parentTitle ? `${STR.forkBadgeTitle} · ${STR.forkFrom(parentTitle)}` : STR.forkBadgeTitle;
+}
 
 export const MessageSidebar: Component<{
   onSelect: (seed: string) => void;
@@ -272,6 +288,10 @@ export const MessageSidebar: Component<{
                             <span class="message-session-title">{sessionName(session())}</span>
                             <Show when={session().tool_mode != null && session().tool_mode !== "standard"}>
                               <span class="message-session-toolmode" title={`工具模式：${session().tool_mode}`}>{session().tool_mode}</span>
+                            </Show>
+                            {/* fork 交接对话徽标(本地账本现算,理由见 forkLineage)。 */}
+                            <Show when={forkLineage(session().session_id, allSessions())}>
+                              {(lineage) => <span class="message-session-fork" title={lineage()}>{STR.forkBadge}</span>}
                             </Show>
                             <Show when={isWorking()}><i class="message-session-running" aria-label={STR.running} /></Show>
                             {/* 常驻挂载,不用 <Show> 包:状态一离开待人,父级若把组件

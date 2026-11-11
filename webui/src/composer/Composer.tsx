@@ -11,6 +11,7 @@ import { registry } from "../settings/registry";
 import { createEffect, createSignal, For, Show, type Component } from "solid-js";
 import autoAnimate from "@formkit/auto-animate";
 import IconArrowUp from "~icons/lucide/arrow-up";
+import IconLoader from "~icons/lucide/loader-circle";
 import IconSquare from "~icons/lucide/square";
 import IconPlus from "~icons/lucide/plus";
 import IconPaperclip from "~icons/lucide/paperclip";
@@ -52,6 +53,12 @@ export const Composer: Component<{
   onDraft: (value: string) => void;
   blocked: () => SendBlockReason;
   running: () => boolean;
+  /**
+   * 发送在途的加载态(启动页 `creating` 用):发送钮转 loader 并禁用重复提交。
+   * **不要**拿 `running` 顶替——那条路径会把按钮切成「停止」,而会话还没建出来,
+   * 根本没有回合可停;这里要的只是「这一发还在路上,别连点」。
+   */
+  sending?: () => boolean;
   onSend: (text: string) => void | Promise<void>;
   /** 失败必须能冒泡:成功后 `stopping` 只由 `running()` 翻转复位。 */
   onStop: () => void | Promise<void>;
@@ -206,6 +213,7 @@ export const Composer: Component<{
 
   const submit = async (): Promise<void> => {
     if (submitting()) return;
+    if (props.sending?.()) return;
     if (!props.draft().trim()) return;
     if (props.blocked() != null) return;
     if (uploading()) return;
@@ -372,12 +380,15 @@ export const Composer: Component<{
                 <button
                   type="button"
                   class="icon-btn send button-primary"
-                  aria-label={props.blocked() == null ? STR.send : `${STR.send}，${blockTitle()}`}
-                  title={uploading() ? STR.attachmentUploading : blockTitle()}
-                  disabled={submitting() || draftEmpty() || props.blocked() != null || uploading()}
+                  aria-label={props.sending?.() ? "正在发送" : props.blocked() == null ? STR.send : `${STR.send}，${blockTitle()}`}
+                  title={props.sending?.() ? "正在发送…" : uploading() ? STR.attachmentUploading : blockTitle()}
+                  disabled={submitting() || props.sending?.() === true || draftEmpty() || props.blocked() != null || uploading()}
                   onClick={() => void submit()}
                 >
-                  <IconArrowUp />
+                  {/* 发送在途(启动页建会话)转 loader:会话还没存在,不走 running→「停止」那条路。 */}
+                  <Show when={props.sending?.()} fallback={<IconArrowUp />}>
+                    <IconLoader class="icon-spin" />
+                  </Show>
                 </button>
               }
             >

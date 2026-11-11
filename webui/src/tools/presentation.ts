@@ -1,11 +1,16 @@
 /** 展示分类仅决定信息层级，不改写入参，也不从请求推断执行结果。 */
 import type { ToolStep } from "../session/types";
 import { parseJsonish } from "../session/reducer";
+import { HANDOFF_FIELD_SUMMARY, HANDOFF_TOOL } from "../session/handoff";
 import { parseUnifiedDiff } from "../diff/parse";
 
-export type ToolPresentation = "shell" | "read" | "edit" | "search" | "todo" | "skill" | "other";
+export type ToolPresentation = "shell" | "read" | "edit" | "search" | "todo" | "skill" | "handoff" | "other";
 
 export function toolPresentation(step: Pick<ToolStep, "name">): ToolPresentation {
+  // `handoff` 是控制面工具:后端不受 allowlist 约束(minimal/custom 档也照样声明),
+  // 所以任何 tool_mode 下它都可能出现。图标/标签按**工具名**判定,绝不再套一层
+  // 白名单——那会让"模型真会调的工具"少个图标。
+  if (step.name === HANDOFF_TOOL) return "handoff";
   if (["todo", "todo_write", "todo_update", "todo_list", "todo_create"].includes(step.name)) return "todo";
   if (["skills", "skill", "skills_list", "skill_list", "skill_read", "skill_resource", "skill_activate", "skill_validate"].includes(step.name)) return "skill";
   if (step.name === "exec_command") return "shell";
@@ -92,4 +97,15 @@ export function shellContent(step: Pick<ToolStep, "status" | "output" | "progres
     stderr: final ? step.output?.stderr ?? "" : step.progressStderrTail ?? "",
     truncated: final ? step.output?.truncated === true : step.progressTruncated === true,
   };
+}
+
+/**
+ * 交接行的摘要 = 模型亲手写的 `work_summary`(折叠行本来就该一行的东西)。
+ *
+ * 拿 `primaryArg` 会把整段 `handoff_doc` 的第一个字符串当摘要——那是一篇文档。
+ */
+export function handoffSummary(step: Pick<ToolStep, "argsJson">): string {
+  const args = parseJsonish(step.argsJson);
+  const value = args?.[HANDOFF_FIELD_SUMMARY];
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }

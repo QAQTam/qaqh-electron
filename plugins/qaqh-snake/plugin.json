@@ -1,0 +1,8 @@
+{
+  "id": "qaqh-snake",
+  "name": "贪吃蛇",
+  "version": "0.1.0",
+  "entry": "dist/entry.js",
+  "slot": "overlay",
+  "capabilities": ["gamepad-raw"]
+}

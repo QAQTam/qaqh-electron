@@ -128,7 +128,7 @@ async function clickTodo() {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
 }
 
-async function capture(name, { view, theme, material, width, height, section, closed = false, scale = 1, reduced = false, typography = false, pending = false, contextMenu = false, shellMenu = false, sidebarDrawer = false, railDrawer = false, sidebarResize = false, workspaceCreate = false, ready = null } ) {
+async function capture(name, { view, theme, material, width, height, section, closed = false, scale = 1, reduced = false, typography = false, pending = false, contextMenu = false, shellMenu = false, sidebarDrawer = false, railDrawer = false, sidebarResize = false, workspaceCreate = false, startupComposer = false, ready = null } ) {
   await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
   await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: reduced ? "reduce" : "no-preference" }] });
   const url = `${BASE}?view=${view}&theme=${theme}&material=${material}${pending ? "&pending=1" : ""}${sidebarDrawer ? "&sidebarDrawer=1" : ""}${railDrawer ? "&railDrawer=1" : ""}`;
@@ -201,6 +201,64 @@ async function capture(name, { view, theme, material, width, height, section, cl
       throw new Error(`${name}: 悬停改变了布局(行宽 ${state.rowWidth} → ${revealed.rowWidth})`);
     }
     console.log(`${name}: workspace create ${JSON.stringify({ withCreate: state.withCreate, revealed })}`);
+  }
+  // 启动页 = 会话页那一份 Composer(阶段B)。四条硬事实:
+  // ① textarea/附件/强度/工具模式全在 `.startup-composer-box #composer .composer-surface`
+  //    里——渲染的是共用组件,不是又一份手搓复制;
+  // ② 启动页不许出现「停止」钮(running 恒 false,busy 由发送钮的 loader 表达);
+  // ③ 配置条恰好两颗粒(工作区 + 服务商模型),预检附件以 chip 呈现;
+  // ④ 点开强度卡:模型行显示**存档默认的生效值**,轨道画出夹具声明的三档。
+  if (startupComposer) {
+    const state = await cdp.evaluate(`(() => {
+      const surface = document.querySelector('.startup-composer-box #composer .composer-surface');
+      const center = (el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; };
+      const pick = (sel) => (surface == null ? null : surface.querySelector(sel));
+      const effort = pick('.effort-trigger');
+      return {
+        surface: surface != null,
+        textarea: pick('textarea') != null,
+        attach: pick('.composer-add-file') != null,
+        effort: effort != null,
+        toolmode: pick('.toolmode-trigger') != null,
+        stop: pick('button.stop') != null,
+        sendDisabled: pick('button.send') == null ? null : pick('button.send').disabled,
+        chipText: [...document.querySelectorAll('.startup-composer-box .composer-file-chip')].map((el) => el.textContent ?? ''),
+        configButtons: document.querySelectorAll('.startup-config-bar .composer-tool-button').length,
+        effortCenter: effort == null ? null : center(effort),
+      };
+    })()`);
+    if (!state.surface || !state.textarea || !state.attach || !state.effort || !state.toolmode) {
+      throw new Error(`${name}: 启动页输入区不是那份共用 composer ${JSON.stringify(state)}`);
+    }
+    if (state.stop) throw new Error(`${name}: 启动页不该有「停止」钮——会话还没存在,没有回合可停`);
+    if (state.sendDisabled !== true) throw new Error(`${name}: 空草稿时发送钮必须禁用,实测 ${state.sendDisabled}`);
+    if (!state.chipText.some((text) => text.includes('visual-fixture.md'))) {
+      throw new Error(`${name}: 暂存附件没有出现在启动页 chip 列里 ${JSON.stringify(state.chipText)}`);
+    }
+    if (state.configButtons !== 2) throw new Error(`${name}: 配置条应恰好两颗粒(工作区+服务商模型),实测 ${state.configButtons}`);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...state.effortCenter });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...state.effortCenter });
+    // Solid 的 Show 是同步落 DOM 的,但真实点击到重渲染之间仍隔着事件循环;
+    // 和 workspaceCreate 那步同理——轮询到出现为止,固定 sleep 不是同步点。
+    const opened = await cdp.evaluate(`new Promise((resolve) => {
+      const read = () => {
+        const card = document.querySelector('.startup-composer-box .effort-card');
+        if (card == null) return null;
+        return {
+          model: card.querySelector('.effort-card__model')?.textContent ?? '',
+          track: card.querySelector('.effort-track') != null,
+        };
+      };
+      let attempt = 0;
+      const step = () => { const value = read(); if (value != null || attempt >= 40) resolve(value); else { attempt += 1; setTimeout(step, 50); } };
+      step();
+    })`);
+    if (opened == null) throw new Error(`${name}: 强度 chip 点了没弹出卡片`);
+    if (!opened.model.includes('qaqh-visual-preview')) {
+      throw new Error(`${name}: 模型行应显示存档默认的生效模型,实测「${opened.model}」`);
+    }
+    if (!opened.track) throw new Error(`${name}: 强度卡没画出档位轨道(夹具模型声明了 low/medium/high)`);
+    console.log(`${name}: startup composer ok ${JSON.stringify(opened)}`);
   }
   // 侧栏拖拽调宽(用户侧需求):真实鼠标拖拽 → 宽度生效;拖到阈值下 → 等效汉堡收回。
   if (sidebarResize) {
@@ -520,6 +578,9 @@ try {
     // `typography` 那步是给 `#messages` 注入排期基准内容,顺带让后面的消息列布局
     // 断言有主体可量——不然它们会在 null 上炸成 TypeError。
     ["sidebar-workspace-create", { view: "messages", theme: "light", material: "solid", width: 1280, height: 900, workspaceCreate: true, typography: true, ready: ".message-workspace-row" }],
+    // 阶段B:启动页输入区换成共用 Composer。就绪门槛是那份表面自己;强度卡
+    // 在断言里被真点开来,截图直接拍到展开态(评审不用信 DOM 断言的话)。
+    ["startup-composer-shared", { view: "startup", theme: "light", material: "solid", width: 1280, height: 900, startupComposer: true, ready: ".startup-composer-box #composer .composer-surface" }],
     // BUG-2026-10-28 回归:右键菜单必须在程序化滚动(流式跟随)下存活。
     ["context-menu-stream-scroll", { view: "messages", theme: "dark", material: "solid", width: 1280, height: 900, contextMenu: true }],
     // 阶段1(spec §5.5):壳层 ⋯ 菜单完整性。

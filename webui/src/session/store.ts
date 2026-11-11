@@ -13,6 +13,7 @@ import { onConfigChanged } from "../lib/config-events";
 import { applySessionBootstrap, applySessionEvent, contentRefsInPayload, emptySession, forceSealTurn, pendingContentRefs, resolveContentRef } from "./reducer";
 import { ContentLoader } from "./content-loader";
 import { evictForWindow, fillGapHeights } from "./pagination";
+import { HANDOFF_TOOL, handoffFactsOfTurn, type HandoffFact } from "./handoff";
 import type { SessionState, Wait } from "./types";
 import { normalizeActivity, type SessionActivity } from "./projection";
 import type {
@@ -55,8 +56,8 @@ export interface PendingAttachment {
   error: string | null;
 }
 
-/** 路径末段;上传前的占位名(上传完成后用宿主回的真名)。 */
-function attachmentName(path: string): string {
+/** 路径末段;上传前的占位名(上传完成后用宿主回的真名)。启动页暂存附件同名共用。 */
+export function attachmentName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
@@ -195,6 +196,23 @@ export class SessionStore {
   onSessionTitleChanged: ((title: string) => void) | null = null;
   /** 标签层注入的回调:`MetaDelta::Deleted` 是权威终态,目录项与标签一起收掉。 */
   onSessionDeleted: (() => void) | null = null;
+  /**
+   * 标签层注入的回调:本会话检测到一份交接事实。
+   *
+   * 两条路都发:**实时封箱**(`tool_finished` / 引用正文回填后)与**断线窗口结算**
+   * (快照落地时回合还在跑的封箱,见 `settleHandoffFacts`——重开/重连/resync 后
+   * declare 只存在于快照里,不结算就会「模型调用完卡在交接卡」谁也不 fork)。
+   * **已终态回合的历史交接不发**——否则每次重开标签/切回会话都会照着历史再
+   * fork 一条会话。历史里的交接靠回合尾部那条「继续这条交接 →」入口(数据同样
+   * 来自 timeline,离线可重建)。
+   */
+  onHandoffDetected: ((fact: HandoffFact) => void) | null = null;
+  /** 已经上报过的交接 key(`from_session_id|turn_id`),防同一事实重复触发。 */
+  private reportedHandoffKeys = new Set<string>();
+  /** 本会话**事件流里**声明过、或快照里仍在跑的 handoff 调用 id(有 fork 资格)。 */
+  private liveHandoffCallIds = new Set<string>();
+  /** 快照里回合已终态的 handoff 调用 id:历史封箱,后续旧帧重放(B01 水位缺口)不得翻案。 */
+  private historicalHandoffCallIds = new Set<string>();
 
   /** 宿主事件反订阅。 */
   private hostUnlisten: (() => void) | null = null;
@@ -206,7 +224,12 @@ export class SessionStore {
   private activationGeneration = 0;
   private contentLoader = new ContentLoader(
     (ref, signal) => transport.readContentText(ref, signal),
-    (ref, text, resolved) => this.mutate((draft) => resolveContentRef(draft, ref, text, resolved)),
+    (ref, text, resolved) => {
+      this.mutate((draft) => resolveContentRef(draft, ref, text, resolved));
+      // 交接结果正文很长,后端可能只给引用:引用回填后才读得出 `handed_off:true`,
+      // 所以这条路径也要补看一次(只有声明过 handoff 的会话会真扫,见方法注释)。
+      this.reportHandoffFacts();
+    },
     (ref, status) => this.contentStatus[1]((current) => {
       const next = { ...current };
       if (status === "idle") delete next[ref]; else next[ref] = status;
@@ -487,6 +510,7 @@ export class SessionStore {
     this.contentStatus[1]({});
     const refs = pendingContentRefsFromSnapshot(bootstrap.state);
     this.mutate((draft) => { applySessionBootstrap(draft, bootstrap); });
+    this.settleHandoffFacts();
     this.contentLoader.retryFailed();
     this.hydrateContent(refs);
     this.loadError[1](false);
@@ -497,6 +521,62 @@ export class SessionStore {
   }
 
   // ── Flattened SessionEventFrame reducer ────────────────────────────────────
+
+  /**
+   * 快照落地后的交接结算:决定哪些封箱算「刚刚发生的」,哪些算历史。
+   *
+   * 断线/重开/resync 窗口里落地的封箱(快照里回合还在跑)与实时封箱**同等对待**:
+   * 调用 id 进 `liveHandoffCallIds`,事实一读得出就上报 fork。实时闸门原本要求
+   * declare 走过事件流,快照里的 declare 永远进不了集合——结果是「模型调用完
+   * 卡在交接卡」,谁也不 fork,连 toast 都没有。
+   * 回合已终态的是历史:id 进 `historicalHandoffCallIds`,已读出的事实按已上报
+   * 记账——每次切回标签/重开客户端都不会照着历史再开一条会话(施工单 §五边界
+   * 不变),也挡住水位缺口(后端 B01)下旧帧重发把陈年交接再 fork 一遍。
+   */
+  private settleHandoffFacts(): void {
+    for (const turn of Object.values(this.stateGet.turns)) {
+      const settled = turn.status !== "running";
+      for (const step of turn.steps) {
+        if (step.kind !== "tool" || step.name !== HANDOFF_TOOL) continue;
+        (settled ? this.historicalHandoffCallIds : this.liveHandoffCallIds).add(step.id);
+      }
+      if (!settled) continue;
+      for (const fact of handoffFactsOfTurn(turn, this.seed)) this.reportedHandoffKeys.add(fact.key);
+    }
+    this.reportHandoffFacts();
+  }
+
+  /**
+   * 封箱检测:扫本会话里有 fork 资格的 handoff 调用,把新读得出的交接事实交给
+   * 标签层去 fork(§一·2「立刻 fork」)。
+   *
+   * 边界都是刻意的:
+   * - fork 资格来自 `liveHandoffCallIds`(实时 declare / 快照里仍在跑,见
+   *   `settleHandoffFacts`);`historicalHandoffCallIds` 里的历史封箱只记账不 fork。
+   * - 判据是 `handed_off:true`(见 `./handoff`):`tool_name` 只用来把扫描面收窄到
+   *   这一个调用上,不用 declare 当"该 fork 了"的信号——`handoff_invalid_args` 之后
+   *   模型可以改参数重试,按 declare fork 会把没写成的文档投进 B。
+   * - 每个 key 只上报一次;上报后把调用 id 摘出扫描集,引用回填路径不再重复扫。
+   */
+  private reportHandoffFacts(): void {
+    const notify = this.onHandoffDetected;
+    if (notify == null) return;
+    if (this.liveHandoffCallIds.size === 0 && this.historicalHandoffCallIds.size === 0) return;
+    for (const turn of Object.values(this.stateGet.turns)) {
+      for (const fact of handoffFactsOfTurn(turn, this.seed)) {
+        // 历史封箱:记账后跳过。卡片照常渲染(它不经过这里),但绝不自动 fork。
+        if (this.historicalHandoffCallIds.has(fact.callId)) {
+          this.reportedHandoffKeys.add(fact.key);
+          continue;
+        }
+        // `delete` 的返回值就是这次扫描的收尾:上报过一次的调用不再重扫。
+        if (!this.liveHandoffCallIds.delete(fact.callId)) continue;
+        if (this.reportedHandoffKeys.has(fact.key)) continue;
+        this.reportedHandoffKeys.add(fact.key);
+        notify(fact);
+      }
+    }
+  }
 
   private applyProjection(event: SessionEventFrame): void {
     const refs = contentRefsInPayload(event);
@@ -549,6 +629,16 @@ export class SessionStore {
         void this.refreshApprovals();
         void this.refreshTodos();
         this.onSessionsChanged?.();
+        // 封箱结果(`handed_off:true`)到达 = 立刻 fork(§一·2)。只有活动中的 store
+        // 收得到这条事件;断线窗口里落地的封箱由 `settleHandoffFacts` 在快照落地时
+        // 结算,已终态的历史交接走回合尾部那条人工入口。
+        this.reportHandoffFacts();
+        break;
+      case "tool_declared":
+      case "tool_arguments_delta":
+        // 声明只用来把后续扫描收窄到这一个调用上(交接工具不受 allowlist 约束,
+        // minimal/custom 档也照样可能出现)。
+        if (event.tool_name === HANDOFF_TOOL) this.liveHandoffCallIds.add(event.call_id);
         break;
       case "exec_session_started":
       case "exec_session_state_changed":
@@ -568,7 +658,6 @@ export class SessionStore {
         if (event.title) this.onSessionTitleChanged?.(event.title);
         this.onSessionsChanged?.();
         break;
-      case "tool_arguments_delta":
       case "tool_state_changed":
       case "exec_session_output_delta":
       case "tool_output_delta":

@@ -1,13 +1,18 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, powerSaveBlocker, type IpcMainInvokeEvent } from "electron";
 import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { readDiscovery } from "./daemon.js";
+import { randomBytes } from "node:crypto";
+import { readDiscovery, getDataDir } from "./daemon.js";
 import { pathToFileURL } from "node:url";
 import { DaemonManager } from "./daemon.js";
 import { RingingClient } from "./ringing-client.js";
 import { ChallengeManager } from "./challenges.js";
 import { registerIpcHandlers, registerQuitIpcHandler, isTrustedRenderer } from "./ipc-handlers.js";
 import { applyStagedAndQuit, checkForUpdate, ensureInstallRootAdopted, stageUpdate } from "./updater.js";
+import { createBrowserEngine } from "./browser-host/engine.js";
+import { startBrowserMcpServer } from "./browser-host/mcp-server.js";
+import { wireBrowserMcpConfig } from "./browser-host/config-wiring.js";
+import { pluginsRoot, startPluginRegistry } from "./plugins.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
 protocol.registerSchemesAsPrivileged([
@@ -86,6 +91,14 @@ let closeToTray = true;
 const daemonMgr = new DaemonManager();
 const challenges = new ChallengeManager();
 let connecting: Promise<RingingClient> | null = null;
+/** 浏览器引擎（bootstrap 期创建；null = 本次启动初始化失败，工具面不可用）。 */
+let browserEngine: ReturnType<typeof createBrowserEngine> | null = null;
+
+/** 面板状态推给 renderer（browser-view://state 事件，preload 白名单内）。 */
+function sendBrowserPaneState(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || browserEngine == null) return;
+  mainWindow.webContents.send("qaqh:event:browser-view://state", browserEngine.control.state());
+}
 
 function showMainWindow(): void {
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createMainWindow();
@@ -346,9 +359,39 @@ async function bootstrapApp(): Promise<void> {
   // 0. 注册 app:// 协议处理器，使 /assets 等 SPA 绝对路径无缝映射到本地文件
   registerAppProtocol();
 
+  // 0.5 浏览器控制（docs/browser-control-design.md）：先起 MCP server 并把端点
+  // 写进 config.toml，再拉起/复用 daemon——daemon 唤醒重扫即可拾取工具面。
+  // 失败只降级浏览器工具能力，不阻塞壳启动。
+  let browserCleanup: (() => Promise<void>) | null = null;
+  try {
+    const token = randomBytes(24).toString("base64url");
+    browserEngine = createBrowserEngine({ getMainWindow: () => mainWindow, notifyPaneState: sendBrowserPaneState });
+    const server = await startBrowserMcpServer({ token, handlers: browserEngine.handlers });
+    const wired = wireBrowserMcpConfig(
+      join(getDataDir(), "config.toml"),
+      `http://127.0.0.1:${server.port}/mcp`,
+      token,
+    );
+    console.log(`[browser] MCP server listening on 127.0.0.1:${server.port}${wired ? "; config.toml updated" : "; config unchanged"}`);
+    browserCleanup = async () => {
+      await server.close();
+      engine_destroy();
+    };
+    app.on("will-quit", () => {
+      void browserCleanup?.();
+    });
+  } catch (error) {
+    console.error("[browser] 浏览器控制初始化失败（本次启动不提供 browser 工具）：", error);
+  }
+
+  function engine_destroy(): void {
+    browserEngine?.destroy();
+    browserEngine = null;
+  }
+
   // 1. Start/reuse daemon and establish the SDK client before the renderer loads,
   // so every IPC handler exists before frontend boot invokes anything.
-  registerIpcHandlers(ensureClient, daemonMgr, challenges);
+  registerIpcHandlers(ensureClient, daemonMgr, challenges, browserEngine?.control ?? null);
   try {
     await ensureClient();
   } catch (err) {
@@ -357,6 +400,8 @@ async function bootstrapApp(): Promise<void> {
 
   // 2. Create renderer after IPC registration.
   createMainWindow();
+  // 2.5 插件注册表：stat-poll 插件目录，graph 帧推渲染层（热更基石，对齐 dsh client-hmr 可移植件）。
+  startPluginRegistry(() => mainWindow);
   // 3. Install tray.
   setupTray();
 }
@@ -386,10 +431,12 @@ function registerAppProtocol(): void {
         pathname = "/index.html";
       }
 
-      const rendererDir = resolveRendererDir();
+      // /plugins/** 由插件根目录提供（app:// 同源，CSP 'self' 覆盖），其余走 renderer。
+      const isPluginAsset = pathname.startsWith("/plugins/");
+      const baseDir = isPluginAsset ? pluginsRoot() : resolveRendererDir();
       const cleanPath = pathname.replace(/^\/+/, "");
-      const filePath = resolve(rendererDir, cleanPath);
-      const relativePath = relative(rendererDir, filePath);
+      const filePath = resolve(baseDir, cleanPath);
+      const relativePath = relative(baseDir, filePath);
 
       if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath) || !existsSync(filePath)) {
         console.warn(`[protocol] 404: ${pathname} (resolved: ${filePath})`);

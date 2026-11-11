@@ -25,6 +25,11 @@ export type HostCommand =
   | "upload_attachment"
   | "open_external"
   | "set_window_theme"
+  | "browser_view_show"
+  | "browser_view_hide"
+  | "browser_view_viewport"
+  | "browser_view_navigate"
+  | "browser_view_state"
   | "exit_app"
   | "app_version"
   | "host_memory"
@@ -47,7 +52,18 @@ export type HostEvent =
   | "conn://liveness"
   | "conn://reconnect"
   | "app://window-state"
-  | "app://quit-requested";
+  | "app://quit-requested"
+  | "browser-view://state"
+  | "plugins://graph";
+
+/** 主进程内嵌浏览器面板状态（browser-view://state 事件与 browser_view_state 命令）。 */
+export interface BrowserPaneState {
+  visible: boolean;
+  url: string;
+  title: string;
+  /** true = 本次启动引擎初始化失败，面板不可用。 */
+  unavailable?: boolean;
+}
 
 export interface WindowState {
   visible: boolean;

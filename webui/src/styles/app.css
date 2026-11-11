@@ -40,6 +40,7 @@
 @import "./components/oauth.css";
 @import "./components/effort.css";
 @import "./components/toolmode.css";
+@import "./components/browser-pane.css";
 
 /* Windows 11 / Fluent 2 覆盖层（仅 data-platform="windows" 生效） */
 @import "./components/fluent.css";
