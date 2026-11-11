@@ -26,6 +26,13 @@
   .app-sidebar-resizer:hover::after,
   .app-sidebar-resizer:focus-visible::after,
   html.sidebar-resizing .app-sidebar-resizer::after { opacity: .35; }
+  /* 拖宽幽灵线(fixed 2px 指示条,VSCode 式):拖拽期唯一的跟手元素,
+     left 定在起始宽度,位移走 transform;提交即移除。 */
+  .sidebar-resize-ghost {
+    position: fixed; top: 0; bottom: 0; z-index: 90;
+    width: 2px; background: var(--accent); opacity: .8;
+    pointer-events: none;
+  }
   .app-sidebar.collapsed .app-sidebar-resizer,
   .app-sidebar.drawer .app-sidebar-resizer { display: none; }
   /* 拖拽中(motion kit 卡顿防线):禁掉轨道/标签/列表的全部过渡——
@@ -250,7 +257,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .message-session-item:has(.message-session-toolmode) .message-session-running { margin-left: 6px; }
+  .message-session-item:has(.message-session-toolmode) .message-session-dot { margin-left: 6px; }
   /* fork 交接对话徽标(血缘来自本地交接账本,后端没有 parent 字段可读)。 */
   .message-session-fork {
     flex: none;
@@ -263,8 +270,18 @@
     line-height: 1.4;
     white-space: nowrap;
   }
-  .message-session-item:has(.message-session-fork) .message-session-running { margin-left: 6px; }
-  .message-session-running { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .message-session-item:has(.message-session-fork) .message-session-dot { margin-left: 6px; }
+  /* 会话状态点(六态,词表见 tabs/store.ts SessionDotKind):
+     蓝=工作中(带光晕)/蓝闪=等你回应/灰=取消中/绿=完成/红=失败/灰实=已取消。
+     冷启动无点,直到本次壳生命周期内目击过活状态或权威终态。 */
+  .message-session-dot { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; }
+  .message-session-dot.is-working { background: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .message-session-dot.is-waiting { background: var(--accent); animation: session-dot-blink 1.2s steps(2, end) infinite; }
+  .message-session-dot.is-cancelling { background: color-mix(in srgb, var(--muted) 60%, transparent); }
+  .message-session-dot.is-done { background: var(--ok); }
+  .message-session-dot.is-failed { background: var(--err); }
+  .message-session-dot.is-cancelled { background: var(--muted); }
+  @keyframes session-dot-blink { 50% { opacity: .35; } }
   .message-sidebar-empty { padding: 8px; color: var(--muted); font-size: var(--fs-xs); }
 
   /* ── 会话行「待响应」弹出卡(slide-in/out + 跑马灯)────────────────────

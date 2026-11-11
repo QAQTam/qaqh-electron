@@ -93,6 +93,15 @@ export function estimateTokens(text: string): number {
   return Math.max(1, Math.round(cjkTokens + nonCjkTokens));
 }
 
+/** 相邻 message_delta 间隙 ≤ 此值视为模型连续产出,计入速率分母;更长的间隙是工具/等待/网络卡顿,只重锚产出段起点。 */
+const OUTPUT_GAP_MAX_MS = 1500;
+/** 实时读数滑动窗口长度(与结算口径同为 estimateTokens 家族,到达时不会跳变)。 */
+const LIVE_WINDOW_MS = 3000;
+/** 窗口内样本跨度不足此值不出数(单帧噪声)。 */
+const LIVE_MIN_SPAN_MS = 400;
+/** 实时读数最少多久刷新一次,防 delta 洪峰把 composer 信号打穿。 */
+const LIVE_UPDATE_MIN_MS = 300;
+
 /**
  * 输入区模型/参数选择器的会话视图。
  *
@@ -256,6 +265,11 @@ export class SessionStore {
   private activeOutputStartedAt: number | null = null;
   private activeOutputEndedAt: number | null = null;
   private activeOutputActiveMs = 0;
+  /** trackOutputDelta 写入端:上一帧 message_delta 时刻(间隙判定用)。 */
+  private lastOutputDeltaAt: number | null = null;
+  /** 实时速率滑动窗口样本。 */
+  private liveRateWindow: { at: number; tokens: number }[] = [];
+  private lastLiveRateAt = 0;
   private contextRefreshId = 0;
   /** 分母:会话有效模型目录里的 context_window(publishProfileView 维护)。 */
   private contextLength: number | null = null;
@@ -600,6 +614,9 @@ export class SessionStore {
         this.activeOutputStartedAt = null;
         this.activeOutputEndedAt = null;
         this.activeOutputActiveMs = 0;
+        this.lastOutputDeltaAt = null;
+        this.liveRateWindow.length = 0;
+        this.lastLiveRateAt = 0;
         this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
         break;
       case "turn_phase_changed":
@@ -639,6 +656,10 @@ export class SessionStore {
         // 声明只用来把后续扫描收窄到这一个调用上(交接工具不受 allowlist 约束,
         // minimal/custom 档也照样可能出现)。
         if (event.tool_name === HANDOFF_TOOL) this.liveHandoffCallIds.add(event.call_id);
+        if (event.type === "tool_arguments_delta" && this.activeTurnStartedAt != null) {
+          // 工具参数生成阶段:速率表盘让位(Composer 切行数估算),等 message_delta 回来。
+          this.composerMetrics[1]((current) => (current.isGeneratingToolInput ? current : { ...current, isGeneratingToolInput: true }));
+        }
         break;
       case "exec_session_started":
       case "exec_session_state_changed":
@@ -661,10 +682,51 @@ export class SessionStore {
       case "tool_state_changed":
       case "exec_session_output_delta":
       case "tool_output_delta":
-      case "message_delta":
       case "subagent_updated":
         break;
+      case "message_delta":
+        // message_delta 是"模型确实在产出"的唯一可靠证据(工具输出走 *_output_delta,不混)。
+        if (this.activeTurnStartedAt != null) this.trackOutputDelta(event.text);
+        break;
     }
+  }
+
+  /**
+   * 速率写入端(修复 2026-11-11 发现的"死分母链":activeOutput* 三件套此前无任何 writer,
+   * 结算永远落到回合总时长,一个 30s exec 能把 40 tok/s 压成 2 tok/s)。
+   * 分母:相邻 delta 间隙 ≤ OUTPUT_GAP_MAX_MS 才累计进 activeOutputActiveMs——
+   * 更长的段间空隙(工具执行/等待/网络卡顿)只重锚,不进分母。
+   * 实时值:LIVE_WINDOW_MS 滑动窗口内 estimateTokens 之和 ÷ 样本跨度,
+   * 按 LIVE_UPDATE_MIN_MS 节流;窗口估算与结算同一估计器家族,结算到达时平滑衔接。
+   */
+  private trackOutputDelta(text: string): void {
+    const t = now();
+    if (this.activeOutputStartedAt == null) this.activeOutputStartedAt = t;
+    const gap = this.lastOutputDeltaAt == null ? 0 : t - this.lastOutputDeltaAt;
+    if (gap > 0 && gap <= OUTPUT_GAP_MAX_MS) this.activeOutputActiveMs += gap;
+    this.lastOutputDeltaAt = t;
+    this.activeOutputEndedAt = t;
+
+    const tokens = estimateTokens(text);
+    if (tokens > 0) this.liveRateWindow.push({ at: t, tokens });
+    const cutoff = t - LIVE_WINDOW_MS;
+    while (this.liveRateWindow.length > 0 && this.liveRateWindow[0]!.at < cutoff) this.liveRateWindow.shift();
+    const firstAt = this.liveRateWindow[0]?.at ?? t;
+    const spanMs = t - firstAt;
+    if (this.liveRateWindow.length >= 2 && spanMs >= LIVE_MIN_SPAN_MS && t - this.lastLiveRateAt >= LIVE_UPDATE_MIN_MS) {
+      const sum = this.liveRateWindow.reduce((acc, sample) => acc + sample.tokens, 0);
+      this.lastLiveRateAt = t;
+      this.composerMetrics[1]((current) => ({
+        ...current,
+        isStreaming: true,
+        isGeneratingToolInput: false,
+        tokensPerSecond: sum / (spanMs / 1000),
+      }));
+      return;
+    }
+    // 没到刷新节拍:只保证流式态点亮(这两个布尔以前无人置 true,"is-live" 一直是死的)。
+    this.composerMetrics[1]((current) =>
+      current.isStreaming && !current.isGeneratingToolInput ? current : { ...current, isStreaming: true, isGeneratingToolInput: false });
   }
 
   private updateComposerUsage(usage: UsageInfo): void {

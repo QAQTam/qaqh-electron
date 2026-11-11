@@ -6,7 +6,7 @@ import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import IconPlus from "~icons/lucide/plus";
 import { STR } from "../lib/strings";
 import type { ApprovalView } from "../lib/transport";
-import { sessionCatalog, workspaceCatalog, type SidebarSession, type SidebarWorkspace } from "../tabs/store";
+import { sessionCatalog, sessionDot, workspaceCatalog, type SidebarSession, type SidebarWorkspace } from "../tabs/store";
 import { parentSessionOf } from "../session/handoff-journal";
 import { Collapse } from "../ui/Collapse";
 import { SessionPendingCard } from "./SessionPendingCard";
@@ -293,7 +293,11 @@ export const MessageSidebar: Component<{
                             <Show when={forkLineage(session().session_id, allSessions())}>
                               {(lineage) => <span class="message-session-fork" title={lineage()}>{STR.forkBadge}</span>}
                             </Show>
-                            <Show when={isWorking()}><i class="message-session-running" aria-label={STR.running} /></Show>
+                            {/* 六态点:蓝=工作中/脉动=等你回应/灰=取消中;终态绿红灰只在
+                                本次壳生命周期目击过权威 outcome 时点亮(冷启动无点)。 */}
+                            <Show when={sessionDot(session().session_id, session().status)}>
+                              {(kind) => <i class={`message-session-dot is-${kind()}`} aria-label={STR.dotTitles[kind()]} title={STR.dotTitles[kind()]} />}
+                            </Show>
                             {/* 常驻挂载,不用 <Show> 包:状态一离开待人,父级若把组件
                                 从树上摘掉,slide-out 就永远没机会播(卡片会瞬间消失,
                                 而不是「原路滑回去」)。进出场由卡内相位机自己管。 */}

@@ -182,6 +182,15 @@ export const STR = {
   todoTitle: "待办",
   todoEmpty: "暂无待办",
   workspacePanelTitle: "任务",
+  /** 会话行状态点文案(tabs/store.ts 的 SessionDotKind 词表)。 */
+  dotTitles: {
+    working: "工作中",
+    waiting: "等待你的回应",
+    cancelling: "取消中",
+    done: "已完成",
+    failed: "本轮失败",
+    cancelled: "已取消",
+  } as Record<"working" | "waiting" | "cancelling" | "done" | "failed" | "cancelled", string>,
   todoDone: (done: number, total: number) => `${done}/${total}`,
   /** 到站屏 LED 状态词(用户口径 2026-11-11:四态中文)。 */
   todoBoardWords: {

@@ -9,6 +9,7 @@
  */
 import { createSignal, createStore } from "solid-js";
 import type { SessionRunStatus } from "../api/qaqh/SessionRunStatus";
+import type { TurnOutcome } from "../api/qaqh/TurnOutcome";
 import { withViewTransition } from "../ui/viewTransition";
 import { sessionTarget, transport } from "../lib/transport";
 import { notifyConfigChanged } from "../lib/config-events";
@@ -293,6 +294,65 @@ function applySessionList(list: SidebarSession[]): void {
   const { merged, staleSeeds } = overlayLocalTitles(list, localTitles());
   setSessionCatalog(merged);
   for (const seed of staleSeeds) setLocalTitleOf(seed, "");
+  observeSessionStatuses(merged);
+}
+
+/* ── 会话状态点(前端启发式 v1,用户口径 2026-11-11)──────────────────────────
+ * 后端 session.list 只给运行词表(not_running/idle/running/waiting_user/cancelling),
+ * "本轮怎么结束的"(绿/红/灰)不在其中——绿红灰需要 TurnView.outcome,权威来源是
+ * bootstrap 快照。裁决:
+ *  · 蓝/等待/取消中 = list 的 status 直读(daemon 权威,SSE 断流不影响:
+ *    断流时 daemon 仍在跑 → 依旧蓝,天然不会"误认为结束");
+ *  · 本次壳生命周期里**目击到** running系→idle 迁移的会话,补一发一次性
+ *    bootstrap 探针读末回合 outcome → 绿(完成)/红(error/超限终态)/灰(cancel);
+ *    探针失败或无终态 → 保持无点。宁可缺点,不可猜错点。
+ *  · 冷启动/从未工作过的会话:prevStatus 未建立 → 无点;新回合开始(running 再现)
+ *    → 旧终态立即作废。状态全部驻内存,不落盘——这正是"重置为无点"的语义。 */
+export type SessionDotKind = "working" | "waiting" | "cancelling" | "done" | "failed" | "cancelled";
+const DOT_LIVE: Record<string, SessionDotKind> = { running: "working", waiting_user: "waiting", cancelling: "cancelling" };
+const dotTerminals = new Map<string, SessionDotKind>();
+const dotPrevStatus = new Map<string, SessionRunStatus>();
+const dotProbing = new Set<string>();
+const [dotVersion, bumpDotVersion] = createSignal(0, { equals: false });
+
+function dotFromOutcome(outcome: TurnOutcome | null | undefined): SessionDotKind | null {
+  if (outcome == null) return null;
+  if (outcome.kind === "finished") return outcome.data.error != null ? "failed" : "done";
+  return "cancelled";
+}
+
+function observeSessionStatuses(entries: SidebarSession[]): void {
+  let changed = false;
+  for (const entry of entries) {
+    const prev = dotPrevStatus.get(entry.session_id);
+    const st = entry.status;
+    if (st == null) continue; // 无状态字段的历史条目不参与判定,也不污染 prev 基线。
+    dotPrevStatus.set(entry.session_id, st);
+    if (DOT_LIVE[st] != null) {
+      // 新一轮开始了:上一轮的终态点作废(工作中不显示历史颜色)。
+      if (dotTerminals.delete(entry.session_id)) changed = true;
+      continue;
+    }
+    const wasLive = prev != null && DOT_LIVE[prev] != null;
+    if (wasLive && !dotTerminals.has(entry.session_id) && !dotProbing.has(entry.session_id)) {
+      dotProbing.add(entry.session_id);
+      void transport.sessionBootstrap(entry.session_id).then((boot) => {
+        const turns = boot.state.turns;
+        const kind = dotFromOutcome(turns.length > 0 ? turns[turns.length - 1]?.outcome : null);
+        if (kind != null) {
+          dotTerminals.set(entry.session_id, kind);
+          bumpDotVersion((v) => v + 1);
+        }
+      }).catch(() => { /* 探针失败=不知道=不画点 */ }).finally(() => { dotProbing.delete(entry.session_id); });
+    }
+  }
+  if (changed) bumpDotVersion((v) => v + 1);
+}
+
+/** 行渲染入口:活状态优先直读 list;终态点仅来自本次目击的权威 outcome。 */
+export function sessionDot(id: string, status: SessionRunStatus | null | undefined): SessionDotKind | null {
+  dotVersion();
+  return (status != null ? DOT_LIVE[status] : null) ?? dotTerminals.get(id) ?? null;
 }
 /** 焦点令牌:切标签/新建时 +1,Composer 响应后聚焦。 */
 const [focusToken, setFocusToken] = createSignal(0);
