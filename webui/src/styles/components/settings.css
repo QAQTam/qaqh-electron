@@ -436,3 +436,28 @@
   .onboarding-routes { grid-template-columns: 1fr; }
   .onboarding-byok, .byok-form { grid-template-columns: 1fr; }
 }
+
+/* 第三方字体说明弹层(替代裸 <a> 顶层导航;遮罩点击/关闭钮都能退出)。 */
+.font-notice-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, #000 32%, transparent);
+}
+.font-notice-card {
+  width: min(680px, calc(100vw - 48px)); max-height: min(70vh, 560px);
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border); border-radius: var(--r-input);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
+}
+.font-notice-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm); font-weight: 600; color: var(--text);
+}
+.font-notice-body {
+  flex: 1; min-height: 0; margin: 0; padding: 14px 16px;
+  overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--font-code); font-size: var(--fs-xs); line-height: 1.6;
+  color: var(--muted); background: var(--code-veil);
+}

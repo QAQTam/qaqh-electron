@@ -82,6 +82,43 @@ const REGISTRY_SECTIONS: ReadonlySet<string> = new Set([
   "section-pairing",
 ]);
 
+/**
+ * 第三方字体说明:应用内弹层。裸 <a href> 会触发顶层导航把整窗换成纯文本页
+ * (2026-11-11 事故:之后退出框永远弹不出来——UI 已被导航卸载;主进程
+ * will-navigate 已兜底,这里从源头不交导航权)。fetch 一次,驻留内存。
+ */
+const FontNotices: Component = () => {
+  const [open, setOpen] = createSignal(false);
+  const [text, setText] = createSignal<string | null>(null);
+  let req = 0;
+  const show = (event: MouseEvent): void => {
+    event.preventDefault();
+    setOpen(true);
+    if (text() != null) return;
+    const id = ++req;
+    fetch("/fonts/THIRD-PARTY-NOTICES.txt")
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((body) => { if (id === req) setText(body); })
+      .catch(() => { if (id === req) setText("说明文件读取失败,请检查安装完整性。"); });
+  };
+  return (
+    <>
+      <a href="/fonts/THIRD-PARTY-NOTICES.txt" onClick={show}>第三方字体说明</a>
+      <Show when={open()}>
+        <div class="font-notice-overlay" onClick={() => setOpen(false)}>
+          <div class="font-notice-card" role="dialog" aria-modal="true" aria-label="第三方字体说明" onClick={(e) => e.stopPropagation()}>
+            <div class="font-notice-head">
+              <span>第三方字体许可与来源</span>
+              <button type="button" class="ghost-mini" onClick={() => setOpen(false)}>关闭</button>
+            </div>
+            <pre class="font-notice-body">{text() ?? "加载中…"}</pre>
+          </div>
+        </div>
+      </Show>
+    </>
+  );
+};
+
 const FontPicker: Component<{
   label: string;
   hint: string;
@@ -453,7 +490,7 @@ export const SettingsView: Component<{
 
                     <p class="settings-section-desc">
                       界面内嵌 Cascadia Code 等宽字体；中文正文引用系统字体（macOS 苹方 / Windows 11 24H2+ 自带 Noto Sans SC，旧系统回落微软雅黑）；字体许可与来源见{" "}
-                      <a href="/fonts/THIRD-PARTY-NOTICES.txt">第三方字体说明</a>。
+                      <FontNotices />。
                     </p>
                   </Section>
                   </Show>

@@ -13,6 +13,7 @@ import { createBrowserEngine } from "./browser-host/engine.js";
 import { startBrowserMcpServer } from "./browser-host/mcp-server.js";
 import { wireBrowserMcpConfig } from "./browser-host/config-wiring.js";
 import { pluginsRoot, startPluginRegistry } from "./plugins.js";
+import { openExternalUrl } from "./native-dialogs.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
 protocol.registerSchemesAsPrivileged([
@@ -561,6 +562,17 @@ function createMainWindow(): BrowserWindow {
     console.log("[app] Loading renderer via standard app:// protocol (app://localhost/index.html)");
     mainWindow.loadURL("app://localhost/index.html");
   }
+  // SPA 壳拒绝一切顶层导航(2026-11-11 根因修复:设置页裸 <a href="/fonts/...">
+  // 把整窗换成纯文本页,应用 UI 被卸载,退出对话框自然永远弹不出来)。
+  // 只有壳文档自身放行;http(s) 交系统浏览器,其余静默拦截。
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const shell = !app.isPackaged && process.env.QAQH_DEV_URL != null && process.env.QAQH_DEV_URL.trim() !== ""
+      ? process.env.QAQH_DEV_URL
+      : "app://localhost/index.html";
+    if (url === shell || url.startsWith(`${shell}#`)) return;
+    event.preventDefault();
+    if (/^https?:/i.test(url)) void openExternalUrl(url).catch(() => {});
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
