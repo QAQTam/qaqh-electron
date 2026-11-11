@@ -183,6 +183,13 @@ export const STR = {
   todoEmpty: "暂无待办",
   workspacePanelTitle: "任务",
   todoDone: (done: number, total: number) => `${done}/${total}`,
+  /** 到站屏 LED 状态词(用户口径 2026-11-11:四态中文)。 */
+  todoBoardWords: {
+    pending: "待办中",
+    in_progress: "工作中",
+    completed: "已完成",
+    cancelled: "已取消",
+  } as Record<"pending" | "in_progress" | "completed" | "cancelled", string>,
   settings: "设置",
   close: "关闭",
   settingsLoading: "读取配置中…",
@@ -244,6 +251,39 @@ export const STR = {
   // theme 是「后端已生效、前端未接线」的档位:说清楚,免得用户以为界面会跟着变。
   settingsThemeNote: "主题偏好保存在本机;Win11 22H2+ 由壳启用原生 Mica(需系统「透明效果」),更旧系统自动回退实底。",
   settingsBypassWarn: "即将降到 skip-permissions:普通工具全部自动放行。",
+  // ── 交接（handoff）与插话条目 ──────────────────────────────────────────────
+  // 看门狗提醒按普通输入条目进 timeline(actor.kind=api),绝不能显示成"用户说的话"。
+  interjectSystem: "系统插话",
+  interjectWatchdog: "上下文看门狗",
+  interjectAgent: "代理插话",
+  interjectUser: "插话",
+  interjectSteer: "插话转向",
+  interjectQueued: "排队输入",
+  interjectExtra: "追加输入",
+  interjectSource: (kind: string, id: string, purpose: string) =>
+    `同回合的输入条目:actor=${kind}/${id},purpose=${purpose}(不是用户的主输入)`,
+  handoffTool: "交接给新会话",
+  handoffSealed: "已封箱交接",
+  handoffSealedHint: "本会话的 loop 到此为止,不会再有下一次模型请求",
+  handoffContinue: "继续这条交接 →",
+  handoffOpened: "已在新会话继续",
+  handoffOpenChild: "打开交接会话",
+  handoffRetryDelivery: "补投交接文档",
+  handoffWorkSummary: "工作简述",
+  handoffViewDoc: "看交接文档",
+  handoffHideDoc: "收起交接文档",
+  handoffModifiedFiles: (count: number) => (count > 0 ? `本会话改过 ${count} 个文件` : "本会话没有改动文件"),
+  handoffOccupancy: (percent: string) => `交接时上下文占用 ${percent}`,
+  handoffForked: (title: string) => `已开新会话继续交接:${title}`,
+  handoffForkFailed: (reason: string) => `开交接会话失败:${reason}`,
+  handoffDeliveredPartial: "交接会话已经建出来,但文档没投出去;点「补投交接文档」重试。",
+  handoffMissingHint: "这类失败要人看一眼:模型没写交接文档就终止了,不会自动重试。",
+  handoffInferredNote: "没读到机器面的 handed_off:这条按已成功结束的交接调用与 args 里的文档推定。",
+  handoffCountdown: (seconds: number) => `${seconds}s 后自动继续交接`,
+  handoffCountdownCancel: "取消自动",
+  forkBadge: "fork",
+  forkBadgeTitle: "【此对话为 fork 交接对话】",
+  forkFrom: (title: string) => `交接自「${title}」`,
 } as const;
 
 /** 「已工作 X 秒」的时长格式化（spec §7.3）。纯函数,可单测。 */

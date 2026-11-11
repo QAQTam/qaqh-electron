@@ -206,6 +206,37 @@
   .todo-card-row:hover { background: transparent; }
   .todo-card-row b { font-weight: 600; font-variant-numeric: tabular-nums; }
   .todo-card-state { margin-left: 8px; color: var(--muted); }
+  /* 卡内待办行:右栏改到站屏后不再共用 workspace-panel 的基础规则,卡片自带一套。 */
+  .todo-card-head .todo-count {
+    color: var(--text); font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+  }
+  .todo-card .todo-row {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 4px 6px;
+    border-radius: var(--r-md);
+    font-size: var(--fs-sm); line-height: 1.5;
+  }
+  .todo-card .todo-title { min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+  .todo-card .todo-dot {
+    flex: none; width: 14px; height: 14px;
+    margin-top: 4px;
+    border: 1.5px solid var(--muted); border-radius: 50%;
+  }
+  .todo-card .st-completed .todo-dot { display: grid; place-items: center; color: var(--ok); border: 0; }
+  .todo-card .st-completed .todo-dot svg { width: 14px; height: 14px; }
+  .todo-card .st-completed .todo-title { color: var(--muted); }
+  .todo-card .st-cancelled .todo-dot { background: var(--err); border-color: var(--err); opacity: 0.7; }
+  .todo-card .st-cancelled .todo-title { color: var(--muted); }
+  .todo-card .st-in_progress .todo-dot,
+  .todo-card .todo-dot.todo-spin {
+    width: 14px; height: 14px; margin-top: 2px;
+    border: none; color: var(--accent);
+    animation: qaqh-spin 1s linear infinite;
+    display: inline-grid; place-items: center;
+  }
+  .todo-card .st-in_progress .todo-dot svg,
+  .todo-card .todo-dot.todo-spin svg { width: 12px; height: 12px; }
   .tool-head {
     display: flex; align-items: center; gap: 8px;
     width: 100%; min-height: 26px;

@@ -251,6 +251,19 @@
     white-space: nowrap;
   }
   .message-session-item:has(.message-session-toolmode) .message-session-running { margin-left: 6px; }
+  /* fork 交接对话徽标(血缘来自本地交接账本,后端没有 parent 字段可读)。 */
+  .message-session-fork {
+    flex: none;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-pill);
+    color: var(--accent);
+    font-size: 10px;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+  .message-session-item:has(.message-session-fork) .message-session-running { margin-left: 6px; }
   .message-session-running { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
   .message-sidebar-empty { padding: 8px; color: var(--muted); font-size: var(--fs-xs); }
 

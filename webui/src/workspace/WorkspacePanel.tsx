@@ -1,53 +1,53 @@
 /**
- * 工作区集合面板(待办是当前唯一数据分区):占会话右栏(真实分配列宽,不覆盖正文),
- * 展开 320px、收起为 40px 图标栏;有待办自动展开、清空自动收起,手动开合优先于自动。
+ * 工作区集合面板(到站屏形态):占会话右栏(真实分配列宽,不覆盖正文),
+ * 展开 320px、收起=零宽完全收回(开合入口在顶栏任务钮);有待办自动展开、
+ * 清空自动收起,手动开合优先于自动。
  *
- * 工作区区域过窄时(容器宽度低于 NARROW_RAIL_MAX)自动收起为窄栏——仍占位、不覆盖正文;
- * 点图标仍可强制展开,占的是真实列宽,同样不会盖住消息。
+ * 视觉语言取自伦敦 Overground 站台到发屏:
+ *   hero 区  = 当前承服务任务(大号窄体)+ LED 状态词(BOARDING 闪烁);
+ *   色带     = 线路色(状态映射 accent/ok/err),出血到列边;
+ *   圆点     = 每任务一枚(●登车/○待发/✓到达/✕不停靠),上限 12;
+ *   next 区  = 后续任务,虚线分隔,单行截断(收矮文字区域)。
+ * has-mica 桌面下 surface 全透明——文字直接站在 Mica 上(见 fluent.css)。
  *
- * 状态视觉:空心圆=待办;spinner=进行中;勾选+次级文字=完成;红点=取消。
- * 无逐条错峰动画,避免快照更新时重复播放;数据单源 store.todos(todo.list RPC,
- * v2 资源变更/工具终态/回合结束/激活/重连/投影重置驱动刷新)。
+ * 工作区区域过窄时(容器宽度低于 NARROW_RAIL_MAX)自动收起为零宽——不占列、不覆盖正文;
+ * 顶栏任务钮强制展开时占回真实列宽,同样不会盖住消息。
+ * 数据单源 store.todos(todo.list RPC,v2 资源变更/工具终态/回合结束/激活/重连/投影重置驱动刷新)。
  */
 import { createEffect, createSignal, For, onSettled, Show, type Component } from "solid-js";
 import autoAnimate from "@formkit/auto-animate";
-import IconChevronDown from "~icons/lucide/chevron-down";
-import IconFolder from "~icons/lucide/folder";
 import IconListTodo from "~icons/lucide/list-todo";
-import IconLoader from "~icons/lucide/loader-circle";
-import IconCheck from "~icons/lucide/check";
 import { STR } from "../lib/strings";
-import { normalizeStatus } from "../lib/todo";
+import { normalizeStatus, todoStatusLabel, type TodoStatus } from "../lib/todo";
 import type { SessionStore } from "../session/store";
 
 /** 会话列宽度低于此值时,右栏默认收起为窄栏(仍占位,不覆盖消息)。 */
 const NARROW_RAIL_MAX = 720;
+/** 登车圆点上限:到发屏不挂一整面墙的灯。 */
+const DOTS_MAX = 12;
 
-const TodoRow: Component<{ item: { title?: string; status?: string; evidence?: string } }> = (props) => {
+type TodoItem = { title?: string; status?: string; evidence?: string };
+
+/** 当前承服务 = in_progress 优先;否则最早的 pending;都没有则最后一行(全完成的 ARRIVED 场景)。 */
+function heroOf(list: TodoItem[]): TodoItem | null {
+  return list.find((item) => normalizeStatus(item.status) === "in_progress")
+    ?? list.find((item) => normalizeStatus(item.status) === "pending")
+    ?? list[list.length - 1]
+    ?? null;
+}
+
+const BoardRow: Component<{ item: TodoItem }> = (props) => {
   const status = () => normalizeStatus(props.item.status);
-  const statusLabel = () => {
-    switch (status()) {
-      case "in_progress": return "进行中";
-      case "completed": return "已完成";
-      case "cancelled": return "已取消";
-      default: return "待处理";
-    }
-  };
   return (
     <li
-      class={{ "todo-row": true, [`st-${status()}`]: true }}
-      aria-label={`${props.item.title ?? "待办"}，${statusLabel()}`}
+      class="todo-next-row"
+      data-status={status()}
+      aria-label={`${props.item.title ?? "待办"}，${todoStatusLabel(status())}`}
     >
-      <Show
-        when={status() === "in_progress"}
-        fallback={<span class="todo-dot" aria-hidden="true"><Show when={status() === "completed"}><IconCheck /></Show></span>}
-      >
-        <span class="todo-dot todo-spin" aria-hidden="true"><IconLoader /></span>
-      </Show>
-      <span class="todo-title" title={props.item.evidence ?? props.item.title}>
+      <span class="todo-next-title" title={props.item.evidence ?? props.item.title}>
         {props.item.title}
       </span>
-      <span class="sr-only">{statusLabel()}</span>
+      <span class="todo-next-status" aria-hidden="true">{STR.todoBoardWords[status()]}</span>
     </li>
   );
 };
@@ -99,7 +99,15 @@ export const WorkspacePanel: Component<{ store: SessionStore;
     return () => observer.disconnect();
   });
 
-  const doneCount = () => items().filter((item) => normalizeStatus(item.status) === "completed").length;
+  const hero = () => heroOf(items());
+  const heroStatus = (): TodoStatus => (hero() == null ? "pending" : normalizeStatus(hero()!.status));
+  /** Now Serving 位次(1 基):到发屏右上角报"第几班",不是完成数——完成数由登车圆点表达。 */
+  const heroPos = () => {
+    const h = hero();
+    return h == null ? 0 : items().indexOf(h) + 1;
+  };
+  const rest = () => items().filter((item) => item !== hero());
+  const dots = () => items().slice(0, DOTS_MAX);
 
   return (
     <aside ref={root} id="right-rail" class={{
@@ -111,45 +119,51 @@ export const WorkspacePanel: Component<{ store: SessionStore;
       collapsed: props.drawer !== true && !open(),
     }} aria-label={STR.workspacePanelTitle}>
       <div class="workspace-panel-surface">
-        <button
-          type="button"
-          class="workspace-panel-head"
-          aria-label={open() ? "收起工作区面板" : "展开工作区面板"}
-          aria-expanded={open() ? "true" : "false"}
-          onClick={() => setManual(!open())}
-        >
-          <IconFolder />
-          <span>{STR.workspacePanelTitle}</span>
-          <span class="workspace-panel-chevron">
-            <IconChevronDown />
-          </span>
-        </button>
         <div class="workspace-panel-body" aria-hidden={open() ? "false" : "true"}>
           <div class="workspace-panel-body-inner" inert={!open()}>
+            {/* 面板开合唯一入口在顶栏任务钮(App 的 railManual);面板内不再有头部行,
+                「待办」区头直接顶到首行。 */}
             <div class="workspace-panel-section-head">
               <IconListTodo />
               <span>{STR.todoTitle}</span>
               <Show when={props.store.todosSyncPending[0]()}>
                 <span class="todo-sync-pending" role="status" aria-live="polite">{STR.todoSyncPending}</span>
               </Show>
-              <Show when={items().length > 0}>
-                <b class="todo-count">{STR.todoDone(doneCount(), items().length)}</b>
-              </Show>
             </div>
             <Show
               when={items().length > 0}
               fallback={<div class="todo-empty">{STR.todoEmpty}</div>}
             >
-              <ul
-                class="todo-list"
-                ref={(el) => {
-                  if (el) autoAnimate(el, { duration: 160, easing: "cubic-bezier(0.2, 0, 0, 1)" });
-                }}
-              >
-                <For each={items()}>
-                  {(item) => <TodoRow item={item} />}
-                </For>
-              </ul>
+              <div class="todo-board">
+                <div class="todo-hero" data-status={heroStatus()}>
+                  <div class="todo-hero-top">
+                    <span class="todo-hero-label">Now Serving</span>
+                    <b class="todo-hero-count">{STR.todoDone(heroPos(), items().length)}</b>
+                  </div>
+                  <div class="todo-hero-main">
+                    <span class="todo-hero-title" title={hero()?.evidence ?? hero()?.title}>
+                      {hero()?.title}
+                    </span>
+                    <span class="todo-hero-status" aria-hidden="true">{STR.todoBoardWords[heroStatus()]}</span>
+                  </div>
+                  <div class="todo-hero-band" aria-hidden="true" />
+                  <div class="todo-dots" aria-hidden="true">
+                    <For each={dots()}>
+                      {(item) => <span class="todo-dot2" data-status={normalizeStatus(item.status)} />}
+                    </For>
+                  </div>
+                </div>
+                <ul
+                  class="todo-next"
+                  ref={(el) => {
+                    if (el) autoAnimate(el, { duration: 160, easing: "cubic-bezier(0.2, 0, 0, 1)" });
+                  }}
+                >
+                  <For each={rest()}>
+                    {(item) => <BoardRow item={item} />}
+                  </For>
+                </ul>
+              </div>
             </Show>
           </div>
         </div>

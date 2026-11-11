@@ -101,6 +101,14 @@
   .workspace-content { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
   .workspace-content { background: var(--bg); }
   .workspace-content { container: workspace / inline-size; }
+  /* 消息主面四周圆角(Codex MainContentSurface 同款:大面吃 radius-xl 档,
+     不跟 4/8px 控件圆角家族——层级越高的面圆角越大,圆角本身就是深度编码)。
+     8px 缝透出底层 Mica/底色,overflow 把滚动条端头一并裁进圆角。 */
+  .workspace-content {
+    margin: 8px;
+    border-radius: 16px;
+    overflow: hidden;
+  }
 
   /* 会话/标签切换的视图过渡(src/ui/viewTransition.ts):默认 UA 交叉淡出收敛
    * 为本仓节奏;不支持的引擎不会产生这些伪元素,规则自然不生效。 */

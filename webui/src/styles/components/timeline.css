@@ -54,6 +54,14 @@
     color: var(--muted);
   }
   .session-header-folder-icon svg { width: 16px; height: 16px; }
+  /* fork 交接对话标记(§六:血缘来自本地交接账本,后端没有 parent 字段)。 */
+  .session-header-fork {
+    display: inline-flex; align-items: center; gap: 4px; flex: none;
+    margin-left: 2px; padding: 1px 7px;
+    border: 1px solid var(--accent); border-radius: var(--radius-pill);
+    color: var(--accent); font-size: 10px; line-height: 1.5; white-space: nowrap;
+  }
+  .session-header-fork svg { width: 11px; height: 11px; }
   .session-header-title {
     font-size: var(--fs-sm); font-weight: 600;
     color: var(--text);
@@ -181,6 +189,136 @@
   .collapse.instant { transition: none; }
   .turn-intermediate { margin: 6px 0; }
   .turn-answer { font-family: var(--font-prose); overflow-anchor: auto; }
+
+  /* ── 插话条目(看门狗/折叠提示/用户同回合转向) ─────────────────────────
+     后端把它按普通 timeline input 落库(actor.kind=api),但它不是用户说的话:
+     形状必须与用户气泡彻底分开(左对齐、弱化底色、带来源标签),否则读起来
+     像"用户自己发了一句系统提示"。 */
+  .interject-row {
+    display: flex; align-items: flex-start; gap: 8px;
+    width: min(var(--content-width), 100%); margin: 2px auto 10px;
+    padding: 6px 10px;
+    border-left: 2px solid color-mix(in srgb, var(--warn) 62%, transparent);
+    border-radius: 0 var(--r-md) var(--r-md) 0;
+    background: var(--surface-2);
+  }
+  .interject-row.is-user { border-left-color: var(--border-strong); background: transparent; }
+  .interject-icon { display: grid; place-items: center; flex: none; width: 16px; height: 20px; color: var(--warn); }
+  .interject-row.is-user .interject-icon { color: var(--muted); }
+  .interject-icon svg { width: 14px; height: 14px; }
+  .interject-body { min-width: 0; display: grid; gap: 2px; }
+  .interject-label { color: var(--muted); font-size: var(--fs-xs); letter-spacing: .02em; }
+  .interject-text {
+    margin: 0; color: var(--text);
+    font-size: var(--fs-sm); line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .interject-text.muted { color: var(--muted); }
+
+  /* ── 交接卡(回合尾部常驻入口) ───────────────────────────────────────
+     后端不自动开 B:客户端关掉/掉线时 A 就停在这条事实上,所以这条入口
+     必须常驻、可读、可点(数据全在 timeline,离线也能重建)。
+     `handoff_path` 不显示:那是本地镜像 .md,不是 URL、也不是权威副本。 */
+  .handoff-card {
+    width: min(var(--content-width), 100%); margin: 10px auto 12px;
+    display: grid; gap: 8px; padding: 12px 14px;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-panel);
+    background: var(--surface);
+  }
+  .handoff-head { display: flex; align-items: flex-start; gap: 10px; }
+  .handoff-icon { position: relative; display: grid; place-items: center; flex: none; width: 22px; height: 22px; color: var(--accent); }
+  .handoff-icon svg { width: 18px; height: 18px; }
+  .handoff-title-wrap { display: grid; gap: 2px; min-width: 0; flex: 1; }
+  .handoff-title-wrap strong { color: var(--text); font-size: var(--fs-sm); }
+  .handoff-title-wrap small { color: var(--muted); font-size: var(--fs-xs); line-height: 1.45; }
+  .handoff-occupancy { flex: none; color: var(--warn); font-size: var(--fs-xs); }
+  .handoff-summary {
+    margin: 0; color: var(--text);
+    font-family: var(--font-prose); font-size: var(--fs-sm); line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .handoff-summary-label { color: var(--muted); }
+  .handoff-meta { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: var(--fs-xs); }
+  .handoff-meta svg { width: 13px; height: 13px; }
+  .handoff-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  /* 「N s 后自动继续交接」倒计时:进度条随秒收缩(信号驱动,1s 线性过渡),
+     取消即回人工入口;reduced-motion 下直接跳变。 */
+  .handoff-countdown { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+  .handoff-countdown-track {
+    flex: 1; height: 4px; overflow: hidden;
+    border-radius: var(--radius-pill);
+    background: var(--surface-2);
+  }
+  .handoff-countdown-bar { height: 100%; background: var(--accent); transition: width 1s linear; }
+  .handoff-countdown-label { flex: none; color: var(--muted); font-size: var(--fs-xs); }
+  .handoff-countdown-cancel {
+    flex: none; padding: 2px 8px;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-control);
+    color: var(--muted); background: transparent; font-size: var(--fs-xs); cursor: pointer;
+  }
+  .handoff-countdown-cancel:hover { color: var(--text); background: var(--surface-2); }
+  .handoff-continue {
+    padding: 5px 12px; border: 1px solid var(--accent); border-radius: var(--radius-control);
+    color: var(--accent-bg, var(--bg)); background: var(--accent);
+    font-size: var(--fs-sm); cursor: pointer;
+  }
+  .handoff-continue:hover:not(:disabled) { filter: brightness(1.06); }
+  .handoff-continue:disabled { opacity: .6; cursor: progress; }
+  .handoff-opened, .handoff-doc-toggle {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 5px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-control);
+    color: var(--text); background: transparent; font-size: var(--fs-xs); cursor: pointer;
+  }
+  .handoff-opened:hover, .handoff-doc-toggle:hover { background: var(--surface-2); }
+  .handoff-opened { border-color: var(--accent); color: var(--accent); }
+  .handoff-doc-toggle svg { width: 12px; height: 12px; }
+  .handoff-warn { margin: 0; color: var(--err); font-size: var(--fs-xs); }
+  .handoff-doc {
+    max-height: 320px; overflow-y: auto;
+    border-top: 1px solid var(--border); padding-top: 8px;
+    font-size: var(--fs-sm); line-height: 1.6;
+  }
+
+  /* 「刚封箱」动画(挂载时 fresh 才挂 is-fresh,历史重放不播,不翻旧账):
+     卡片淡入上浮 + 封箱图标带过冲「盖」下来 + 一圈扩散光环。 */
+  .handoff-card.is-fresh { animation: handoff-in var(--dur) var(--ease); }
+  .handoff-card.is-fresh .handoff-icon { animation: handoff-stamp .45s var(--ease) .1s backwards; }
+  .handoff-card.is-fresh .handoff-icon::after {
+    content: ""; position: absolute; inset: -2px;
+    border: 2px solid var(--accent); border-radius: var(--r-md);
+    opacity: 0;
+    animation: handoff-ring .6s var(--ease) .18s backwards;
+  }
+  @keyframes handoff-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
+  @keyframes handoff-stamp {
+    from { opacity: 0; transform: scale(1.8) rotate(-14deg); }
+    60% { opacity: 1; transform: scale(.92) rotate(2deg); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes handoff-ring { from { opacity: .8; transform: scale(.6); } to { opacity: 0; transform: scale(1.5); } }
+
+  /* fork 在飞(手动点「继续」):卡片呼吸一下,表示正在开新会话。 */
+  .handoff-card.is-busy { animation: handoff-busy 1.4s ease-in-out infinite; }
+  @keyframes handoff-busy {
+    50% { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .handoff-card.is-fresh, .handoff-card.is-fresh .handoff-icon, .handoff-card.is-busy { animation: none; }
+    .handoff-card.is-fresh .handoff-icon::after { content: none; }
+    .handoff-countdown-bar { transition: none; }
+  }
+
+  /* 需要人看一眼的失败(handoff_missing / context_overflow):把 code 摆出来,
+     正文仍是后端 message 原文,前端不编文案也不自动重试。 */
+  .turn-error-noteworthy { border-color: var(--warn); color: var(--text); display: grid; gap: 4px; }
+  .turn-error-noteworthy p { margin: 0; color: var(--err); }
+  .turn-error-code {
+    justify-self: start; padding: 1px 6px;
+    border: 1px solid var(--warn); border-radius: var(--radius-pill);
+    color: var(--warn); font-size: var(--fs-xs);
+  }
+  .turn-error-hint { color: var(--muted); font-size: var(--fs-xs); }
+
   /* 中断且无任何产物的回合状态行(与折叠行同一家族的弱化文本) */
   .turn-aborted {
     margin-top: 2px;

@@ -7,6 +7,9 @@
     --surface-2: #f0f1f3;
     --surface-user: #f0f1f3;
     --surface-code: #f1f2f4;
+    /* 代码底纱(Codex --codex-row-hover 原方,实测 5~8%):文本色低浓度叠加而非实色灰板,
+       底色自动携带环境(白卡/Mica)的明度,浅档吃 6% 黑,暗档吃 9% 白。 */
+    --code-veil: color-mix(in srgb, var(--text) 6%, transparent);
     --border: #e1e3e7;
     --border-strong: #7b8aa0;
     --text: #20242b;
@@ -55,7 +58,6 @@
     --control-height: 36px;
     --content-gutter: var(--space-6);
     --workspace-panel-width: 320px;
-    --workspace-panel-collapsed-width: 40px;
     /* 正文 14px 对齐 Codex 桌面端(实测全角步进 14px);行距写成 24/14 这个无单位
        比例而不是 1.5,是为了把字号与行距解耦 —— 沿用 1.5 会让 14px 掉到 21px 行距,
        字和行一起缩,密度不变。
@@ -131,6 +133,7 @@
     --surface-2: #292c31;
     --surface-user: #292c31;
     --surface-code: #1b1d21;
+    --code-veil: color-mix(in srgb, var(--text) 9%, transparent);
     --border: #373b42;
     --border-strong: #718198;
     --text: #edeef0;
@@ -168,6 +171,7 @@
       --surface-2: #292c31;
       --surface-user: #292c31;
       --surface-code: #1b1d21;
+      --code-veil: color-mix(in srgb, var(--text) 9%, transparent);
       --border: #373b42;
       --border-strong: #718198;
       --text: #edeef0;

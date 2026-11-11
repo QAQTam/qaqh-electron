@@ -62,6 +62,14 @@
   .toast.err .toast-icon { color: var(--err); }
   .toast.info .toast-icon { color: var(--muted); }
   .toast-text { min-width: 0; overflow-wrap: anywhere; }
+  .toast-action {
+    flex: none; align-self: center; margin-left: 2px;
+    padding: 1px 8px; border-radius: var(--r-sm);
+    border: 1px solid var(--border-strong); color: var(--text);
+    font-size: var(--fs-xs); white-space: nowrap;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .toast-action:hover { background: var(--surface-2); }
   .toast-close {
     flex: none; display: inline-grid; place-items: center;
     width: 20px; height: 20px; border-radius: var(--r-sm);

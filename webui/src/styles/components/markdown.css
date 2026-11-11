@@ -66,9 +66,10 @@
      space for decimal markers in the bundled monospace font, including 100+. */
   .md-host ol { list-style: decimal; padding-left: max(2.5em, 5ch); }
   .md-host li { margin: 2px 0; }
-  .md-host code { font-family: var(--font-code); font-size: var(--md-code-scale); background: var(--surface-code); border-radius: var(--r-sm); padding: .2em .4em; }
+  .md-host code { font-family: var(--font-code); font-size: var(--md-code-scale); background: var(--code-veil); border-radius: var(--r-sm); padding: .2em .4em; }
   .md-host :is(h1, h2, h3, h4, h5, h6) code { font-size: inherit; }
-  .md-code-block { margin: 8px 0; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-code); overflow: hidden; }
+  /* Codex .message-code-block 同款:纱底(透环境)+ 1px 边 + 大圆角;内部 pre 保持 transparent。 */
+  .md-code-block { margin: 8px 0; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--code-veil); overflow: hidden; }
   .md-code-head { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); }
   .md-copy-code { min-width: 48px; min-height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-xs); }
   .md-copy-code:hover { background: var(--surface-2); color: var(--text); }

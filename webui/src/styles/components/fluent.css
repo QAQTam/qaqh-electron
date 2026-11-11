@@ -779,6 +779,32 @@
   html[data-platform="windows"].has-mica .global-nav {
     border-color: var(--border);
   }
+  /* ── 工作区右栏到站屏:透明 Mica 底(撤掉 B-lite 卡层)──────────────────
+     到发屏的语言就是"灯牌钉在墙上"——文字/色带直接站 Mica,不垫卡;
+     只保留四周 inset 留白与列宽守恒(surface 宽度 = 列宽 − 2×inset,
+     auto 轨不受 margin 撑爆)。抽屉态例外:浮层仍走 base 规则的实底。 */
+  html[data-platform="windows"].has-mica.desktop .workspace-panel:not(.drawer) {
+    background: transparent;
+    border-left-color: transparent;
+    overflow: visible; /* 卡的投影不许被列裁掉 */
+  }
+  html[data-platform="windows"].has-mica.desktop .workspace-panel:not(.drawer) .workspace-panel-surface {
+    --workspace-card-inset: 8px;
+    width: calc(var(--workspace-panel-width) - var(--workspace-card-inset) * 2);
+    margin: var(--workspace-card-inset);
+    background: transparent;
+    box-shadow: none;
+  }
+  /* 收起=零宽完全收回:margin-inline 一并清 0(否则两侧各 8px 仍垫在 auto 轨里,
+     消息区右缘到不了与左侧相等的 8px 缝)。上下留白保留,复播时圆角不跳。 */
+  html[data-platform="windows"].has-mica.desktop .workspace-panel.collapsed:not(.drawer) .workspace-panel-surface {
+    width: 0;
+    margin-inline: 0;
+  }
+  /* hover 不再在透底上闪实色块:换成 WinUI Subtle Overlay 的文本色低浓度叠加。 */
+  html[data-platform="windows"].has-mica.desktop .workspace-panel:not(.drawer) .todo-next-row:hover {
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+  }
 
   /* ── 动效:WinUI 运动配方,逐参数移植 ──────────────────────────────────
    * 出处:learn.microsoft.com「Motion in Windows」时序/缓动总表(2026-02),
