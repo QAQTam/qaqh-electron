@@ -205,14 +205,6 @@ export function setField<K extends keyof ConfigDto>(key: K, value: ConfigDto[K])
   setNote(null);
 }
 
-export function setSubagent<K extends keyof ConfigDto["subagent"]>(
-  key: K,
-  value: ConfigDto["subagent"][K],
-): void {
-  setDraft((prev) => (prev == null ? prev : { ...prev, subagent: { ...prev.subagent, [key]: value } }));
-  setNote(null);
-}
-
 export function setExec<K extends keyof ConfigDto["exec"]>(
   key: K,
   value: ConfigDto["exec"][K],

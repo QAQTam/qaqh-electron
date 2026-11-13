@@ -4,7 +4,6 @@ import type { GoalsDto } from "./GoalsDto";
 import type { LspDto } from "./LspDto";
 import type { McpDto } from "./McpDto";
 import type { SandboxDto } from "./SandboxDto";
-import type { SubagentDto } from "./SubagentDto";
 
 /**
  * 读模型：daemon `config.load` 的完整投影。所有消费者（设置页/Info 面板/
@@ -19,7 +18,7 @@ theme: string | null,
  * 语义缺省（开）由**产出侧**决定：`qaqh-config/src/dto.rs::to_dto` 里
  * `unwrap_or(true)`。读侧不再兜底——见 `dto_rejects_a_partial_payload`。
  */
-notificationsEnabled: boolean, subagent: SubagentDto, 
+notificationsEnabled: boolean, 
 /**
  * Goal 模式配置段(ADR-0015)。
  */

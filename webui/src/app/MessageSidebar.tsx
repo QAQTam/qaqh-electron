@@ -1,7 +1,6 @@
 import { createMemo, createSignal, For, Show, type Component } from "solid-js";
 import IconChevronDown from "~icons/lucide/chevron-down";
 import IconFolder from "~icons/lucide/folder";
-import IconMessageSquare from "~icons/lucide/message-square";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import IconPlus from "~icons/lucide/plus";
 import { STR } from "../lib/strings";
@@ -285,7 +284,6 @@ export const MessageSidebar: Component<{
                             onClick={() => props.onSelect(session().session_id)}
                             title={session().title || session().cwd || session().session_id}
                           >
-                            <IconMessageSquare />
                             <span class="message-session-title">{sessionName(session())}</span>
                             <Show when={session().tool_mode != null && session().tool_mode !== "standard"}>
                               <span class="message-session-toolmode" title={`工具模式：${session().tool_mode}`}>{session().tool_mode}</span>

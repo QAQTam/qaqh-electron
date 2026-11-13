@@ -46,8 +46,6 @@ const StoreRows: Component<{ store: SessionStore }> = (props) => {
       <b>{state().waits.length}</b>
       <span>待授权 / todo</span>
       <b>{props.store.pending[0]().length} / {props.store.todos[0]().length}</b>
-      <span>tokensPerSecond</span>
-      <b>{num(metrics().tokensPerSecond)}</b>
       <span>contextPercent</span>
       <b>{pct(metrics().contextPercent)}</b>
       <span>cacheHitPercent</span>

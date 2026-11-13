@@ -115,7 +115,6 @@ html.theme-lite *::after {
 /* ── 彻底停用所有循环动画 (Zero Continuous Repaint / Sleep Compositor) ─ */
 
 :root[data-theme-preset="lite"] :is(
-  .composer-live-dot,
   .tab-dot.run,
   .session-pending-body,
   .session-pending-body::before,
@@ -130,7 +129,6 @@ html.theme-lite *::after {
   .text-shimmer-glow
 ),
 html.theme-lite :is(
-  .composer-live-dot,
   .tab-dot.run,
   .session-pending-body,
   .session-pending-body::before,
@@ -148,22 +146,14 @@ html.theme-lite :is(
   transform: none !important;
 }
 
-/* 1. Composer 状态指示点：转为静态常驻实心圆点，移除高斯光晕扩散 */
-:root[data-theme-preset="lite"] .composer-live-dot,
-html.theme-lite .composer-live-dot {
-  opacity: 1 !important;
-  box-shadow: none !important;
-  background: var(--accent) !important;
-}
-
-/* 2. 标签栏运行状态点：转为静态高对比度轮廓 */
+/* 1. 标签栏运行状态点：转为静态高对比度轮廓 */
 :root[data-theme-preset="lite"] .tab-dot.run,
 html.theme-lite .tab-dot.run {
   border: 2px solid var(--accent) !important;
   border-radius: 50% !important;
 }
 
-/* 3. 待响应走马灯与微缩条：静态对齐展示，杜绝无意义位移重绘 */
+/* 2. 待响应走马灯与微缩条：静态对齐展示，杜绝无意义位移重绘 */
 :root[data-theme-preset="lite"] .session-pending-track,
 :root[data-theme-preset="lite"] .session-pending-body,
 html.theme-lite .session-pending-track,
@@ -171,7 +161,7 @@ html.theme-lite .session-pending-body {
   transform: none !important;
 }
 
-/* 4. 文本流光扫光：转为纯色文本直接呈现 */
+/* 3. 文本流光扫光：转为纯色文本直接呈现 */
 :root[data-theme-preset="lite"] .text-shimmer-glow,
 html.theme-lite .text-shimmer-glow {
   background: none !important;

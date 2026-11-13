@@ -2,7 +2,6 @@
 import type { ExecPatch } from "./ExecPatch";
 import type { GoalsPatch } from "./GoalsPatch";
 import type { SandboxPatch } from "./SandboxPatch";
-import type { SubagentPatch } from "./SubagentPatch";
 
 /**
  * 写模型：JSON Merge Patch（K3）。反序列化时缺失即 None = 不动；
@@ -38,7 +37,7 @@ sandbox: SandboxPatch | null,
 /**
  * 空闲会话卸载阈值（秒）；0 = 禁用。
  */
-sessionIdleUnloadSecs: number | null, toolAllowlistEnabled: boolean | null, toolAllowlist: Array<string> | null, subagent: SubagentPatch | null, 
+sessionIdleUnloadSecs: number | null, toolAllowlistEnabled: boolean | null, toolAllowlist: Array<string> | null, 
 /**
  * Goal 模式配置(ADR-0015)。
  */

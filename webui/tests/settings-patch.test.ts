@@ -1,14 +1,11 @@
 /** Merge-patch helpers for fields owned by the global config settings surface. */
 import { describe, expect, test } from "vitest";
 import type { ConfigDto } from "../src/api/qaqh/ConfigDto";
-import type { SubagentDto } from "../src/api/qaqh/SubagentDto";
 import {
   MASK,
   buildPatch,
-  formatToolList,
   isPatchEmpty,
   needsBypassConfirm,
-  parseToolList,
   validatePatch,
   type ConfigPatchWire,
 } from "../src/settings/patch";
@@ -34,18 +31,6 @@ function dto(overrides: Partial<ConfigDto> = {}): ConfigDto {
     profilesDetail: {},
     exec: { defaultShell: null },
     sessionIdleUnloadSecs: 0,
-    subagent: {
-      model: "",
-      baseUrl: "",
-      apiKey: "",
-      apiKeySet: false,
-      maxTokens: 4096,
-      timeoutSecs: 120,
-      defaultTools: [],
-      maxDepth: 1,
-      messageInFlightPerPair: 16,
-      messageOutboundPerSender: 1024,
-    },
     mcp: { enabled: false, idleShutdownSecs: 300, servers: [] },
     lsp: { enabled: false, idleShutdownSecs: 600, servers: [] },
     tokenizerPath: null,
@@ -55,10 +40,6 @@ function dto(overrides: Partial<ConfigDto> = {}): ConfigDto {
     goals: { enabled: true, maxTokenBudget: null },
   };
   return { ...base, ...overrides };
-}
-
-function withSubagent(base: ConfigDto, overrides: Partial<SubagentDto>): ConfigDto {
-  return { ...base, subagent: { ...base.subagent, ...overrides } };
 }
 
 describe("buildPatch", () => {
@@ -87,11 +68,9 @@ describe("buildPatch", () => {
     expect(buildPatch(dto({ exec: { defaultShell: "pwsh" } }), dto()).exec).toEqual({ defaultShell: "" });
   });
 
-  test("subagent changes are sparse and compare tool lists by content", () => {
-    expect(buildPatch(dto(), dto()).subagent).toBeUndefined();
-    expect(buildPatch(dto(), withSubagent(dto(), { timeoutSecs: 240 })).subagent).toEqual({ timeoutSecs: 240 });
-    expect(buildPatch(dto(), withSubagent(dto(), { defaultTools: ["read"] })).subagent).toEqual({ defaultTools: ["read"] });
-    expect(buildPatch(withSubagent(dto(), { defaultTools: ["read"] }), dto()).subagent).toEqual({ defaultTools: [] });
+  test("retired subagent config surface never appears in patches (ADR-0018)", () => {
+    const raw = buildPatch(dto(), dto()) as Record<string, unknown>;
+    expect(raw.subagent).toBeUndefined();
   });
 
   test("goals changes are sparse; maxTokenBudget sends null to clear and stays absent when untouched", () => {
@@ -121,14 +100,6 @@ describe("validatePatch", () => {
     expect(validatePatch({ permissionLevel: 4 })).toContain("permissionLevel");
   });
 
-  test("validates subagent depth and timeout limits", () => {
-    expect(validatePatch({ subagent: { maxDepth: 17 } })).toContain("subagent.maxDepth");
-    expect(validatePatch({ subagent: { maxDepth: 1 } })).toBeNull();
-    expect(validatePatch({ subagent: { timeoutSecs: 0 } })).toContain("subagent.timeoutSecs");
-    // subagent.maxTokens 已随 providers.toml 目录退役（ringing-commands-7）。
-    expect(validatePatch({ subagent: {} })).toBeNull();
-  });
-
   test("goals budget rejects 0 and NaN but allows positive values and null", () => {
     // 镜像后端 validate:只拒 0;null=清除,正数放行。
     expect(validatePatch({ goals: { maxTokenBudget: 0 } })).toContain("goals.maxTokenBudget");
@@ -141,10 +112,4 @@ describe("validatePatch", () => {
     const patch: ConfigPatchWire = buildPatch(dto(), dto());
     expect(validatePatch(patch)).toBeNull();
   });
-});
-
-test("tool list text parsing trims blank entries and formats canonical comma lists", () => {
-  expect(parseToolList("read, write ,")).toEqual(["read", "write"]);
-  expect(parseToolList("")).toEqual([]);
-  expect(formatToolList(["read", "write"])).toBe("read, write");
 });

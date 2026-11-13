@@ -38,9 +38,8 @@ import {
   typography,
   updateTypography,
 } from "../lib/typography";
-import { PERMISSION_TIERS, THEME_OPTIONS, formatToolList, needsBypassConfirm, parseToolList } from "./patch";
+import { PERMISSION_TIERS, THEME_OPTIONS, needsBypassConfirm } from "./patch";
 import {
-  baseline,
   busy,
   bypassAck,
   changedCount,
@@ -66,7 +65,6 @@ import {
   setExec,
   setGoals,
   setSandbox,
-  setSubagent,
 } from "./store";
 import { Field, Section, Switch, TextInput } from "./controls";
 import { Select } from "../ui/Select";
@@ -330,9 +328,6 @@ export const SettingsView: Component<{
   onSectionChange?: (section: string) => void;
   showSectionPicker?: boolean;
 }> = (props) => {
-  // 子代理工具清单是「只进不出」的本地缓冲:逗号串要解析成数组,回填会让
-  // 用户和输入框互相打架。
-  const [toolsInput, setToolsInput] = createSignal("");
   const [activeSection, setActiveSection] = createSignal<string>(
     props.initialSection ?? SETTINGS_NAV[0].id,
   );
@@ -355,14 +350,6 @@ export const SettingsView: Component<{
     void refreshRegistry();
     return () => previousFocus?.focus();
   });
-
-  // 基线换了(载入/保存)才重置缓冲——它们不参与 patch 构建。
-  createEffect(
-    () => baseline(),
-    (base) => {
-      setToolsInput(base == null ? "" : formatToolList(base.subagent.defaultTools));
-    },
-  );
 
   const bypassPending = createMemo(() => requireBypass() && needsBypassConfirm(patch()));
 
@@ -541,61 +528,6 @@ export const SettingsView: Component<{
                         min={0}
                         onCommit={(value) => setField("sessionIdleUnloadSecs", value)}
                         ariaLabel={STR.settingsIdleUnload}
-                      />
-                    </Field>
-                  </Section>
-                  </Show>
-
-                  <Show when={activeSection() === "section-subagent"}>
-                  <Section
-                    id="section-subagent"
-                    title="子代理"
-                    desc={STR.settingsSubagentDesc}
-                  >
-                    {/* 端点族设置（model/baseUrl/apiKey/maxTokens）已退役：
-                        子代理模型选择唯一真源是 providers.toml 目录 + 会话行
-                        model_selection（provider.* / session.settings.patch）。 */}
-                    <Field label={STR.settingsSubagentTimeout} hint={STR.settingsSubagentNewOnlyHint} compact>
-                      <NumberInput
-                        value={config().subagent.timeoutSecs}
-                        min={1}
-                        onCommit={(value) => setSubagent("timeoutSecs", value)}
-                        ariaLabel={STR.settingsSubagentTimeout}
-                      />
-                    </Field>
-                    <Field label={STR.settingsSubagentMaxDepth} hint={STR.settingsSubagentMaxDepthHint} compact>
-                      <NumberInput
-                        value={config().subagent.maxDepth}
-                        min={1}
-                        max={16}
-                        onCommit={(value) => setSubagent("maxDepth", value)}
-                        ariaLabel={STR.settingsSubagentMaxDepth}
-                      />
-                    </Field>
-                    <Field label={STR.settingsSubagentInFlight} hint={STR.settingsSubagentInFlightHint} compact>
-                      <NumberInput
-                        value={config().subagent.messageInFlightPerPair}
-                        min={1}
-                        onCommit={(value) => setSubagent("messageInFlightPerPair", value)}
-                        ariaLabel={STR.settingsSubagentInFlight}
-                      />
-                    </Field>
-                    <Field label={STR.settingsSubagentOutbound} hint={STR.settingsSubagentOutboundHint} compact>
-                      <NumberInput
-                        value={config().subagent.messageOutboundPerSender}
-                        min={1}
-                        onCommit={(value) => setSubagent("messageOutboundPerSender", value)}
-                        ariaLabel={STR.settingsSubagentOutbound}
-                      />
-                    </Field>
-                    <Field label={STR.settingsSubagentTools} hint={STR.settingsSubagentToolsHint} wide>
-                      <TextInput
-                        value={toolsInput()}
-                        placeholder="read, write"
-                        onInput={(value) => {
-                          setToolsInput(value);
-                          setSubagent("defaultTools", parseToolList(value));
-                        }}
                       />
                     </Field>
                   </Section>

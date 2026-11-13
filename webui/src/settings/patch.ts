@@ -17,8 +17,6 @@ import type { ConfigPatch } from "../api/qaqh/ConfigPatch";
 import type { ExecDto } from "../api/qaqh/ExecDto";
 import type { GoalsDto } from "../api/qaqh/GoalsDto";
 import type { GoalsPatch } from "../api/qaqh/GoalsPatch";
-import type { SubagentDto } from "../api/qaqh/SubagentDto";
-import type { SubagentPatch } from "../api/qaqh/SubagentPatch";
 
 /** 后端读模型对非空密钥的掩码值;写入时它和空串同样表示「保持现值」。 */
 export const MASK = "****";
@@ -30,14 +28,12 @@ export const MASK = "****";
  */
 type Optionalize<T> = { [K in keyof T]?: NonNullable<T[K]> };
 
-export type SubagentPatchWire = Optionalize<SubagentPatch>;
 /** goals 段:`maxTokenBudget` 是 K3「wire 永不 null」的**有意例外**(null=清除),
  *  不能吃 Optionalize 的 NonNullable,单独放行。 */
 export type GoalsPatchWire = Optionalize<Omit<GoalsPatch, "maxTokenBudget">> & {
   maxTokenBudget?: number | null;
 };
-export type ConfigPatchWire = Optionalize<Omit<ConfigPatch, "subagent" | "goals">> & {
-  subagent?: SubagentPatchWire;
+export type ConfigPatchWire = Optionalize<Omit<ConfigPatch, "goals">> & {
   goals?: GoalsPatchWire;
 };
 
@@ -104,22 +100,6 @@ function changed<T>(patch: Sink, key: string, baseline: T, next: T): void {
   patch[key] = next;
 }
 
-const toolsChanged = (a: readonly string[], b: readonly string[]): boolean =>
-  a.length !== b.length || a.some((item, index) => item !== b[index]);
-
-/** 子代理段:任一字段有变化才发,否则整段缺席(缺失 = 不动)。
- *  端点族字段（model/baseUrl/apiKey/maxTokens）已随 providers.toml 目录退役，
- *  子代理模型选择只走会话行 `model_selection`（ringing-commands-7）。 */
-export function buildSubagentPatch(baseline: SubagentDto, draft: SubagentDto): SubagentPatchWire | null {
-  const raw: Sink = {};
-  changed(raw, "timeoutSecs", baseline.timeoutSecs, draft.timeoutSecs);
-  changed(raw, "maxDepth", baseline.maxDepth, draft.maxDepth);
-  changed(raw, "messageInFlightPerPair", baseline.messageInFlightPerPair, draft.messageInFlightPerPair);
-  changed(raw, "messageOutboundPerSender", baseline.messageOutboundPerSender, draft.messageOutboundPerSender);
-  if (toolsChanged(baseline.defaultTools, draft.defaultTools)) raw["defaultTools"] = [...draft.defaultTools];
-  return Object.keys(raw).length === 0 ? null : (raw as SubagentPatchWire);
-}
-
 /** exec 段:defaultShell 空串/"auto" = 平台自动探测;只在真改动时整段发出。 */
 export function buildExecPatch(
   baseline: ExecDto,
@@ -151,8 +131,6 @@ export function buildPatch(baseline: ConfigDto, draft: ConfigDto): ConfigPatchWi
   if (draft.sandbox?.enabled != null && draft.sandbox?.enabled !== baseline.sandbox?.enabled) {
     raw["sandbox"] = { enabled: draft.sandbox.enabled };
   }
-  const subagent = buildSubagentPatch(baseline.subagent, draft.subagent);
-  if (subagent != null) raw["subagent"] = subagent;
   const goals = buildGoalsPatch(baseline.goals, draft.goals);
   if (goals != null) raw["goals"] = goals;
   return raw as ConfigPatchWire;
@@ -176,15 +154,6 @@ export function validatePatch(patch: ConfigPatchWire): string | null {
   const level = patch.permissionLevel;
   if (level != null && ![1, 2, 3].includes(level)) {
     return `permissionLevel 仅允许 1..=3（1=read-only, 2=workspace-write, 3=skip-permissions），收到 ${level}`;
-  }
-  const sub = patch.subagent;
-  if (sub != null) {
-    if (sub.timeoutSecs != null && (sub.timeoutSecs <= 0 || !Number.isInteger(sub.timeoutSecs))) {
-      return "subagent.timeoutSecs 必须是大于 0 的整数";
-    }
-    if (sub.maxDepth != null && (sub.maxDepth < 1 || sub.maxDepth > 16 || !Number.isInteger(sub.maxDepth))) {
-      return `subagent.maxDepth 仅允许 1..=16，收到 ${sub.maxDepth}`;
-    }
   }
   // 镜像 qaqh-config-api validate:只拒 0;负数/小数由 serde u64 自带报错。
   // NaN 必须拦:JSON.stringify(NaN) → null,而这里是**有意例外**——null=清除上限,
@@ -214,11 +183,3 @@ export const toNumber = (raw: string): number | null => {
   const value = Number(trimmed);
   return Number.isFinite(value) ? value : null;
 };
-
-export const parseToolList = (raw: string): string[] =>
-  raw
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item !== "");
-
-export const formatToolList = (tools: readonly string[]): string => tools.join(", ");

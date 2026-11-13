@@ -5,7 +5,6 @@ export const SETTINGS_NAV = [
   { id: "section-context", label: "上下文", group: "运行" },
   { id: "section-runtime", label: "运行时", group: "运行" },
   { id: "section-host", label: "桌面壳", group: "运行" },
-  { id: "section-subagent", label: "子代理", group: "运行" },
   { id: "section-goals", label: "目标模式", group: "运行" },
   { id: "section-mcp", label: "MCP / LSP", group: "运行" },
   { id: "section-appearance", label: "外观", group: "界面" },

@@ -293,13 +293,6 @@ if (isVisualPreview) {
     toolAllowlistEnabled: false,
     toolAllowlist: [],
     goals: { enabled: true, maxTokenBudget: null },
-    subagent: {
-      timeoutSecs: 120,
-      defaultTools: ["read", "write"],
-      maxDepth: 3,
-      messageInFlightPerPair: 0,
-      messageOutboundPerSender: 0,
-    },
     mcp: {
       enabled: true,
       idleShutdownSecs: 300,
@@ -1351,7 +1344,6 @@ if (previewMaterial === "glass" || previewMaterial === "solid") setSessionMateri
 /** `?attach=` → 待发附件的确定性夹具态(ready|uploading|failed)。 */
 const previewAttach = previewParams.get("attach");
 const fixtureMetrics = {
-  tokensPerSecond: 46.2,
   contextPercent: 34,
   contextWindow: 200_000,
   cacheHitPercent: 88,

@@ -89,12 +89,6 @@ export function attachmentName(path: string): string {
 }
 
 export interface ComposerMetrics {
-  /** Last-turn completion throughput; tokens come from provider usage when available. */
-  tokensPerSecond: number | null;
-  /** 是否当前正处于模型增量流式生成中。 */
-  isStreaming?: boolean;
-  /** Parameter generation activity, not a fabricated token throughput. */
-  isGeneratingToolInput?: boolean;
   contextPercent: number | null;
   /**
    * 百分比的分母本身(`config.load().contextLength`)。
@@ -108,32 +102,6 @@ export interface ComposerMetrics {
   /** 上一轮端点回的原生 usage 整数项(`credit` 等未建模字段);没有就是空对象。 */
   extras: Record<string, number>;
 }
-
-/** 轻量、快速、零外部依赖的 token 粗估器 (按 CJK / 拉丁字符特性平滑加权)。 */
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  const cjkMatches = text.match(/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g);
-  const cjkCount = cjkMatches ? cjkMatches.length : 0;
-  const nonCjkLen = text.length - cjkCount;
-  const cjkTokens = cjkCount * 0.75;
-  const nonCjkTokens = nonCjkLen / 3.8;
-  return Math.max(1, Math.round(cjkTokens + nonCjkTokens));
-}
-
-/** 相邻产出 delta(message reasoning/answer、tool_arguments)间隙 ≤ 此值视为模型连续产出,计入速率分母;更长的间隙是工具执行/等待/网络卡顿,只重锚产出段起点。 */
-const OUTPUT_GAP_MAX_MS = 1500;
-/** 实时读数滑动窗口长度(与结算口径同为 estimateTokens 家族,到达时不会跳变)。 */
-const LIVE_WINDOW_MS = 3000;
-/** 窗口内样本跨度不足此值不出数(单帧噪声)。 */
-const LIVE_MIN_SPAN_MS = 400;
-/** 实时读数最少多久刷新一次,防 delta 洪峰把 composer 信号打穿。 */
-const LIVE_UPDATE_MIN_MS = 300;
-/**
- * 实时读数上限:分母是客户端**到货时间**,代理缓冲/卡顿补发/工具参数整段上船时
- * 比值测的是到货突发,不是产出速率。真实端点产出不超过约两百 tok/s;超过此值
- * 必是伪影,钳住显示,结算值(后端 generated_ms)到达后自会接管。
- */
-const LIVE_RATE_MAX = 500;
 
 /**
  * 输入区模型/参数选择器的会话视图。
@@ -195,7 +163,7 @@ export class SessionStore {
   providerRetry = createSignal<ProviderRetryState | null>(null);
   reconnect = createSignal<ReconnectState | null>(null);
   activity = createSignal<SessionActivity | null>(null);
-  composerMetrics = createSignal<ComposerMetrics>({ tokensPerSecond: null, isStreaming: false, contextPercent: null, contextWindow: null, cacheHitPercent: null, extras: {} });
+  composerMetrics = createSignal<ComposerMetrics>({ contextPercent: null, contextWindow: null, cacheHitPercent: null, extras: {} });
   composerProfile = createSignal<SessionProfileView>({
     effective: null,
     model: null,
@@ -283,20 +251,6 @@ export class SessionStore {
   private approvalGeneration = 0;
   private approvalEventRevision = 0;
   private approvalsVerified = false;
-  private activeTurnStartedAt: number | null = null;
-  /**
-   * 本回合**正在产出模型 token** 的块 id:text(答案)与 reasoning(思考)都算。
-   * 工具块不在里面——它吃的是宿主/子进程的钟,不是模型的吐字速率。
-   */
-  private activeModelBlockIds = new Set<string>();
-  private activeOutputStartedAt: number | null = null;
-  private activeOutputEndedAt: number | null = null;
-  private activeOutputActiveMs = 0;
-  /** trackOutputDelta 写入端:上一帧 message_delta 时刻(间隙判定用)。 */
-  private lastOutputDeltaAt: number | null = null;
-  /** 实时速率滑动窗口样本。 */
-  private liveRateWindow: { at: number; tokens: number }[] = [];
-  private lastLiveRateAt = 0;
   private contextRefreshId = 0;
   /** 分母:会话有效模型目录里的 context_window(publishProfileView 维护)。 */
   private contextLength: number | null = null;
@@ -406,9 +360,6 @@ export class SessionStore {
     this.clearCancelWatchdog();
     this.loadingOlder[1](false);
     this.waitFrom = null;
-    this.activeTurnStartedAt = null;
-    this.activeModelBlockIds.clear();
-    this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
     this.pending[1]([]);
     this.todos[1]([]);
     this.todosSyncPending[1](false);
@@ -628,26 +579,14 @@ export class SessionStore {
       case "turn_started":
         this.clearCancelWatchdog();
         this.isSending[1](false);
-        this.activeTurnStartedAt = now();
-        this.activeModelBlockIds.clear();
-        this.activeOutputStartedAt = null;
-        this.activeOutputEndedAt = null;
-        this.activeOutputActiveMs = 0;
-        this.lastOutputDeltaAt = null;
-        this.liveRateWindow.length = 0;
-        this.lastLiveRateAt = 0;
-        this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
         break;
       case "turn_phase_changed":
         this.activity[1](event.phase === "waiting_user" ? "waiting_user" : event.phase === "cancelling" ? "cancelling" : "working");
         break;
       case "turn_ended": {
-        if (event.outcome.kind === "finished" && event.outcome.data.usage) this.updateComposerUsage(event.outcome.data.usage, null);
+        if (event.outcome.kind === "finished" && event.outcome.data.usage) this.updateComposerUsage(event.outcome.data.usage);
         this.clearCancelWatchdog();
         this.isSending[1](false);
-        this.activeTurnStartedAt = null;
-        this.activeModelBlockIds.clear();
-        this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
         // refreshProfile 会重发 profile 视图（含模型目录推出的 context 窗口）；
         // 这里不再额外调 refreshConfigView——同步重发会把未选择会话的分母清空，
         // 盖掉刚结算的 usage 百分比。
@@ -658,7 +597,7 @@ export class SessionStore {
         break;
       }
       case "timeline_appended":
-        if (event.entry.kind === "assistant_block" && event.entry.data.usage) this.updateComposerUsage(event.entry.data.usage, event.entry.data.generated_ms ?? null);
+        if (event.entry.kind === "assistant_block" && event.entry.data.usage) this.updateComposerUsage(event.entry.data.usage);
         if (event.entry.kind === "input" && this.isSending[0]()) this.isSending[1](false);
         break;
       case "tool_finished":
@@ -675,11 +614,6 @@ export class SessionStore {
         // 声明把封箱事实的扫描面收窄到「见过 handoff 调用」的会话上(交接工具
         // 不受 allowlist 约束,minimal/custom 档也照样可能出现)。
         if (event.tool_name === HANDOFF_TOOL) this.sawHandoffCall = true;
-        if (event.type === "tool_arguments_delta" && this.activeTurnStartedAt != null) {
-          // 工具参数也是模型产出:并入速率分母与实时滑动窗口——completion_tokens
-          // 分子从来就含参数 token,分母不认它们才是结算虚高的根因(2026-11-12)。
-          this.trackOutputDelta(event.text, true);
-        }
         break;
       case "handoff_sealed": {
         // ADR-016 切片 1/2:内核 T+10s 一体完成建 B+投文档+开回合,本事件是
@@ -720,11 +654,7 @@ export class SessionStore {
       case "exec_session_output_delta":
       case "tool_output_delta":
       case "subagent_updated":
-        break;
       case "message_delta":
-        // message_delta(reasoning/answer 两类 block_kind 都算,不按 kind 过滤)是
-        // "模型确实在产出"的可靠证据;工具/子进程输出走 *_output_delta,不进这里。
-        if (this.activeTurnStartedAt != null) this.trackOutputDelta(event.text, false);
         break;
     }
   }
@@ -740,86 +670,21 @@ export class SessionStore {
   }
 
   /**
-   * 速率写入端(修复 2026-11-11 发现的"死分母链":activeOutput* 三件套此前无任何 writer,
-   * 结算永远落到回合总时长,一个 30s exec 能把 40 tok/s 压成 2 tok/s)。
-   * 分母:相邻 delta 间隙 ≤ OUTPUT_GAP_MAX_MS 才累计进 activeOutputActiveMs——
-   * 更长的段间空隙(工具执行/等待/网络卡顿)只重锚,不进分母。
-   * 实时值:LIVE_WINDOW_MS 滑动窗口内 estimateTokens 之和 ÷ 样本跨度,
-   * 按 LIVE_UPDATE_MIN_MS 节流;窗口估算与结算同一估计器家族,结算到达时平滑衔接。
-   * 输入源(2026-11-12 起):message_delta(reasoning+answer)与 tool_arguments_delta
-   * 全部并入——与 completion_tokens 分子(从来含思考与参数 token)对齐口径。
+   * 结算上一轮端点 usage:占用(contextPercent/cacheHitPercent/extras)。
+   * tok/s 展示链已退役——前端不再对产出速率做任何测量或预测。
    */
-  private trackOutputDelta(text: string, isToolArgs: boolean): void {
-    const t = now();
-    if (this.activeOutputStartedAt == null) this.activeOutputStartedAt = t;
-    const gap = this.lastOutputDeltaAt == null ? 0 : t - this.lastOutputDeltaAt;
-    if (gap > 0 && gap <= OUTPUT_GAP_MAX_MS) this.activeOutputActiveMs += gap;
-    this.lastOutputDeltaAt = t;
-    this.activeOutputEndedAt = t;
-
-    const tokens = estimateTokens(text);
-    if (tokens > 0) this.liveRateWindow.push({ at: t, tokens });
-    const cutoff = t - LIVE_WINDOW_MS;
-    while (this.liveRateWindow.length > 0 && this.liveRateWindow[0]!.at < cutoff) this.liveRateWindow.shift();
-    const firstAt = this.liveRateWindow[0]?.at ?? t;
-    const spanMs = t - firstAt;
-    if (this.liveRateWindow.length >= 2 && spanMs >= LIVE_MIN_SPAN_MS && t - this.lastLiveRateAt >= LIVE_UPDATE_MIN_MS) {
-      const sum = this.liveRateWindow.reduce((acc, sample) => acc + sample.tokens, 0);
-      this.lastLiveRateAt = t;
-      this.composerMetrics[1]((current) => ({
-        ...current,
-        isStreaming: true,
-        isGeneratingToolInput: isToolArgs,
-        tokensPerSecond: Math.min(sum / (spanMs / 1000), LIVE_RATE_MAX),
-      }));
-      return;
-    }
-    // 没到刷新节拍:只保证流式态点亮(这两个布尔以前无人置 true,"is-live" 一直是死的)。
-    this.composerMetrics[1]((current) =>
-      current.isStreaming && current.isGeneratingToolInput === isToolArgs
-        ? current
-        : { ...current, isStreaming: true, isGeneratingToolInput: isToolArgs });
-  }
-
-  private updateComposerUsage(usage: UsageInfo, backendGeneratedMs: number | null): void {
-    // 分母优先级(2026-11-12 起):后端内核实测 `generated_ms`(本次尝试首个
-    // 产出碎片到最后一个碎片的跨度,与 completion_tokens 同一次请求口径)是
-    // 真·产出区间;客户端到货时间降为兜底——代理缓冲/批量冲刷会把到货跨度
-    // 压成假小分母(展示面上千 tok/s 的老根子)。
-    // 速率分母只算「模型确实在产出」的累计区间（见 activeOutputActiveMs 的累加规则）。
-    // 下面那条首末差一直自称 "excluding tool and user-wait time"，其实没排除：
-    // 中间跑一个 30 秒的 exec，40 tok/s 能被压成 2 tok/s。首末差只留给
-    // 没观测到任何增量的回放/纯历史路径当兜底。
-    // BUG-2026-11-12（展示面 10000 tok/s）：单条 message_delta / 整段批量冲刷时
-    // 观测跨度为 0，旧逻辑 Math.max(0.001, …) 把分母钳成常量 1 毫秒，
-    // completion_tokens ÷ 0.001s = 速率直接乘 1000 倍——10 token 回合一跳就是
-    // 10000 tok/s。跨度测不出来就不再除假分母：先退回回合总时长，连锚点都没有
-    // （纯回放）则维持旧值不动。
-    const observedMs = this.activeOutputActiveMs > 0
-      ? this.activeOutputActiveMs
-      : this.activeOutputStartedAt != null && this.activeOutputEndedAt != null
-        ? this.activeOutputEndedAt - this.activeOutputStartedAt
-        : 0;
-    const durationMs = backendGeneratedMs != null && backendGeneratedMs >= LIVE_MIN_SPAN_MS
-      ? backendGeneratedMs
-      : observedMs >= LIVE_MIN_SPAN_MS
-      ? observedMs
-      : this.activeTurnStartedAt == null ? null : Math.max(0, now() - this.activeTurnStartedAt);
-    const elapsedSeconds = durationMs == null || durationMs < 1 ? null : durationMs / 1_000;
+  private updateComposerUsage(usage: UsageInfo): void {
     // 服务端 usage 的 prompt_tokens 就是这一轮真正发出去的上下文(系统提示 + 工具
     // schema + 历史),直接当占用真值;它只统计到本轮 prompt,答案那部分要等下一轮
     // 才进 prompt,所以这个表盘天然滞后一轮。
     this.measuredContextTokens = usage.prompt_tokens;
     this.composerMetrics[1]((current) => ({
       ...current,
-      tokensPerSecond: elapsedSeconds == null ? current.tokensPerSecond : usage.completion_tokens / elapsedSeconds,
       cacheHitPercent: usage.cache_usage_reported === false
         ? null
         : cacheHitPercent(usage) ?? current.cacheHitPercent,
       // 反映上一轮为准:端点这轮没报 extras 就清空,不留陈旧的芯片。
       extras: usage.extras ?? {},
-      isStreaming: false,
-      isGeneratingToolInput: false,
     }));
     this.publishContextPercent();
   }
@@ -1417,9 +1282,6 @@ export class SessionStore {
       this.cancelWatchdog = null;
       if (this.disposed) return;
       this.isSending[1](false);
-      this.activeTurnStartedAt = null;
-      this.activeModelBlockIds.clear();
-      this.composerMetrics[1]((current) => ({ ...current, isStreaming: false, isGeneratingToolInput: false }));
       // 蓝点:后端仍报 working(卡死的 actor),本地先按已中断呈现;
       // 真实 activity 投影到达时会被覆盖。
       if (this.activity[0]() === "working") this.activity[1]("interrupted");

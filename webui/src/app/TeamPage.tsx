@@ -18,6 +18,7 @@
 import { createEffect, createSignal, For, onCleanup, Show, type Component } from "solid-js";
 import IconRefresh from "~icons/lucide/rotate-cw";
 import type { TaskState } from "../api/qaqh/TaskState";
+import type { TeamAgentStatus } from "../api/qaqh/TeamAgentStatus";
 import type { TaskView } from "../api/qaqh/TaskView";
 import type { TeamResponse } from "../api/qaqh/TeamResponse";
 import { Select } from "../ui/Select";
@@ -32,6 +33,18 @@ const TASK_STATE_LABELS: Record<TaskState, string> = {
   completed: STR.teamTaskCompleted,
   closed: STR.teamTaskClosed,
   cancelled: STR.teamTaskCancelled,
+};
+
+/** ADR-0018:花名册终态说真话,failed/cancelled 不再被投影洗成完成。 */
+const AGENT_STATUS_LABELS: Record<TeamAgentStatus, string> = {
+  pending_init: STR.teamStatusPendingInit,
+  running: STR.teamStatusRunning,
+  waiting_user: STR.teamStatusWaitingUser,
+  interrupted: STR.teamStatusInterrupted,
+  completed: STR.teamStatusCompleted,
+  errored: STR.teamStatusErrored,
+  shutdown: STR.teamStatusShutdown,
+  not_found: STR.teamStatusNotFound,
 };
 
 /** 依赖满足 = 前置任务是 completed|closed(后端 TaskState 同口径)。 */
@@ -152,7 +165,9 @@ export const TeamPage: Component = () => {
                 <For each={[...data().team.agents].sort((a, b) => a.agent_path.localeCompare(b.agent_path))}>{(agent) => (
                   <li class="team-agent" style={{ "--depth": String(agent.agent_path.split("/").length - 1) }}>
                     <span class="team-agent-path" title={agent.agent_path}>{agent.agent_path.split("/").pop()}</span>
-                    <span class="team-agent-status">{agent.status}</span>
+                    <span class="team-agent-status" data-status={agent.status}>
+                      {AGENT_STATUS_LABELS[agent.status] ?? agent.status}
+                    </span>
                   </li>
                 )}</For>
               </ul>

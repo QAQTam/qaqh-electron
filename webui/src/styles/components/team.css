@@ -73,6 +73,10 @@
 }
 .team-agent-path { color: var(--text); font-family: var(--mono, monospace); overflow-wrap: anywhere; }
 .team-agent-status { color: var(--muted); }
+.team-agent-status[data-status="errored"],
+.team-agent-status[data-status="not_found"] { color: var(--err); }
+.team-agent-status[data-status="interrupted"],
+.team-agent-status[data-status="shutdown"] { color: var(--warn); }
 
 .team-board { display: grid; gap: 10px; }
 .team-channel { display: grid; gap: 6px; }

@@ -35,13 +35,6 @@ const baseConfig = (): ConfigDto => ({
   exec: { defaultShell: null },
   sessionIdleUnloadSecs: 0,
   goals: { enabled: true, maxTokenBudget: null },
-  subagent: {
-    timeoutSecs: 120,
-    defaultTools: ["read", "write"],
-    maxDepth: 1,
-    messageInFlightPerPair: 16,
-    messageOutboundPerSender: 1024,
-  },
   mcp: {
     enabled: true,
     idleShutdownSecs: 300,
@@ -182,10 +175,6 @@ const skillsCatalogFixture = {
 /** 假宿主的 merge patch 应用:与 daemon 同语义——缺字段不动。 */
 function applyMergePatch(target: ConfigDto, patch: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(patch)) {
-    if (key === "subagent" && value != null && typeof value === "object") {
-      Object.assign(target.subagent, value as Record<string, unknown>);
-      continue;
-    }
     (target as Record<string, unknown>)[key] = value;
   }
 }

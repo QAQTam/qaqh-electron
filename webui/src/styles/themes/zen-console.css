@@ -167,12 +167,6 @@ html.theme-zen-console .text-shimmer-glow {
   opacity: 1 !important;
 }
 
-/* 3. Composer 生成态工作点：彗星接管存活指示,这里不再重复显示 */
-:root[data-theme-preset="zen-console"] .composer-live-dot,
-html.theme-zen-console .composer-live-dot {
-  display: none;
-}
-
 /* ── 状态栏彗星 (TUI Comet Tail):本主题唯一的「存活」动画 ─────────────────
    亮块领飞 + 2 个渐暗尾块,在状态栏(.composer-identity)右端来回跑(用户参考
    TUI 彗星 spinner)。调头点恰在 ease-in-out 拐点(速度为 0),用 steps(1) 把

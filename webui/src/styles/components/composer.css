@@ -67,19 +67,6 @@
   /* 状态栏彗星(存活指示):仅 zen-console 主题显示(theme 里定义外观与动画),
      其余主题不渲染任何可见物——这里是挂载点与默认隐藏。 */
   .composer-comet { display: none; }
-  .composer-identity-item.is-live { color: var(--text); }
-  .composer-identity-item.is-live strong { color: var(--accent); }
-  .composer-identity-item.is-idle { opacity: 0.65; }
-  .composer-live-dot {
-    width: 6px; height: 6px; border-radius: 999px;
-    background: var(--accent); box-shadow: 0 0 6px var(--accent);
-    flex: none; margin-right: 1px;
-    animation: live-pulse 1.2s ease-in-out infinite;
-  }
-  @keyframes live-pulse {
-    0%, 100% { opacity: 0.35; transform: scale(0.85); }
-    50% { opacity: 1; transform: scale(1.15); }
-  }
   .composer-controls, .composer-submit-area { display: flex; align-items: center; gap: 5px; min-width: 0; }
   .composer-submit-area { flex: none; }
   .composer-control-wrap { position: relative; min-width: 0; }

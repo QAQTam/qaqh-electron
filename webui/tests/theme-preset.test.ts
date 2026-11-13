@@ -105,8 +105,8 @@ describe("主题预设解耦与无残留切换测试", () => {
     expect(liteCss).toContain("backdrop-filter: none !important;");
     expect(liteCss).toContain("--glass-blur: 0px !important;");
 
-    // 2. 验证包含无限循环动画的彻底停用（composer-live-dot、tab-dot 等）
-    expect(liteCss).toContain(".composer-live-dot");
+    // 2. 验证包含无限循环动画的彻底停用（tab-dot 等;composer-live-dot 随 tok/s 展示链退役）
+    expect(liteCss).not.toContain(".composer-live-dot");
     expect(liteCss).toContain(".tab-dot.run");
     expect(liteCss).toContain("animation: none !important;");
 

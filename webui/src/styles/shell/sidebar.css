@@ -242,7 +242,6 @@
      隐藏 ::before、改用会滑动的共享 pill(见 fluent.css)。 */
   .message-session-pill { display: none; }
   .message-session-item:focus-visible { outline-offset: 1px; }
-  .message-session-item > svg { flex: none; width: 14px; height: 14px; opacity: .72; }
   .message-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .message-session-toolmode {
     flex: none;

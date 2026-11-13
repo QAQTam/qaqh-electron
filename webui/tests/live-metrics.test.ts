@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { SessionStore, estimateTokens } from "../src/session/store";
+import { SessionStore } from "../src/session/store";
 import { applyFrame } from "./session-fixtures";
 
 afterEach(() => {
@@ -7,22 +7,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-test("estimateTokens 针对 CJK 与拉丁字符的粗估", () => {
-  expect(estimateTokens("")).toBe(0);
-  const cjkTokens = estimateTokens("你好世界，这是一个测试！");
-  expect(cjkTokens).toBeGreaterThanOrEqual(8);
-  expect(cjkTokens).toBeLessThanOrEqual(15);
-
-  const englishTokens = estimateTokens("hello world test function");
-  expect(englishTokens).toBeGreaterThanOrEqual(5);
-  expect(englishTokens).toBeLessThanOrEqual(10);
-});
-
 function createMetricsHarness() {
   const store = new SessionStore("test-metrics");
   const feedProjection = (event: Parameters<typeof applyFrame>[1]) => applyFrame(store, event);
   return { store, feedProjection };
 }
+
+// tok/s 预测链已退役:composer 指标只剩占用(context/cache),不再测产出速率。
+test("composerMetrics 只发布占用类指标,不含 tokensPerSecond/isStreaming", () => {
+  const { store } = createMetricsHarness();
+  const metrics = store.composerMetrics[0]() as Record<string, unknown>;
+  expect(metrics.tokensPerSecond).toBeUndefined();
+  expect(metrics.isStreaming).toBeUndefined();
+});
 
 test("常驻：配置加载后即便尚未生成，contextPercent 也发布为 0% 基础占位（非 null）", () => {
   const { store } = createMetricsHarness();
@@ -32,7 +29,6 @@ test("常驻：配置加载后即便尚未生成，contextPercent 也发布为 0
   const metrics = store.composerMetrics[0]();
   expect(metrics.contextPercent).toBe(0);
   expect(metrics.contextWindow).toBe(100_000);
-  expect(metrics.isStreaming).toBe(false);
 });
 
 test("turn_ended settles official usage and updates context and cache metrics", () => {
@@ -57,16 +53,6 @@ test("turn_ended settles official usage and updates context and cache metrics", 
   } });
 
   const settled = store.composerMetrics[0]();
-  expect(settled.isStreaming).toBe(false);
   expect(settled.contextPercent).toBeCloseTo(12, 1);
   expect(settled.cacheHitPercent).toBeCloseTo(50, 1);
-});
-
-test("turn_started 复位 isStreaming 状态", () => {
-  const { store, feedProjection } = createMetricsHarness();
-  store.composerMetrics[1]((current) => ({ ...current, isStreaming: true }));
-
-  feedProjection({ seq: 1, type: "turn_started", turn_id: "t2", input_id: "in2" });
-
-  expect(store.composerMetrics[0]().isStreaming).toBe(false);
 });

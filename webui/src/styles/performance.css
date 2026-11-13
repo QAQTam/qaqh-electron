@@ -53,7 +53,6 @@
   /* 停用持续发光与各类无限循环动画，允许 WebKitGTK/合成器挂起休眠 */
   html[data-perf-mode="low"] :is(
     .text-shimmer-glow,
-    .composer-live-dot,
     .tab-dot.run,
     .composer-comet-run,
     .composer-comet-face,
@@ -64,7 +63,6 @@
   ),
   html.perf-mode-low :is(
     .text-shimmer-glow,
-    .composer-live-dot,
     .tab-dot.run,
     .composer-comet-run,
     .composer-comet-face,
@@ -75,11 +73,5 @@
   ) {
     animation: none !important;
     transform: none !important;
-  }
-
-  html[data-perf-mode="low"] .composer-live-dot,
-  html.perf-mode-low .composer-live-dot {
-    opacity: 1 !important;
-    box-shadow: none !important;
   }
 }

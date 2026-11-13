@@ -1,7 +1,7 @@
 {
   "name": "qaqh-webui",
   "private": true,
-  "version": "3.0.20261103-1",
+  "version": "3.1.20261113-1",
   "type": "module",
   "description": "QAQ-Harness WebUI (Electron renderer, Solid 2 rc + Vite + TS strict)",
   "license": "MIT OR Apache-2.0",

@@ -436,8 +436,15 @@ export function createNotifier(deps: NotifierDeps): Notifier {
         const subagent = event.subagent as { status?: string | null; role?: string | null; child_session_id?: string };
         if (subagent.status == null) break; // 非终态（进行中更新）不出 toast。
         if (deps.windowEngaged()) break;
+        // ADR-0018:投影说真话,终态可能是 failed/cancelled——逐值给中文文案,未知原样。
+        const label: Record<string, string> = {
+          completed: "完成",
+          failed: "失败",
+          cancelled: "已取消",
+          timed_out: "超时",
+        };
         toast({
-          title: `子代理 ${subagent.status} · ${sessionTitle(seed)}`,
+          title: `子代理${label[subagent.status] ?? ` ${subagent.status}`} · ${sessionTitle(seed)}`,
           body: snippet(subagent.role ?? subagent.child_session_id ?? "", 80),
         });
         break;
