@@ -141,6 +141,9 @@ export interface TransportBackend {
   /** 待审批(challenge 由宿主签发,canonical id 不出宿主)。 */
   approvals(sessionId: string): Promise<ApprovalView[]>;
 
+  /** Team 投影快照(`GET /ringing/v2/sessions/{seed}/team`;无推送,按需拉取)。 */
+  teamSnapshot(sessionId: string): Promise<unknown>;
+
   invalidateApprovals(sessionId: string, challengeId?: string, verified?: boolean | "revoke"): Promise<void>;
 
   respondApproval(sessionId: string, challengeId: string, decision: string, payload?: Record<string, unknown>): Promise<null>;

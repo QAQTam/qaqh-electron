@@ -4,7 +4,7 @@
  * 不支持 background-clip:text 的引擎退回基线层(opacity 交叉淡出保底)。 */
 @layer components {
   .text-shimmer {
-    --ts-duration: var(--tool-shimmer-dur, 1.6s);
+    --ts-duration: var(--tool-shimmer-dur, 1.618s);
     --ts-spread: 5.2ch;
     --ts-gutter: calc(var(--ts-spread) + 1ch);
     --ts-base-color: var(--muted);

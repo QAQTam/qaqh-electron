@@ -25,10 +25,19 @@
   .topbar-center .session-header { flex: 1 1 auto; min-width: 0; }
   .topbar-right { display: flex; align-items: center; gap: 6px; }
   .topbar-right .titlebar-more { margin-left: 0; }
-  /* 任务抽屉触发钮(阶段5):图标+badge 横排,宽度随内容。 */
-  .rail-trigger { display: inline-flex; align-items: center; gap: 4px; width: auto; padding: 0 8px; }
+  /* 功能区:顶栏右格的会话级功能按钮组——终端(后台执行)/任务/手柄。
+     右侧竖线把它与应用级「更多」菜单划开,功能区自身是语义组(role=group)。 */
+  .topbar-function-zone {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding-right: 6px; border-right: 1px solid var(--border);
+  }
+  /* 任务抽屉触发钮(阶段5):与终端入口同构——badge 绝对定位锚,按钮本体走 .titlebar-menu 规格。 */
+  .rail-trigger { position: relative; }
   /* 主动展开钮的按下态(BUG-2026-10-29):docked 右栏展开中 / 抽屉开着时点亮。 */
   .rail-trigger.active { color: var(--text); background: var(--surface-2); }
+  /* 后台执行终端入口(功能区首位):badge 绝对定位锚 + 抽屉开启态点亮。 */
+  .function-zone-exec { position: relative; }
+  .function-zone-exec.active { color: var(--text); background: var(--surface-2); }
   /* 阶段5 断点列态(spec §4.6):由 #app 实宽的 ResizeObserver 切 cols-N class,
      不用媒体查询——窗口 chrome/缩放会让视口宽 ≠ 内容宽。 */
   #app.cols-2 { grid-template-columns: var(--sidebar-width, 288px) minmax(0, 1fr); }
@@ -53,12 +62,17 @@
     /* 开:visibility 立即可见(不进过渡),遮罩跟着淡入。 */
     transition: opacity var(--dur) var(--ease);
   }
+  /* 待办计数徽章:与终端 .exec-count-badge 同款,挂按钮右上角。 */
   .topbar-right .rail-badge {
-    min-width: 16px; height: 16px; margin-left: 4px;
-    display: inline-grid; place-items: center;
-    border-radius: var(--radius-pill); padding: 0 4px;
+    position: absolute;
+    top: -3px; right: -5px;
+    min-width: 15px; height: 15px;
+    padding: 0 4px;
+    border-radius: 8px;
     background: var(--accent); color: var(--on-accent);
-    font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums;
+    font-size: 10px; font-weight: 700; line-height: 15px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
   }
   /* 阶段4:原生标题栏隐藏后,#top 是唯一窗口拖拽区(全平台)。两条硬规则:
      1. app-region: drag 的区域忽略全部 pointer 事件——按钮/输入必须显式 no-drag;
@@ -78,16 +92,18 @@
   html.desktop.platform-macos .topbar-left { padding-left: 78px; }
   html.desktop.platform-macos #top { background: color-mix(in srgb, var(--surface) 65%, transparent); }
   html.desktop.platform-macos[data-theme="dark"] #top { background: color-mix(in srgb, var(--surface) 75%, transparent); }
-  /* 汉堡(侧栏收展):常驻 #top 左缘,规格与 .titlebar-back 一致。 */
-  .titlebar-menu { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-control); color: var(--muted); background: transparent; cursor: pointer; }
+  /* 汉堡(侧栏收展):常驻 #top 左缘,规格与 .titlebar-back 一致。
+     控件嵌套按 φ 收缩:TopBar 48 → 按钮 30(48/φ=29.6) → 图标 18(30/φ=18.6),
+     三级等比嵌套,按钮在顶栏里的"呼吸位"恰好一半。 */
+  .titlebar-menu { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--radius-control); color: var(--muted); background: transparent; cursor: pointer; }
   .titlebar-menu:hover { color: var(--text); background: var(--surface-2); }
-  .titlebar-menu svg { width: 16px; height: 16px; }
+  .titlebar-menu svg { width: 18px; height: 18px; }
   /* ⋯(壳层菜单,阶段1):顶栏右缘,与原生窗口控制隔 WCO 安全区。 */
   .titlebar-more { margin-left: auto; }
   .titlebar-more svg { width: 18px; height: 18px; }
-  .titlebar-back { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-control); color: var(--muted); background: transparent; cursor: pointer; }
+  .titlebar-back { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--radius-control); color: var(--muted); background: transparent; cursor: pointer; }
   .titlebar-back:hover { color: var(--text); background: var(--surface-2); }
-  .titlebar-back svg { width: 16px; height: 16px; }
+  .titlebar-back svg { width: 18px; height: 18px; }
   .titlebar-brand { flex: none; font-size: var(--fs-sm); font-weight: 650; letter-spacing: .04em; }
   .titlebar-session-title { min-width: 0; max-width: min(42vw, 520px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--fs-sm); }
 
@@ -108,6 +124,23 @@
     margin: 8px;
     border-radius: 16px;
     overflow: hidden;
+  }
+  /* 消息区主题岛:把通用表面 token 在本子树重映射到 --chat-* 暖纸色——区内
+     时间线/气泡/代码块/diff/composer 继续 var(--surface-*),自动整体转暖,
+     组件零感知。四周 8px 缝仍透出 Mica 壳,"米色纸钉在霜面上"就是层级信号。
+     外围(会话列表/顶栏/待办栏)不在岛上,保持 Mica。 */
+  .workspace-content {
+    --bg: var(--chat-bg);
+    --surface: var(--chat-surface);
+    --surface-2: var(--chat-surface-2);
+    --surface-user: var(--chat-surface-user);
+    --surface-code: var(--chat-surface-code);
+    --text: var(--chat-text);
+    --muted: var(--chat-muted);
+    --border: var(--chat-border);
+    --code-veil: var(--chat-code-veil);
+    --err-soft: var(--chat-err-soft);
+    color: var(--chat-text);
   }
 
   /* 会话/标签切换的视图过渡(src/ui/viewTransition.ts):默认 UA 交叉淡出收敛

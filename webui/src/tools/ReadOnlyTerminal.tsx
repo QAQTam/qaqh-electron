@@ -9,8 +9,18 @@ const TERMINAL_COLS = 80;
 const TERMINAL_ROWS = 24;
 const LINE_HEIGHT = 1.25;
 const VERTICAL_PADDING = 16;
+// stdout/stderr 共用这一台 xterm：stderr 首次出现时打一条着色分隔行，每个增量裹红色。
+// 滚动面唯一（xterm viewport），外层容器不再参与任何滚动。
+const STDERR_HEADER = "\n\x1b[1m\x1b[31m── stderr ──\x1b[22m\x1b[39m\n";
 
-export type ReadOnlyTerminalProps = { text: string; live: boolean; stream?: ToolProgressStream; tty?: boolean; onWrite?: () => void };
+export type ReadOnlyTerminalProps = {
+  text: string;
+  live: boolean;
+  stream?: ToolProgressStream;
+  stderr?: string;
+  stderrStream?: ToolProgressStream;
+  tty?: boolean;
+};
 
 export const ReadOnlyTerminal: Component<ReadOnlyTerminalProps> = (props) => {
   let host: HTMLDivElement | undefined;
@@ -18,6 +28,9 @@ export const ReadOnlyTerminal: Component<ReadOnlyTerminalProps> = (props) => {
   let observer: ResizeObserver | undefined;
   let lastText = "";
   let lastOffset = 0;
+  let lastStderr = "";
+  let lastStderrOffset = 0;
+  let stderrStarted = false;
   let wasLive = false;
   let initialized = false;
   let following = true;
@@ -61,63 +74,102 @@ export const ReadOnlyTerminal: Component<ReadOnlyTerminalProps> = (props) => {
       if (terminal == null) return;
       if (following) terminal.scrollToBottom();
       resizeToContent();
-      props.onWrite?.();
     });
   };
 
-  const sync = (text: string, live: boolean, stream?: ToolProgressStream): void => {
+  const writeStderr = (delta: string): void => {
+    if (delta === "" || terminal == null) return;
+    if (!stderrStarted) {
+      stderrStarted = true;
+      write(STDERR_HEADER);
+    }
+    write(`\x1b[31m${delta}\x1b[39m`);
+  };
+
+  // 返回待写增量；null 表示组件落后于保留窗口，必须 reset 后按两条流整体重建。
+  const pendingChunk = (
+    lastContent: string,
+    lastPos: number,
+    full: string,
+    live: boolean,
+    stream?: ToolProgressStream,
+  ): string | null => {
+    if (live && stream != null) {
+      if (lastPos < stream.startOffset || lastPos > stream.endOffset) return null;
+      const skip = lastPos - stream.startOffset;
+      return stream.offsetEncoding === "utf8"
+        ? new TextDecoder().decode(new TextEncoder().encode(stream.data).subarray(skip))
+        : stream.data.slice(skip);
+    }
+    if (!full.startsWith(lastContent)) return null;
+    return full.slice(lastContent.length);
+  };
+
+  const rehydrate = (
+    text: string,
+    live: boolean,
+    stream: ToolProgressStream | undefined,
+    stderrText: string,
+    stderrStream: ToolProgressStream | undefined,
+  ): void => {
+    terminal!.reset();
+    following = true;
+    stderrStarted = false;
+    write(live && stream != null ? stream.data : text);
+    writeStderr(live && stderrStream != null ? stderrStream.data : stderrText);
+    lastText = text;
+    lastStderr = stderrText;
+    lastOffset = live ? stream?.endOffset ?? text.length : 0;
+    lastStderrOffset = live ? stderrStream?.endOffset ?? stderrText.length : 0;
+  };
+
+  const sync = (text: string, live: boolean, stream?: ToolProgressStream, stderrText = "", stderrStream?: ToolProgressStream): void => {
     if (terminal == null) return;
     if (!initialized) {
       initialized = true;
-      lastText = text;
       wasLive = live;
+      lastText = text;
+      lastStderr = stderrText;
       lastOffset = live ? stream?.endOffset ?? text.length : 0;
+      lastStderrOffset = live ? stderrStream?.endOffset ?? stderrText.length : 0;
       write(text);
+      writeStderr(stderrText);
       return;
     }
-    if (text === lastText && live === wasLive && (!live || stream?.endOffset === lastOffset)) return;
+    const finalSnapshot = wasLive && !live;
+    const stdoutQuiet = text === lastText && live === wasLive && (!live || stream?.endOffset === lastOffset);
+    const stderrQuiet = stderrText === lastStderr && (!live || stderrStream?.endOffset === lastStderrOffset);
+    if (!finalSnapshot && stdoutQuiet && stderrQuiet) return;
 
     // The bounded stream window carries offsets so repeated output and tail rollover
     // remain incremental. Rehydrate only if the component fell behind the retained
     // window; final output always replaces the live preview with the full snapshot.
-    const finalSnapshot = wasLive && !live;
     if (finalSnapshot) {
-      terminal.reset();
-      following = true;
-      if (host != null) host.style.height = `${Math.ceil(12 * LINE_HEIGHT + VERTICAL_PADDING)}px`;
-      write(text);
-      lastOffset = 0;
-    } else if (live && stream != null) {
-      if (lastOffset < stream.startOffset || lastOffset > stream.endOffset) {
-        terminal.reset();
-        following = true;
-        if (host != null) host.style.height = `${Math.ceil(12 * LINE_HEIGHT + VERTICAL_PADDING)}px`;
-        write(stream.data);
-      } else {
-        const offset = lastOffset - stream.startOffset;
-        write(stream.offsetEncoding === "utf8"
-          ? new TextDecoder().decode(new TextEncoder().encode(stream.data).subarray(offset))
-          : stream.data.slice(offset));
-      }
-      lastOffset = stream.endOffset;
+      rehydrate(text, live, stream, stderrText, stderrStream);
     } else {
-      if (!text.startsWith(lastText)) {
-        terminal.reset();
-        following = true;
-        if (host != null) host.style.height = `${Math.ceil(12 * LINE_HEIGHT + VERTICAL_PADDING)}px`;
-        write(text);
+      const stdoutChunk = pendingChunk(lastText, lastOffset, text, live, stream);
+      const stderrChunk = pendingChunk(lastStderr, lastStderrOffset, stderrText, live, stderrStream);
+      if (stdoutChunk === null || stderrChunk === null) {
+        rehydrate(text, live, stream, stderrText, stderrStream);
       } else {
-        write(text.slice(lastText.length));
+        write(stdoutChunk);
+        writeStderr(stderrChunk);
+        lastText = text;
+        lastStderr = stderrText;
+        lastOffset = live ? stream?.endOffset ?? text.length : 0;
+        lastStderrOffset = live ? stderrStream?.endOffset ?? stderrText.length : 0;
       }
-      lastOffset = live ? stream?.endOffset ?? text.length : 0;
     }
-    lastText = text;
     wasLive = live;
   };
 
   createEffect(
-    () => [props.text, props.live, props.stream?.startOffset, props.stream?.endOffset, props.stream?.data, props.stream?.offsetEncoding] as const,
-    ([text, live]) => sync(text, live, props.stream),
+    () => [
+      props.text, props.live, props.stream, props.stderr, props.stderrStream,
+      props.stream?.startOffset, props.stream?.endOffset, props.stream?.data, props.stream?.offsetEncoding,
+      props.stderrStream?.startOffset, props.stderrStream?.endOffset, props.stderrStream?.data, props.stderrStream?.offsetEncoding,
+    ] as const,
+    ([text, live, stream, stderr, stderrStream]) => sync(text, live, stream, stderr ?? "", stderrStream),
   );
 
   createEffect(
@@ -152,10 +204,10 @@ export const ReadOnlyTerminal: Component<ReadOnlyTerminalProps> = (props) => {
       following = buffer.viewportY >= buffer.baseY;
       resizeToContent();
     });
-    observer = new ResizeObserver(() => { resizeToContent(); props.onWrite?.(); });
+    observer = new ResizeObserver(() => { resizeToContent(); });
     const screen = host.querySelector(".xterm-screen");
     if (screen) observer.observe(screen);
-    sync(props.text, props.live, props.stream);
+    sync(props.text, props.live, props.stream, props.stderr ?? "", props.stderrStream);
 
     return () => {
       observer?.disconnect();

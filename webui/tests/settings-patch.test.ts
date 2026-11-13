@@ -32,7 +32,6 @@ function dto(overrides: Partial<ConfigDto> = {}): ConfigDto {
     activeProfile: "default",
     profiles: ["default"],
     profilesDetail: {},
-    complianceEnabled: false,
     exec: { defaultShell: null },
     sessionIdleUnloadSecs: 0,
     subagent: {
@@ -53,6 +52,7 @@ function dto(overrides: Partial<ConfigDto> = {}): ConfigDto {
     sandbox: { enabled: false },
     toolAllowlistEnabled: false,
     toolAllowlist: [],
+    goals: { enabled: true, maxTokenBudget: null },
   };
   return { ...base, ...overrides };
 }
@@ -67,8 +67,8 @@ describe("buildPatch", () => {
   });
 
   test("only changed fields owned by this settings surface are sent", () => {
-    expect(buildPatch(dto(), dto({ complianceEnabled: true, sessionIdleUnloadSecs: 900 }))).toEqual({
-      complianceEnabled: true,
+    expect(buildPatch(dto(), dto({ autoCompactThreshold: 0.5, sessionIdleUnloadSecs: 900 }))).toEqual({
+      autoCompactThreshold: 0.5,
       sessionIdleUnloadSecs: 900,
     });
     // Provider and model settings are persisted through their dedicated v3 commands.
@@ -92,6 +92,14 @@ describe("buildPatch", () => {
     expect(buildPatch(dto(), withSubagent(dto(), { timeoutSecs: 240 })).subagent).toEqual({ timeoutSecs: 240 });
     expect(buildPatch(dto(), withSubagent(dto(), { defaultTools: ["read"] })).subagent).toEqual({ defaultTools: ["read"] });
     expect(buildPatch(withSubagent(dto(), { defaultTools: ["read"] }), dto()).subagent).toEqual({ defaultTools: [] });
+  });
+
+  test("goals changes are sparse; maxTokenBudget sends null to clear and stays absent when untouched", () => {
+    expect(buildPatch(dto(), dto()).goals).toBeUndefined();
+    expect(buildPatch(dto(), dto({ goals: { enabled: false, maxTokenBudget: null } })).goals).toEqual({ enabled: false });
+    // null = 清除上限是显式语义,必须真的出现在 wire 上(K3 有意例外)。
+    expect(buildPatch(dto({ goals: { enabled: true, maxTokenBudget: 4096 } }), dto()).goals).toEqual({ maxTokenBudget: null });
+    expect(buildPatch(dto(), dto({ goals: { enabled: true, maxTokenBudget: 8192 } })).goals).toEqual({ maxTokenBudget: 8192 });
   });
 
   test("bypass confirmation is required only when changing to permission level 3", () => {
@@ -119,6 +127,14 @@ describe("validatePatch", () => {
     expect(validatePatch({ subagent: { timeoutSecs: 0 } })).toContain("subagent.timeoutSecs");
     // subagent.maxTokens 已随 providers.toml 目录退役（ringing-commands-7）。
     expect(validatePatch({ subagent: {} })).toBeNull();
+  });
+
+  test("goals budget rejects 0 and NaN but allows positive values and null", () => {
+    // 镜像后端 validate:只拒 0;null=清除,正数放行。
+    expect(validatePatch({ goals: { maxTokenBudget: 0 } })).toContain("goals.maxTokenBudget");
+    expect(validatePatch({ goals: { maxTokenBudget: Number.NaN } })).toContain("goals.maxTokenBudget");
+    expect(validatePatch({ goals: { maxTokenBudget: null } })).toBeNull();
+    expect(validatePatch({ goals: { maxTokenBudget: 4096 } })).toBeNull();
   });
 
   test("a clean generated patch passes validation", () => {

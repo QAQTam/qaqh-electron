@@ -21,9 +21,67 @@ agent（daemon 内的模型）可以打开、导航、检视、操作网页并�
 
 ## 非目标（MVP 明确不做）
 
-- 视频录制、下载管理、Chrome extension 后端、多 tab 持久恢复、Playwright locator API 面
+- 下载管理、Chrome extension 后端、多 tab 持久恢复、Playwright locator API 面
 - iframe 内部元素操作（snapshot 标注 iframe 存在，操作限主 frame）
 - 后端 config.save 扩展 mcp 写模型（后端 LTS 下个排期补全，见 docs 记录）
+
+（~~视频录制~~ 已不在非目标列——由下方 Dev Surface 承接。）
+
+## Dev Surface：开发者模式门控的 UI 操作面 + 窗口录制（2026-11-12）
+
+需求口径：**前端开发者模式开启时，向 MCP 暴露可操作面让后端操控壳自身**（不止 IAB pane）。
+
+### 门控语义 = 可见性，不是执行权限
+
+- `mcp-server.ts` 的 `startBrowserMcpServer` 收 `BrowserMcpSurface { listTools, resolveHandler }`，
+  `tools/list` 每次现算：devSurfaceEnabled 时列出 `browserTools(9) + devToolDefs(10)`，关时只列 9。
+- `resolveHandler` **恒定**解析全量 handler 表。若把门控做进执行面，录制中途收回开发者模式会
+  把 `record_stop` 一起锁死（失控录制）。真正的安全边界始终是回环绑定 + per-boot token——
+  拿到 token 的本就等价于拿到主进程 executeJavaScript，Dev Surface 不新增攻击面。
+- 状态源：renderer `webui/lib/devmode` signal（连点版本串解锁，刻意不落盘）。开/关翻转时经
+  `qaqh:devmode-set` IPC（canControlWindow 校验）同步主进程；主窗口 `did-finish-load` 复位
+  false——reload 两侧同步归零，不漂移。
+- daemon 侧生效时机 = 会话唤醒重扫（rmcp tools 缓存语义）：开启后新会话/唤醒可见。
+
+### 工具面（同一 server，前缀 `mcp__qaqh-browser__*`）
+
+| 工具 | 行为 |
+|---|---|
+| `ui_snapshot` / `ui_click` / `ui_type` / `ui_press_key` / `ui_scroll` | 对**主窗口 renderer 自身**复用 DOM snapshot→uid→act 口径（`browser-host/dom-ops.ts`，与 browser engine 同一份机械层） |
+| `ui_screenshot` | capturePage 主窗口 renderer 层（不含子视图合成，描述面已写明） |
+| `ui_evaluate` | 主窗口 renderer 执行任意 JS（开发者模式语义=全权操控；结果 JSON 化，8000 字符截断） |
+| `record_start` / `record_stop` / `record_status` | **窗口合成层录制**（见下） |
+
+### 录制管线（dev-host/recorder.ts）
+
+`mainWindow.getMediaSourceId()` → 隐藏 recorder 窗（独立 partition `qaqh-recorder`，data: URL 页
+= Electron 桌面捕获官方示例形态，media 权限只在该分区放行）→ `getUserMedia(chromeMediaSource=
+desktop)` → `MediaRecorder(webm)` → 主进程每 2s `drain()` base64 分块 append 落盘
+`<data_dir>/records/<ts>.webm`，产物只回文件路径（bridge.rs 丢二进制的既定绕行口径）。
+录制中主窗口最小化/隐藏 → start 拒绝、status 警告（黑帧是窗口捕获的事实，不是防御逻辑）。
+无音频；短时录制为用户确认口径（本机 1.6GB 空闲 + GPU 默认禁用 = CPU 软编，接受卡顿）。
+壳退出 dispose 兜底拆录制窗。
+
+### 文件分布
+
+```text
+src/main/browser-host/dom-ops.ts      机械层：任意 WebContents 的 snapshot/act/截图/evaluate
+src/main/browser-host/engine.ts       browser_* handler（IAB pane），改薄壳委托 dom-ops
+src/main/browser-host/mcp-server.ts   协议桥 + surface 化（browserTools 导出）
+src/main/dev-host/tool-defs.ts        ui_*/record_* 定义（纯数据，单测可 bundle）
+src/main/dev-host/engine.ts           dev handler 组装 + recorder 接线
+src/main/dev-host/recorder.ts         窗口合成层录制
+src/main/index.ts                     qaqh:devmode-set IPC + surface 组装 + reload 复位
+webui/src/lib/devmode.ts              开关翻转 → syncDevSurface() 通知主进程
+```
+
+### 验证记录
+
+| 项 | 方法 | 结果 |
+|---|---|---|
+| surface 协议面 + 门控形态 | `node --test scripts/browser-host.test.mjs` | ✅ 11/11（含：门关只列 9、门开 19 且名唯一、门关直呼 record_stop 仍可执行） |
+| 类型 | `pnpm run typecheck` + `pnpm --dir webui run typecheck` | ✅ |
+| 真机链路（开/关开发者模式 → 唤醒重扫 → 录 3s 出 webm） | 待用户在实际实例验收 | ⬜ 未验证 |
 
 ## 架构
 

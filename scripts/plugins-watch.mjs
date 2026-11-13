@@ -9,7 +9,7 @@
  * 产物改写即推进 main 的 stat-poll revision —— 本脚本不做任何热更信号，
  * 信号完全由宿主侧提供（对齐 dsh dev-web 的解耦结论）。
  */
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -20,6 +20,8 @@ const dirs = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirect
 const jobs = [];
 for (const dir of dirs) {
   const src = resolve(root, dir, "src", "entry.ts");
+  // theme 槽(纯 CSS 主题包)没有 JS 源码,直接跳过构建。
+  if (!existsSync(src)) continue;
   const outdir = resolve(root, dir, "dist");
   const args = ["build", src, "--outdir", outdir, "--format", "esm", "--target", "browser"];
   if (!once) args.push("--watch");

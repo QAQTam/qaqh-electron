@@ -15,7 +15,7 @@
  *   app.asar                               可直接覆盖 resources/app.asar
  */
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +61,22 @@ const env = {
   QAQH_BUILD_ID: commit,
   ELECTRON_BUILDER_COMPRESSION_LEVEL: process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL || "1",
 };
+
+// 新鲜度守卫(2026-11-12 事故:rolling 打过"新版本号 + 旧 dist/renderer"的包)。
+// electron-builder 只搬 dist/** 与 renderer/**,本身不构建;所以打包前强制
+// 重建三件:清 dist → bundle main/preload → vite 重建 renderer → 同步进根 renderer/。
+const runStep = (command, args, cwd = root) => {
+  console.log(`\n> ${command} ${args.join(" ")}`);
+  const step = spawnSync(command, args, { cwd, env, stdio: "inherit" });
+  if (step.error) throw step.error;
+  if (step.status !== 0) throw new Error(`新鲜度构建失败(exit ${step.status}): ${command} ${args.join(" ")}`);
+};
+rmSync(join(root, "dist"), { recursive: true, force: true });
+runStep(process.execPath, [join(root, "scripts", "bundle.mjs"), "all"]);
+// 不走 require.resolve:vite 8 的 exports 白名单不含 bin 子路径,直接取物理入口。
+runStep(process.execPath, [join(root, "webui", "node_modules", "vite", "bin", "vite.js"), "build"], join(root, "webui"));
+rmSync(join(root, "renderer"), { recursive: true, force: true });
+cpSync(join(root, "webui", "out", "renderer"), join(root, "renderer"), { recursive: true });
 const builderArgs = [
   cli, "--win", "nsis", "--x64", "--publish", "never",
   `--config.extraMetadata.version=${version}`,

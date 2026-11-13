@@ -79,3 +79,79 @@ export const NumberInput: Component<{
     />
   );
 };
+
+/**
+ * 可空数字输入:空串 = 显式 null。为「null 有业务语义」的字段服务
+ * (goals.maxTokenBudget:null = 无上限,K3 的有意例外)——NumberInput 的
+ * value/onCommit 都是不可空数字,兜不住这层。提交纪律与 NumberInput 一致:
+ * 本地缓冲,blur/Enter 才写草稿;非法值回弹。
+ */
+export const NullableNumberInput: Component<{
+  value: number | null;
+  onCommit: (value: number | null) => void;
+  integer?: boolean;
+  min?: number;
+  max?: number;
+  id?: string;
+  ariaLabel?: string;
+  placeholder?: string;
+}> = (props) => {
+  const [text, setText] = createSignal(props.value == null ? "" : String(props.value));
+  const [invalid, setInvalid] = createSignal(false);
+
+  createEffect(
+    () => props.value,
+    (value) => {
+      setText(value == null ? "" : String(value));
+      setInvalid(false);
+    },
+  );
+
+  const commit = (): void => {
+    const raw = text().trim();
+    if (raw === "") {
+      // 重复置 null 不算改动;置空成功后框里保持空,别回弹成旧数字。
+      if (props.value != null) props.onCommit(null);
+      setInvalid(false);
+      return;
+    }
+    const next = parse(raw, props.integer !== false);
+    if (next == null || (props.min != null && next < props.min) || (props.max != null && next > props.max)) {
+      setText(props.value == null ? "" : String(props.value));
+      setInvalid(false);
+      return;
+    }
+    setInvalid(false);
+    if (next !== props.value) props.onCommit(next);
+    else setText(String(next));
+  };
+
+  return (
+    <input
+      id={props.id}
+      class={`field-input number-input${invalid() ? " is-invalid" : ""}`}
+      type="text"
+      inputmode={props.integer === false ? "decimal" : "numeric"}
+      autocomplete="off"
+      spellcheck={false}
+      value={text()}
+      aria-label={props.ariaLabel}
+      aria-invalid={invalid() ? "true" : undefined}
+      placeholder={props.placeholder}
+      onInput={(event) => setText(event.currentTarget.value)}
+      onFocus={(event) => event.currentTarget.select()}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          setText(props.value == null ? "" : String(props.value));
+          setInvalid(false);
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+};

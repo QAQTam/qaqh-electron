@@ -38,8 +38,25 @@ type HostDiagnostics = {
   onReconnect?: (info: ReconnectStatusWire) => void;
 };
 
-function rejectAck(ack: Ack): Error {
-  return new Error(`command rejected (${ack.code ?? "unknown"}): ${ack.message ?? ""}`);
+/**
+ * 命令被拒。`code` 是后端命令面的稳定字符串（如撤回的 `turn_active` /
+ * `turn_not_found`），调用方按码分支，不去 grep 文案。
+ *
+ * `message` 的拼装保持原样（`command rejected (code): detail`），所以现有那些
+ * 只读 `error.message` 的 catch 行为不变——新增的是一个可分型的字段，不是新文案。
+ */
+export class CommandRejectedError extends Error {
+  constructor(
+    readonly code: string,
+    readonly detail: string,
+  ) {
+    super(`command rejected (${code}): ${detail}`);
+    this.name = "CommandRejectedError";
+  }
+}
+
+function rejectAck(ack: Ack): CommandRejectedError {
+  return new CommandRejectedError(ack.code ?? "unknown", ack.message ?? "");
 }
 
 export class ElectronTransport implements TransportBackend {
@@ -54,6 +71,10 @@ export class ElectronTransport implements TransportBackend {
 
   approvals(sessionId: string): Promise<ApprovalView[]> {
     return invoke<ApprovalView[]>("pending_approvals", { seed: sessionId });
+  }
+
+  teamSnapshot(sessionId: string): Promise<unknown> {
+    return invoke<unknown>("team_snapshot", { seed: sessionId });
   }
 
   async invalidateApprovals(sessionId: string, challengeId?: string, verified: boolean | "revoke" = false): Promise<void> {

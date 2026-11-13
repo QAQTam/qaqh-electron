@@ -4,7 +4,7 @@
  *  事件驱动生命周期:由 transitionend 触发卸载,减少硬编码定时器等待。 */
 import { createEffect, createSignal, onCleanup, Show, untrack, type ParentComponent } from "solid-js";
 
-/** 兜底超时(略高于 CSS --dur-out: 140ms),确保异常断帧时子树仍能安全释放。 */
+/** 兜底超时(略高于 CSS --dur-out: 160ms),确保异常断帧时子树仍能安全释放。 */
 const SAFETY_FALLBACK_MS = 180;
 
 export const Collapse: ParentComponent<{ open: boolean; instant?: boolean }> = (props) => {

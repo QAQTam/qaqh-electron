@@ -40,6 +40,8 @@
 
     /* WinUI 的三层表面：窗口底色 / Layer / Card。 */
     --layer-fill: rgb(255 255 255 / 50%);
+    /* Mica 上消息面 = WinUI Layer 半透(默认态与主题包接管前逐字节一致)。 */
+    --chat-mica: var(--layer-fill);
     --card-fill: rgb(255 255 255 / 70%);
     --flyout-bg: rgb(249 249 249 / 92%);
     --control-fill: rgb(255 255 255 / 70%);
@@ -136,6 +138,7 @@
     --glass-blur: 0px;
 
     --layer-fill: rgb(58 58 58 / 30%);
+    --chat-mica: var(--layer-fill);
     --card-fill: rgb(255 255 255 / 6%);
     --flyout-bg: rgb(44 44 44 / 92%);
     --control-fill: rgb(255 255 255 / 6%);
@@ -172,6 +175,7 @@
       --focus-outer: #ffffff;
       --focus-inner: #000000;
       --layer-fill: rgb(58 58 58 / 30%);
+    --chat-mica: var(--layer-fill);
       --card-fill: rgb(255 255 255 / 6%);
       --flyout-bg: rgb(44 44 44 / 92%);
       --control-fill: rgb(255 255 255 / 6%);

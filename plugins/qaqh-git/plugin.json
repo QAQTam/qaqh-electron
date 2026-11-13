@@ -1,0 +1,8 @@
+{
+  "id": "qaqh-git",
+  "name": "Git 工作区状态",
+  "version": "0.1.0",
+  "entry": "dist/entry.js",
+  "slot": "overlay",
+  "capabilities": ["git-status"]
+}

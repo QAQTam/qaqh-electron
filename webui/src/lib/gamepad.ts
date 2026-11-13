@@ -7,7 +7,9 @@ export type GamepadAction =
   | { kind: "send" }
   | { kind: "toggle-panel" }
   | { kind: "focus-composer" }
-  | { kind: "toggle-mode" };
+  | { kind: "toggle-mode" }
+  | { kind: "voice-start" }
+  | { kind: "voice-stop" };
 
 export type GamepadPromptFamily = "xbox" | "playstation" | "generic";
 export const GAMEPAD_ACTION_EVENT = "qaqh:gamepad-action";
@@ -62,6 +64,24 @@ const AXIS_DEADZONE = 0.55;
 const TRIGGER_THRESHOLD = 0.55;
 const REPEAT_DELAY_MS = 360;
 const REPEAT_INTERVAL_MS = 140;
+/** 扳机按住超过这个时长判定为 push-to-talk；短按仍是聚焦 composer。 */
+const TRIGGER_HOLD_MS = 450;
+
+/** tick 里持续刷新的当前手柄，用于振动回馈(Chromium 支持 dual-rumble)。 */
+let activePad: Gamepad | null = null;
+
+/**
+ * 让手柄震一下：语音播报结束、录音开始等"不看屏也知道有事"的时刻用。
+ * 不支持振动促动器的设备静默返回 false。
+ */
+export function vibrateGamepad(durationMs = 180, strong = 0.5, weak = 0.25): boolean {
+  const actuator = activePad?.vibrationActuator as
+    | { playEffect?: (type: string, options: { duration: number; strongMagnitude: number; weakMagnitude: number }) => Promise<unknown> }
+    | undefined;
+  if (actuator?.playEffect == null) return false;
+  void actuator.playEffect("dual-rumble", { duration: durationMs, strongMagnitude: strong, weakMagnitude: weak }).catch(() => undefined);
+  return true;
+}
 
 export type GamepadDeviceState = {
   connected: boolean;
@@ -102,11 +122,16 @@ export class GamepadController {
   private repeatedDirection: GamepadDirection | null = null;
   private directionStartedAt = 0;
   private lastDirectionAt = 0;
+  private triggerDownAt = 0;
+  private triggerVoiceWanted = false;
+  private triggerVoiceOpened = false;
 
   constructor(
     private readonly enabled: () => boolean,
     private readonly onAction: (action: GamepadAction) => void,
     private readonly onDevice: (state: GamepadDeviceState) => void,
+    /** 语音能力开没开(决定扳机走 PTT 还是纯聚焦)。 */
+    private readonly voiceEnabled: () => boolean = () => false,
   ) {}
 
   start(): () => void {
@@ -166,6 +191,10 @@ export class GamepadController {
         this.previousButtons.clear();
         this.guidePreviousButtons.clear();
         this.repeatedDirection = null;
+        if (this.triggerVoiceOpened) {
+          this.triggerVoiceOpened = false;
+          this.onAction({ kind: "voice-stop" }); // 热拔不挂麦:按松手语义收尾。
+        }
         this.onDevice({ connected: false, id: "", mapping: "", family: "generic" });
       }
       this.scheduleRetry();
@@ -188,6 +217,8 @@ export class GamepadController {
     const active = this.enabled();
     const wasActive = this.lastEnabled;
     this.lastEnabled = active;
+    activePad = pad;
+    const now = performance.now();
     const previous = this.previousButtons.get(pad.index) ?? [];
     const guidePrevious = this.guidePreviousButtons.get(pad.index) ?? [];
     const current = pad.buttons.map((button) => button.pressed || button.value >= TRIGGER_THRESHOLD);
@@ -200,18 +231,47 @@ export class GamepadController {
       if (justPressed(BUTTON_CANCEL)) this.onAction({ kind: "cancel" });
       if (justPressed(BUTTON_SEND)) this.onAction({ kind: "send" });
       if (justPressed(BUTTON_PANEL)) this.onAction({ kind: "toggle-panel" });
-      if (justPressed(BUTTON_LEFT_TRIGGER) || justPressed(BUTTON_RIGHT_TRIGGER)) {
-        this.onAction({ kind: "focus-composer" });
-      }
+      this.pollTrigger(now, current, previous);
       this.pollDirection(pad, performance.now());
     } else {
       this.repeatedDirection = null;
+      if (this.triggerVoiceOpened) {
+        this.triggerVoiceOpened = false;
+        this.onAction({ kind: "voice-stop" }); // 模式中途退出:兜底收麦。
+      }
     }
 
     this.guidePreviousButtons.set(pad.index, current);
     this.previousButtons.set(pad.index, current);
     this.frame = requestAnimationFrame(this.tick);
   };
+
+  /** 扳机状态机:按下 latch 意图,跨过时长线开麦,松手收尾(或短按聚焦)。 */
+  private pollTrigger(now: number, current: boolean[], previous: boolean[]): void {
+    const down = current[BUTTON_LEFT_TRIGGER] === true || current[BUTTON_RIGHT_TRIGGER] === true;
+    const wasDown = previous[BUTTON_LEFT_TRIGGER] === true || previous[BUTTON_RIGHT_TRIGGER] === true;
+    if (down && !wasDown) {
+      this.triggerDownAt = now;
+      this.triggerVoiceWanted = this.voiceEnabled();
+      return;
+    }
+    if (down && this.triggerVoiceWanted && !this.triggerVoiceOpened && now - this.triggerDownAt >= TRIGGER_HOLD_MS) {
+      this.triggerVoiceOpened = true;
+      this.onAction({ kind: "voice-start" });
+      return;
+    }
+    if (!down && wasDown) {
+      if (this.triggerVoiceOpened) {
+        this.triggerVoiceOpened = false;
+        this.onAction({ kind: "voice-stop" });
+      } else if (this.triggerVoiceWanted && this.triggerDownAt > 0) {
+        this.onAction({ kind: "focus-composer" }); // 想语音但没按够时长：退回原语义。
+      } else if (!this.triggerVoiceWanted) {
+        this.onAction({ kind: "focus-composer" });
+      }
+      this.triggerDownAt = 0;
+    }
+  }
 
   private pollDirection(pad: Gamepad, now: number): void {
     const direction = directionFromPad(pad);

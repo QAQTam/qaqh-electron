@@ -7,16 +7,16 @@
 // 生命周期只有 browser_close / 壳退出两个销毁入口，无空闲回收（用户内存充足）。
 
 import { WebContentsView, type BrowserWindow } from "electron";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDataDir } from "../daemon.js";
 import {
-  FOCUS_SCRIPT_PREFIX,
-  LOCATE_SCRIPT_PREFIX,
-  SCROLL_SCRIPT_PREFIX,
-  SNAPSHOT_SCRIPT,
-  serializeSnapshot,
-} from "./snapshot-script.js";
+  domClick,
+  domPressKey,
+  domScroll,
+  domScreenshot,
+  domSnapshot,
+  domType,
+} from "./dom-ops.js";
 import type { BrowserToolHandlers } from "./mcp-server.js";
 
 /** 隐藏形态：视图仍在合成器内（可截图/可收输入），只是移出可视区。 */
@@ -61,15 +61,6 @@ export interface BrowserPaneControl {
 interface EngineDeps {
   getMainWindow: () => BrowserWindow | null;
   notifyPaneState?: (state: PaneState) => void;
-}
-
-interface ScriptTarget {
-  error?: string;
-  x?: number;
-  y?: number;
-  tag?: string;
-  type?: string;
-  editable?: boolean;
 }
 
 export function createBrowserEngine(deps: EngineDeps): { handlers: BrowserToolHandlers; control: BrowserPaneControl; destroy: () => void } {
@@ -174,23 +165,6 @@ export function createBrowserEngine(deps: EngineDeps): { handlers: BrowserToolHa
     notify();
   }
 
-  function runScript<T>(script: string, args: unknown[] = []): Promise<T> {
-    const current = ensureView();
-    const code = `(${script})(${args.map((arg) => JSON.stringify(arg)).join(", ")})`;
-    return current.webContents.executeJavaScript(code, true) as Promise<T>;
-  }
-
-  function sendMouseEvent(type: "mouseMove" | "mouseDown" | "mouseUp", x: number, y: number): void {
-    view?.webContents.sendInputEvent({ type, x: Math.round(x), y: Math.round(y), button: "left", clickCount: 1 } as never);
-  }
-
-  function sendKeyEvents(keyCode: string): void {
-    const target = view?.webContents;
-    if (!target) throw new Error("浏览器未打开");
-    target.sendInputEvent({ type: "keyDown", keyCode } as never);
-    target.sendInputEvent({ type: "keyUp", keyCode } as never);
-  }
-
   const rawHandlers: Record<
     string,
     (args: Record<string, unknown>) => Promise<{ content: string; isError?: boolean }>
@@ -215,78 +189,32 @@ export function createBrowserEngine(deps: EngineDeps): { handlers: BrowserToolHa
 
     async browser_snapshot() {
       if (!view) return { content: "error: 浏览器未打开；先调用 browser_navigate", isError: true };
-      const result = await runScript<{ url: string; title: string; lines: string[]; truncated: boolean }>(SNAPSHOT_SCRIPT);
-      return { content: serializeSnapshot(result) };
+      return domSnapshot(view.webContents);
     },
 
     async browser_click(args: Record<string, unknown>) {
       if (!view) return { content: "error: 浏览器未打开；先调用 browser_navigate", isError: true };
-      const uid = String(args.uid ?? "");
-      if (!uid) return { content: "error: browser_click 需要 uid 参数", isError: true };
-      const target = await runScript<ScriptTarget>(LOCATE_SCRIPT_PREFIX, [uid]);
-      if (target.error != null) return { content: `error: ${target.error}`, isError: true };
-      if (target.x == null || target.y == null) return { content: "error: 定位结果缺失坐标", isError: true };
-      sendMouseEvent("mouseMove", target.x, target.y);
-      sendMouseEvent("mouseDown", target.x, target.y);
-      sendMouseEvent("mouseUp", target.x, target.y);
-      return { content: `已点击 [${uid}] ${target.tag}${target.type ? `(${target.type})` : ""} @ ${Math.round(target.x)},${Math.round(target.y)}` };
+      return domClick(view.webContents, String(args.uid ?? ""));
     },
 
     async browser_type(args: Record<string, unknown>) {
       if (!view) return { content: "error: 浏览器未打开；先调用 browser_navigate", isError: true };
-      const uid = String(args.uid ?? "");
-      const text = args.text;
-      if (!uid || typeof text !== "string") return { content: "error: browser_type 需要 uid 与 text 参数", isError: true };
-      const target = await runScript<ScriptTarget>(FOCUS_SCRIPT_PREFIX, [uid]);
-      if (target.error != null) return { content: `error: ${target.error}`, isError: true };
-      if (!target.editable) {
-        return { content: `error: [${uid}] ${target.tag} 不是可输入元素`, isError: true };
-      }
-      const target2 = view?.webContents;
-      for (const char of text) {
-        target2?.sendInputEvent({ type: "char", keyCode: char } as never);
-      }
-      if (args.submit === true) sendKeyEvents("Return");
-      return { content: `已输入 ${text.length} 字符到 [${uid}]${args.submit === true ? " 并回车" : ""}` };
+      return domType(view.webContents, String(args.uid ?? ""), args.text, args.submit === true);
     },
 
     async browser_press_key(args: Record<string, unknown>) {
       if (!view) return { content: "error: 浏览器未打开；先调用 browser_navigate", isError: true };
-      const key = String(args.key ?? "");
-      const keyCodes: Record<string, string> = {
-        Enter: "Return", Tab: "Tab", Escape: "Escape", Backspace: "Backspace", Delete: "Delete",
-        ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
-        PageUp: "PageUp", PageDown: "PageDown", Home: "Home", End: "End",
-      };
-      const keyCode = keyCodes[key];
-      if (!keyCode) {
-        return { content: `error: 不支持的按键 ${key}；支持 Enter/Tab/Escape/Backspace/Delete/Arrow*/PageUp/PageDown/Home/End`, isError: true };
-      }
-      sendKeyEvents(keyCode);
-      return { content: `已按键 ${key}` };
+      return domPressKey(view.webContents, String(args.key ?? ""));
     },
 
     async browser_scroll(args: Record<string, unknown>) {
       if (!view) return { content: "error: 浏览器未打开；先调用 browser_navigate", isError: true };
-      const direction = args.direction === "up" ? "up" : args.direction === "down" ? "down" : null;
-      if (direction == null) return { content: "error: direction 必须是 up 或 down", isError: true };
-      const amount = typeof args.amount === "number" ? Math.round(args.amount) : 600;
-      const scrollY = await runScript<number>(SCROLL_SCRIPT_PREFIX, [direction, amount]);
-      return { content: `已${direction === "up" ? "上" : "下"}滚 ${amount}px（scrollY=${scrollY}）` };
+      return domScroll(view.webContents, args.direction, args.amount);
     },
 
     async browser_screenshot() {
       if (!view) return { content: "error: 浏览器未打开；先调用 browser_navigate", isError: true };
-      const image = await view.webContents.capturePage();
-      const png = image.toPNG();
-      if (png.length === 0) {
-        return { content: "error: 截图为空（页面尚未完成首帧渲染）；等待页面加载后重试", isError: true };
-      }
-      const shotsDir = join(getDataDir(), "browser", "shots");
-      mkdirSync(shotsDir, { recursive: true });
-      const filePath = join(shotsDir, `${new Date().toISOString().replace(/[:.]/g, "-")}.png`);
-      writeFileSync(filePath, png);
-      return { content: `截图已保存：${filePath}\n用 read_image 工具查看该路径。` };
+      return domScreenshot(view.webContents, join(getDataDir(), "browser", "shots"));
     },
 
     async browser_console(args: Record<string, unknown>) {

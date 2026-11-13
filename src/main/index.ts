@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, powerSaveBlocker, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, session, powerSaveBlocker, type IpcMainInvokeEvent } from "electron";
 import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -10,10 +10,12 @@ import { ChallengeManager } from "./challenges.js";
 import { registerIpcHandlers, registerQuitIpcHandler, isTrustedRenderer } from "./ipc-handlers.js";
 import { applyStagedAndQuit, checkForUpdate, ensureInstallRootAdopted, stageUpdate } from "./updater.js";
 import { createBrowserEngine } from "./browser-host/engine.js";
-import { startBrowserMcpServer } from "./browser-host/mcp-server.js";
+import { browserTools, startBrowserMcpServer } from "./browser-host/mcp-server.js";
+import { createDevHostEngine, devToolDefs } from "./dev-host/engine.js";
 import { wireBrowserMcpConfig } from "./browser-host/config-wiring.js";
-import { pluginsRoot, startPluginRegistry } from "./plugins.js";
+import { pluginsRoot, startPluginRegistry, notifyPluginsChanged } from "./plugins.js";
 import { openExternalUrl } from "./native-dialogs.js";
+import { createNotifier } from "./notifier.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
 protocol.registerSchemesAsPrivileged([
@@ -27,6 +29,22 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+// Windows toast 身份：packaged 的进程 AUMID 必须与安装器写进快捷方式的 APP_ID
+// （electron-builder.yml `appId`，由 electron-builder 内置 NSIS 模板写入；本仓没有
+// 自定义 installer.nsh）逐字一致，通知才会归属「QAQ-Harness」并进系统通知中心设置项。
+// Electron 默认的 `electron.app.<productName>` 对不上安装包注册，必须显式覆盖。
+//
+// dev 必须用独立身份，不能蹭正式 AUMID：Electron 的 toast 路径会按可执行文件名建
+// 开始菜单快捷方式（dev 即 Electron.lnk），目标是 process.execPath 且**不带 app 路径
+// 参数**——dev 的 app 路径是 scripts/dev.mjs 用命令行传的，快捷方式不保留它。若 dev
+// 也挂 com.qaqh.desktop，这个残留快捷方式就与安装包的快捷方式抢同一身份：点击通知时
+// Windows 按 AUMID 解析激活目标，可能落到它 → 裸拉起 electron.exe → 弹出 Electron
+// 默认初始 app。那个进程跑的不是本应用代码，单实例锁与 Notification.handleActivation
+// 都接不住。身份分离是结构性根治，不需要运行时去探测/修补快捷方式。
+if (process.platform === "win32") {
+  app.setAppUserModelId(app.isPackaged ? "com.qaqh.desktop" : "com.qaqh.desktop.dev");
+}
 
 // 针对双核奔腾/弱硬件（如 G2020）的极致轻量化与低内存配置
 // 1. Linux 平台 Ozone/Wayland 与 IME 优化
@@ -91,9 +109,28 @@ let allowWindowClose = false;
 let closeToTray = true;
 const daemonMgr = new DaemonManager();
 const challenges = new ChallengeManager();
+const notifier = createNotifier({
+  client: () => client,
+  challenges,
+  showWindow: () => showMainWindow(),
+  windowEngaged: () => mainWindow != null && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused(),
+  // 封箱表把到点的回投通道：与 EventSender 双投同一条 `qaqh:event:` 前缀总线,
+  // renderer 侧由 webui/src/session/handoff-remote 单例消费。
+  sendToRenderer: (eventName, payload) => {
+    if (mainWindow != null && !mainWindow.isDestroyed()) mainWindow.webContents.send(`qaqh:event:${eventName}`, payload);
+  },
+});
 let connecting: Promise<RingingClient> | null = null;
 /** 浏览器引擎（bootstrap 期创建；null = 本次启动初始化失败，工具面不可用）。 */
 let browserEngine: ReturnType<typeof createBrowserEngine> | null = null;
+/** Dev Surface（开发者模式门控的 ui_* / record_* 工具面，bootstrap 期创建）。 */
+let devHostEngine: ReturnType<typeof createDevHostEngine> | null = null;
+/**
+ * Dev Surface 可见性门控：renderer 开发者模式开/关时经 qaqh:devmode-set 同步。
+ * 不落盘（与 webui/lib/devmode 同一口径：会话级调试态，重启即失效）；renderer
+ * 重新加载即复位 false——UI 里的 devMode signal 也同步归零，两侧不会漂移。
+ */
+let devSurfaceEnabled = false;
 
 /** 面板状态推给 renderer（browser-view://state 事件，preload 白名单内）。 */
 function sendBrowserPaneState(): void {
@@ -195,6 +232,14 @@ ipcMain.handle("qaqh:devtools-toggle", (event) => {
   if (webContents == null) return false;
   webContents.toggleDevTools();
   return webContents.isDevToolsOpened();
+});
+
+// Dev Surface 门控(设置页·开发者模式开/关):renderer 的 devMode signal 翻转时
+// 同步过来,决定 qaqh-browser MCP tools/list 是否列出 ui_* / record_* 工具面。
+ipcMain.handle("qaqh:devmode-set", (event, payload: unknown) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  devSurfaceEnabled = (payload as { enabled?: unknown } | null)?.enabled === true;
+  return devSurfaceEnabled;
 });
 
 // ── 休眠限制(用户需求,Linux+Windows)────────────────────────────────────
@@ -339,6 +384,8 @@ function ensureClient(): Promise<RingingClient> {
   connecting = (async () => {
     const discovery = await daemonMgr.ensureDaemonRunning(15000);
     const next = new RingingClient(discovery, (eventName, payload) => {
+      // 通知模块先于 renderer 总线消费：窗口隐藏/销毁时事件照样被摘成 toast。
+      notifier.onEvent(eventName, payload);
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(`qaqh:event:${eventName}`, payload);
     });
     try {
@@ -363,11 +410,20 @@ async function bootstrapApp(): Promise<void> {
   // 0.5 浏览器控制（docs/browser-control-design.md）：先起 MCP server 并把端点
   // 写进 config.toml，再拉起/复用 daemon——daemon 唤醒重扫即可拾取工具面。
   // 失败只降级浏览器工具能力，不阻塞壳启动。
+  // Dev Surface（开发者模式门控）与 browser 共用同一 server/token/配置段：
+  // tools/list 每次现算，ui_* 与 record_* 只在开发者模式开着时可见。
   let browserCleanup: (() => Promise<void>) | null = null;
   try {
     const token = randomBytes(24).toString("base64url");
     browserEngine = createBrowserEngine({ getMainWindow: () => mainWindow, notifyPaneState: sendBrowserPaneState });
-    const server = await startBrowserMcpServer({ token, handlers: browserEngine.handlers });
+    devHostEngine = createDevHostEngine({ getMainWindow: () => mainWindow });
+    const server = await startBrowserMcpServer({
+      token,
+      surface: {
+        listTools: () => (devSurfaceEnabled ? [...browserTools, ...devToolDefs] : [...browserTools]),
+        resolveHandler: (name) => browserEngine?.handlers[name] ?? devHostEngine?.handlers[name],
+      },
+    });
     const wired = wireBrowserMcpConfig(
       join(getDataDir(), "config.toml"),
       `http://127.0.0.1:${server.port}/mcp`,
@@ -375,6 +431,7 @@ async function bootstrapApp(): Promise<void> {
     );
     console.log(`[browser] MCP server listening on 127.0.0.1:${server.port}${wired ? "; config.toml updated" : "; config unchanged"}`);
     browserCleanup = async () => {
+      devHostEngine?.recorder.dispose();
       await server.close();
       engine_destroy();
     };
@@ -393,11 +450,31 @@ async function bootstrapApp(): Promise<void> {
   // 1. Start/reuse daemon and establish the SDK client before the renderer loads,
   // so every IPC handler exists before frontend boot invokes anything.
   registerIpcHandlers(ensureClient, daemonMgr, challenges, browserEngine?.control ?? null);
+  // 语音输入(voice)需要 getUserMedia。收权模型照 DeepSeek Harness (MIT)：
+  // 只批主窗主框架、只批 audio、只批受信渲染层；其余权限维持默认。
+  {
+    const ses = session.defaultSession;
+    ses.setPermissionCheckHandler((_contents, permission, _origin, details) => {
+      if (permission !== "media") return true;
+      return details?.mediaType === "audio";
+    });
+    ses.setPermissionRequestHandler((_contents, permission, callback, details) => {
+      if (permission !== "media") { callback(true); return; }
+      const requestUrl = typeof (details as { requestingUrl?: unknown }).requestingUrl === "string"
+        ? (details as { requestingUrl: string }).requestingUrl
+        : "";
+      const audioOnly = "mediaTypes" in details && Array.isArray(details.mediaTypes) && details.mediaTypes.length === 1 && details.mediaTypes[0] === "audio";
+      callback(audioOnly && isTrustedRenderer(requestUrl));
+    });
+  }
   try {
     await ensureClient();
   } catch (err) {
     console.error("[app] Failed to connect or start qaqh-daemon:", err);
   }
+  // 桌面通知：配置面(notificationsEnabled)与跨会话 waiting_user 边沿靠轮询刷,
+  // 会话事件流已在 ensureClient 的 EventSender 双投接入。
+  notifier.start();
 
   // 2. Create renderer after IPC registration.
   createMainWindow();
@@ -435,7 +512,9 @@ function registerAppProtocol(): void {
       // /plugins/** 由插件根目录提供（app:// 同源，CSP 'self' 覆盖），其余走 renderer。
       const isPluginAsset = pathname.startsWith("/plugins/");
       const baseDir = isPluginAsset ? pluginsRoot() : resolveRendererDir();
-      const cleanPath = pathname.replace(/^\/+/, "");
+      // 插件资产的 baseDir 已是插件根:必须剥掉 /plugins 前缀,否则 resolve 出
+      // plugins/plugins/<id>/… 双段路径,一切插件资产 404(主题/overlay 全灭)。
+      const cleanPath = (isPluginAsset ? pathname.slice("/plugins".length) : pathname).replace(/^\/+/, "");
       const filePath = resolve(baseDir, cleanPath);
       const relativePath = relative(baseDir, filePath);
 
@@ -512,6 +591,14 @@ function createMainWindow(): BrowserWindow {
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
+  });
+  // 渲染层插件监听器在页面脚本执行期注册,可能晚于 stat-poll 的首帧:
+  // 加载完成强制清空签名重发一次,杜绝"图从未送达"的一次性静默。
+  // 同一时点复位 Dev Surface 门控:renderer 重新加载 = 它的 devMode signal 归零,
+  // 主进程侧必须同步失效,否则「reload 后 UI 没开开发者模式但 MCP 还看得见 ui_*」。
+  mainWindow.webContents.on("did-finish-load", () => {
+    devSurfaceEnabled = false;
+    notifyPluginsChanged();
   });
 
   // 可编辑区右键菜单:Tauri 时代 WebView2/WKWebView 自带原生编辑菜单,Electron
@@ -651,6 +738,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   allowWindowClose = true;
+  notifier.stop();
   if (tray) {
     tray.destroy();
     tray = null;

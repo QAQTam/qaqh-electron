@@ -22,9 +22,11 @@
     --warn: #925b0b;
     --err: #b42332;
     --err-soft: color-mix(in srgb, var(--err) 12%, var(--surface));
-    --shadow-panel: 0 10px 32px rgb(23 43 77 / 12%);
+    /* 阴影深度用 Fibonacci 阶梯(2-8 / 5-13 / 13-34):数列收敛于 φ,
+       层与层之间的"抬升感"按黄金比例递进,soft < glass < panel 严格分层。 */
+    --shadow-panel: 0 13px 34px rgb(23 43 77 / 12%);
     --shadow-soft: 0 2px 8px rgb(23 43 77 / 6%);
-    --shadow-glass: 0 7px 24px rgb(23 43 77 / 8%);
+    --shadow-glass: 0 5px 13px rgb(23 43 77 / 8%);
     --glass-bg: rgb(255 255 255 / 82%);
     --glass-border: rgb(255 255 255 / 72%);
     --glass-blur: 12px;
@@ -32,6 +34,23 @@
     --diff-add-word: #bfe3ca;
     --diff-del-bg: #fceceb;
     --diff-del-word: #f3c6c3;
+
+    /* —— 消息区主题岛接缝 ——
+       默认逐项镜像壳色:经典工作台不改变任何观感。主题包插件
+       (plugins/, slot=theme)只需覆写 --chat-* 这一族就能热换消息区配色。 */
+    --chat-bg: var(--bg);
+    --chat-surface: var(--surface);
+    --chat-surface-2: var(--surface-2);
+    --chat-surface-user: var(--surface-user);
+    --chat-surface-code: var(--surface-code);
+    --chat-text: var(--text);
+    --chat-muted: var(--muted);
+    --chat-border: var(--border);
+    --chat-code-veil: var(--code-veil);
+    --chat-err-soft: var(--err-soft);
+    /* Mica 上的消息面填充:非 Windows 默认与纸面同色;Windows tokens 镜像 layer-fill,
+       主题包覆写为半透明纸色。 */
+    --chat-mica: var(--chat-bg);
 
     /* 交互控件与浮层语义 Token（跨平台通用默认基准） */
     --flyout-bg: var(--surface);
@@ -41,8 +60,9 @@
     --focus-outer: var(--focus-ring);
     --focus-inner: var(--surface);
 
-    --radius-control: 8px;
-    --radius-panel: 12px;
+    /* 圆角级数 ×φ 递推取整:6 ×1.618→10 ×1.6→16(控件/面板/对话框三级)。 */
+    --radius-control: 6px;
+    --radius-panel: 10px;
     --radius-dialog: 16px;
     --radius-pill: 999px;
     --r-sm: var(--radius-control);
@@ -65,13 +85,15 @@
        全部按比例跟着走,设置页「等比缩放所有字阶」对阅读区同样成立。
        标题阶(2/1.5/1.25/1/.875/.85em,600 字重,h1/h2 下边框)与 GitHub Primer
        markdown 渲染(github-markdown-css)一致,该体系是 Markdown 视觉的事实标准;
-       基准 16px vs 14px 只改变绝对对比度,不改变比例关系。 */
+       基准 16px vs 14px 只改变绝对对比度,不改变比例关系。
+       标题阶取黄金小三度级数(√φ=1.272 步进):h4→h3→h2→h1 = 1 / 1.272 / 1.618 / 2.058,
+       相邻比率恒为 √φ,h3→h2、h2→h1 的跨级恰为 φ。 */
     --md-body-size: calc(14px * var(--font-scale));
     --md-body-leading: calc(24 / 14);
     --md-heading-leading: 1.25;
-    --md-h1-size: 2em;
-    --md-h2-size: 1.5em;
-    --md-h3-size: 1.25em;
+    --md-h1-size: 2.058em;
+    --md-h2-size: 1.618em;
+    --md-h3-size: 1.272em;
     --md-h4-size: 1em;
     --md-h5-size: .875em;
     --md-h6-size: .85em;
@@ -82,11 +104,14 @@
     /* 壳布局 token(spec §3.3):侧栏 288px = Nav 2×2 + 会话列表;TopBar 48px。 */
     --sidebar-width: 288px;
     --topbar-height: 48px;
-    --fs-xs: calc(14px * var(--font-scale));
+    /* UI 字阶:旧梯队 14/15/16/18 相邻比率 1.07~1.13,层级几乎不可辨。
+       改为向 √φ(1.272)收敛的爬升级数 13/15/17/22(比率 1.15→1.13→1.29),
+       大字阶一步跨过 φ(17×1.29≈22),标题才立得住;小字阶保密度不缩进。 */
+    --fs-xs: calc(13px * var(--font-scale));
     --fs-sm: calc(15px * var(--font-scale));
-    --fs-md: calc(16px * var(--font-scale));
-    --fs-lg: calc(18px * var(--font-scale));
-    --fs-body: calc(16px * var(--font-scale));
+    --fs-md: calc(17px * var(--font-scale));
+    --fs-lg: calc(22px * var(--font-scale));
+    --fs-body: calc(17px * var(--font-scale));
 
     /* 4 大核心语义字体槽位
        中文不内嵌：macOS 走苹方；Windows 11 24H2+ 系统自带 Noto Sans SC 可变
@@ -101,10 +126,12 @@
     --font-main: var(--font-ui);
     --font-mono: var(--font-code);
 
+    /* 进出场时长按 φ 配比:入场慢、退场快是动效心理学的共识,
+       260/160 = 1.625 ≈ φ——抽屉/浮层"登场从容、离场干脆"。 */
     --dur-fast: 120ms;
     --dur: 180ms;
-    --dur-out: 140ms;
-    --dur-enter: 160ms;
+    --dur-out: 160ms;
+    --dur-enter: 260ms;
     --dur-layout: 220ms;
     /* 抽屉滑入/滑出(侧栏/任务面板):比布局过渡略长一点,给「覆盖层滑过正文」
        的动作留出可读轨迹;退出也走同一时长,不用再抢 --dur-out。 */
@@ -112,7 +139,7 @@
     --ease: cubic-bezier(.2, 0, 0, 1);
 
     --tool-shimmer-highlight: color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, 0.6));
-    --tool-shimmer-dur: 1.6s;
+    --tool-shimmer-dur: 1.618s;
 
     /* 会话行「待响应」卡的语义色(§6.2 侧栏待响应):
        授权=琥珀(有风险感)、回答=主色、计划评审=紫。深色表同步。 */
@@ -146,15 +173,26 @@
     --warn: #f5c36d;
     --err: #ff9aa5;
     --err-soft: color-mix(in srgb, var(--err) 16%, var(--surface));
-    --shadow-panel: 0 12px 36px rgb(0 0 0 / 32%);
+    --shadow-panel: 0 13px 34px rgb(0 0 0 / 32%);
     --shadow-soft: 0 2px 8px rgb(0 0 0 / 20%);
-    --shadow-glass: 0 7px 24px rgb(0 0 0 / 28%);
+    --shadow-glass: 0 5px 13px rgb(0 0 0 / 28%);
     --glass-bg: rgb(29 35 44 / 90%);
     --glass-border: rgb(255 255 255 / 12%);
     --diff-add-bg: #1c3326;
     --diff-add-word: #2a5a3b;
     --diff-del-bg: #3a2224;
     --diff-del-word: #6a3338;
+
+    --chat-bg: var(--bg);
+    --chat-surface: var(--surface);
+    --chat-surface-2: var(--surface-2);
+    --chat-surface-user: var(--surface-user);
+    --chat-surface-code: var(--surface-code);
+    --chat-text: var(--text);
+    --chat-muted: var(--muted);
+    --chat-border: var(--border);
+    --chat-code-veil: var(--code-veil);
+    --chat-err-soft: var(--err-soft);
     --tool-shimmer-highlight: rgba(255, 255, 255, 0.22);
     --pending-permission: #f5c36d;
     --pending-ask: var(--accent);
@@ -184,15 +222,26 @@
       --warn: #f5c36d;
       --err: #ff9aa5;
       --err-soft: color-mix(in srgb, var(--err) 16%, var(--surface));
-      --shadow-panel: 0 12px 36px rgb(0 0 0 / 32%);
+      --shadow-panel: 0 13px 34px rgb(0 0 0 / 32%);
       --shadow-soft: 0 2px 8px rgb(0 0 0 / 20%);
-      --shadow-glass: 0 7px 24px rgb(0 0 0 / 28%);
+      --shadow-glass: 0 5px 13px rgb(0 0 0 / 28%);
       --glass-bg: rgb(29 35 44 / 90%);
       --glass-border: rgb(255 255 255 / 12%);
       --diff-add-bg: #1c3326;
       --diff-add-word: #2a5a3b;
       --diff-del-bg: #3a2224;
       --diff-del-word: #6a3338;
+
+      --chat-bg: var(--bg);
+      --chat-surface: var(--surface);
+      --chat-surface-2: var(--surface-2);
+      --chat-surface-user: var(--surface-user);
+      --chat-surface-code: var(--surface-code);
+      --chat-text: var(--text);
+      --chat-muted: var(--muted);
+      --chat-border: var(--border);
+      --chat-code-veil: var(--code-veil);
+      --chat-err-soft: var(--err-soft);
       --tool-shimmer-highlight: rgba(255, 255, 255, 0.22);
       --pending-permission: #f5c36d;
       --pending-ask: var(--accent);

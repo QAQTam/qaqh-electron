@@ -300,44 +300,23 @@ describe("交接事实识别（判据只有 tool_name + handed_off）", () => {
   });
 });
 
-describe("交接账本（fork 去重 + 本地血缘）", () => {
-  const fact: HandoffFact = {
-    key: `${REPORT.from_session_id}|${REPORT.turn_id}`,
-    fromSessionId: REPORT.from_session_id,
-    turnId: REPORT.turn_id,
-    workSummary: REPORT.work_summary,
-    handoffDoc: REPORT.handoff_doc,
-    handoffPath: REPORT.handoff_path,
-    modifiedFiles: [],
-    contextUsedTokens: null,
-    contextWindowTokens: null,
-    callId: "call_handoff",
-    inferred: false,
-  };
-
+describe("交接账本(升级前旧数据的只读遗留,ADR-016)", () => {
   beforeEach(() => {
     for (const key of Object.keys(localStorage)) localStorage.removeItem(key);
     localStorage.clear();
   });
 
-  test("同一 from+turn 只记一条；child→parent 现算得出 fork 对话", async () => {
-    const journal = await import("../src/session/handoff-journal");
-    expect(journal.forkRecordOfFact(fact)).toBeNull();
-    journal.recordHandoffFork(fact, "ses_CHILD", false);
-    const recorded = journal.forkRecordOfFact(fact);
-    expect(recorded).toMatchObject({ childSessionId: "ses_CHILD", delivered: false });
-    expect(journal.parentSessionOf("ses_CHILD")).toBe(REPORT.from_session_id);
-    expect(journal.forkedChildrenOf(REPORT.from_session_id).map((item) => item.childSessionId)).toEqual(["ses_CHILD"]);
-    // 文档正文不进账本：权威在 A 的 args_json / tool_result。
-    expect(localStorage.getItem(`qaqh.handoff.fork.${fact.key}`)).not.toContain(REPORT.handoff_doc);
-  });
-
-  test("客户端重开后（模块重新求值）仍读得到同一条 fork —— 不会二次 fork", async () => {
-    const first = await import("../src/session/handoff-journal");
-    first.recordHandoffFork(fact, "ses_CHILD", true);
+  test("升级前写入的 localStorage fork 记录仍读得出 child→parent(徽标兼容兜底)", async () => {
+    localStorage.setItem(`qaqh.handoff.fork.${REPORT.from_session_id}|${REPORT.turn_id}`, JSON.stringify({
+      from_session_id: REPORT.from_session_id,
+      turn_id: REPORT.turn_id,
+      child_session_id: "ses_CHILD",
+      delivered: true,
+      work_summary: REPORT.work_summary,
+      at_ms: 1_700_000_000_000,
+    }));
     vi.resetModules();
     const reopened = await import("../src/session/handoff-journal");
-    expect(reopened.forkRecordOfFact(fact)).toMatchObject({ childSessionId: "ses_CHILD", delivered: true });
     expect(reopened.parentSessionOf("ses_CHILD")).toBe(REPORT.from_session_id);
   });
 });

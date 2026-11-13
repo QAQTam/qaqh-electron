@@ -11,12 +11,12 @@ applyTheme(params.get("theme") === "dark" ? "dark" : "light");
 const source = Array.from({ length: 100 }, (_, i) => `// 第 ${i + 1} 行\nconst permission_${i} = "workspace";`).join("\n");
 const log = Array.from({ length: 180 }, (_, i) => `\u001b[32mtest ${i}: ok\u001b[0m`).join("\n");
 const [steps, setSteps] = createSignal<ToolStep[]>([
-  { kind: "tool", id: "exec", seq: 1, name: "exec_command", status: "finished", state: { kind: "finished", outcome: { kind: "yielded", exec_session_id: "exec_01JVSAMPLE" } }, execSessionId: "exec_01JVSAMPLE", argsJson: JSON.stringify({ cmd: "cargo check -p qaqh-runtime", workdir: "E:/qaqh-backend" }), output: { text: log, stderr: "warning: unused variable" } },
+  { kind: "tool", id: "exec", seq: 1, name: "exec_command", status: "finished", state: { kind: "finished", outcome: { kind: "yielded", exec_session_id: "exec_01JVSAMPLE" } }, execSessionId: "exec_01JVSAMPLE", execSessionState: { kind: "running" }, argsJson: JSON.stringify({ cmd: "cargo check -p qaqh-runtime", workdir: "E:/qaqh-backend" }), output: { text: log, stderr: "warning: unused variable" } },
   { kind: "tool", id: "read", seq: 2, name: "read", status: "finished", argsJson: JSON.stringify({ path: "crates/qaqh-policy/src/lib.rs", limit: 200 }), output: { text: source } },
   { kind: "tool", id: "edit", seq: 3, name: "edit", status: "failed", argsJson: JSON.stringify({ path: "E:/qaqh-backend/crates/qaqh-policy/src/lib.rs", old_str: source, new_str: source.replaceAll("workspace", "sandbox") }), error: "锚点未唯一匹配，文件未修改。", output: { text: "No changes applied." } },
   { kind: "tool", id: "diff", seq: 4, name: "edit", status: "finished", argsJson: JSON.stringify({ path: "src/policy.ts", old_str: "const level = 2;", new_str: "const level = 4;" }), codeDelta: { lines_added: 1, lines_removed: 1, files_created: 0, files_deleted: 0, file: "src/policy.ts" }, output: { diffText: "--- a/src/policy.ts\n+++ b/src/policy.ts\n@@ -1 +1 @@\n-const level = 2;\n+const level = 4;" } },
   { kind: "tool", id: "mcp", seq: 5, name: "mcp__workspace__inspect", status: "finished", argsJson: JSON.stringify({ payload: source }), output: { text: source } },
-  { kind: "tool", id: "live", seq: 6, name: "exec_command", status: "running", startedAt: Date.now(), argsJson: JSON.stringify({ cmd: "pnpm run typecheck" }), progressTail: "tsc: checking renderer…", progressTruncated: true },
+  { kind: "tool", id: "live", seq: 6, name: "exec_command", status: "running", startedAt: Date.now(), execSessionId: "exec_01LIVESAMPLE", execSessionState: { kind: "running" }, argsJson: JSON.stringify({ cmd: "pnpm run typecheck" }) },
   { kind: "tool", id: "todo", seq: 7, name: "todo_write", status: "finished", argsJson: JSON.stringify({ items: [
     { title: "梳理渲染分层", status: "completed", evidence: "typecheck 通过" },
     { title: "实现 todo 卡片", status: "completed" },
@@ -33,12 +33,12 @@ const [steps, setSteps] = createSignal<ToolStep[]>([
 const turn = { id: "fixture", key: "fixture", turnIndex: 0, user: { text: "工具渲染验收" }, steps: [], answer: null, answerStepId: null, status: "running", expanded: true } satisfies Turn;
 declare global { interface Window { __toolRenderCheck: { finish: () => void } } }
 window.__toolRenderCheck = {
-  finish: () => setSteps((items) => items.map((step) => step.id === "live" ? { ...step, status: "finished", output: { text: "build complete", stderr: "final warning", exitCode: 0 } } : step)),
+  finish: () => setSteps((items) => items.map((step) => step.id === "live" ? { ...step, status: "finished", execSessionState: { kind: "finished", outcome: { kind: "exited", exit_code: 2 } }, output: { text: "build complete", stderr: "final warning", exitCode: 2 } } : step)),
 };
 render(() => (
   <main style={{ "max-width": "780px", margin: "36px auto", padding: "0 20px" }}>
     <h2 style={{ "font-size": "16px", "font-weight": "500", "margin-bottom": "16px" }}>工具工作记录</h2>
-    <p style={{ color: "var(--muted)", "font-size": "13px", "margin-bottom": "14px" }}>文件路径与修改结果 · 命令实时输出 · 待办与 skills 记录</p>
+    <p style={{ color: "var(--muted)", "font-size": "13px", "margin-bottom": "14px" }}>文件路径与修改结果 · exec 行只留命令与 exit code（正文在后台执行抽屉） · 待办与 skills 记录</p>
     <div class="timeline turn-steps"><For each={steps()} keyed={(step) => step.id}>{(step, index) => <StepRow step={step()} turn={turn} cwd="E:/qaqh-backend" isLatest={index() === steps().length - 1} />}</For></div>
   </main>
 ), document.getElementById("root")!);

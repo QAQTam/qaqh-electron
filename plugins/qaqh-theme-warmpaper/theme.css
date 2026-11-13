@@ -1,0 +1,53 @@
+/* qaqh-theme-warmpaper —— 消息区主题包(纯 CSS 插件)。
+ * 消费方是 layout.css 的 .workspace-content 主题岛接缝:只覆写 --chat-* 这一族,
+ * 顶栏/会话列表/待办栏继续走壳的 Mica。不带 @layer——未分层样式压过所有分层,
+ * 由装载器以 <link data-qaqh-theme-pack> 热挂/热卸。
+ * 色板取自 Claude 前端(occ/vendor/claude-ui):低饱和暖灰纸面 + 暖墨文字,
+ * 消解"蓝灰霜面浮字"的长时间阅读疲劳。 */
+
+:root {
+  --chat-bg: #F7F5EE;            /* 米黄纸面:Claude bg-200 #f5f4ed 提一档 */
+  --chat-mica: color-mix(in srgb, var(--chat-bg) 94%, transparent); /* Mica 上 6% 壁纸 bleed */
+  --chat-surface: #FDFCF7;       /* 区内浮起面 ≈ Claude gray-10 */
+  --chat-surface-2: #EFECE1;     /* 区内 hover/按下 */
+  --chat-surface-user: #EDEAE0;  /* 用户气泡 */
+  --chat-surface-code: #F0EEE4;  /* 代码底 */
+  --chat-text: #21201C;          /* Claude text-000 #141413,米底上稍柔 */
+  --chat-muted: #76746B;         /* Claude text-400 #73726c */
+  --chat-border: hsl(34 12% 30% / 16%);
+  --chat-code-veil: color-mix(in srgb, var(--chat-text) 6%, transparent);
+  --chat-err-soft: color-mix(in srgb, var(--err) 12%, var(--chat-bg));
+}
+
+:root[data-theme="dark"] {
+  /* Claude dark 暖色系(bg-200 #1f1e1d / bg-000 #30302e / text #faf9f5):
+     暖面比壳的冷蓝黑亮半档,暗档纸感同样成立。 */
+  --chat-bg: #1F1E1B;
+  --chat-mica: color-mix(in srgb, var(--chat-bg) 94%, transparent);
+  --chat-surface: #262623;
+  --chat-surface-2: #2E2D29;
+  --chat-surface-user: #2B2A26;
+  --chat-surface-code: #1A1916;
+  --chat-text: #F4F2EB;
+  --chat-muted: #9C998E;
+  --chat-border: hsl(40 16% 82% / 12%);
+  --chat-code-veil: color-mix(in srgb, var(--chat-text) 9%, transparent);
+  --chat-err-soft: color-mix(in srgb, var(--err) 16%, var(--chat-bg));
+}
+
+/* JS 未落定的首帧兜底:与 tokens 的媒体查询双路规则同构。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --chat-bg: #1F1E1B;
+    --chat-mica: color-mix(in srgb, var(--chat-bg) 94%, transparent);
+    --chat-surface: #262623;
+    --chat-surface-2: #2E2D29;
+    --chat-surface-user: #2B2A26;
+    --chat-surface-code: #1A1916;
+    --chat-text: #F4F2EB;
+    --chat-muted: #9C998E;
+    --chat-border: hsl(40 16% 82% / 12%);
+    --chat-code-veil: color-mix(in srgb, var(--chat-text) 9%, transparent);
+    --chat-err-soft: color-mix(in srgb, var(--err) 16%, var(--chat-bg));
+  }
+}

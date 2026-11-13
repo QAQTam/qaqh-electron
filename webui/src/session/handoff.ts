@@ -57,6 +57,24 @@ export type HandoffFact = {
   inferred: boolean;
 };
 
+/**
+ * `HandoffSealed` 事件的前端投影形状(ADR-016 切片 2;字段同 wire,snake→camel)。
+ *
+ * 内核在封箱 T+10s 一体完成建 B + 投文档 + 开回合后发布,双发到链根与后继两条
+ * 会话流:A 侧(`sealedSessionId`==本会话)拿它当「链已接上」的续接信号,
+ * B 侧(`successorSessionId`==本会话)拿它当开箱卡的权威源之一。
+ */
+export type HandoffSealedView = {
+  /** 封箱会话(链上本线,已被 handoff 终结)。 */
+  sealedSessionId: string;
+  /** 内核 fork 出的后继会话 id。 */
+  successorSessionId: string;
+  turnId: string;
+  workSummary: string;
+  /** fork 完成时刻(unix ms)。 */
+  atMs: number;
+};
+
 function text(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
 }

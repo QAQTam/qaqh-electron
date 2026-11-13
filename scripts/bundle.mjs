@@ -64,11 +64,24 @@ async function buildPreload() {
   });
 }
 
+/** 语音推理子进程独立成包:sherpa-onnx-node 保持 external(asar 内原生加载路径不变)。 */
+async function buildVoiceWorker() {
+  console.log("[bundle] Building voice worker...");
+  await esbuild.build({
+    ...commonOptions,
+    entryPoints: [resolve(root, "src/main/voice/worker.ts")],
+    outfile: resolve(root, "dist/main/voice-worker.cjs"),
+    format: "cjs",
+    external: [...commonOptions.external, "sherpa-onnx-node"],
+  });
+}
+
 async function run() {
   console.log(`[bundle] Build ${build.version || "(source version)"}+${build.commit.slice(0, 8)}` +
     `${build.dirty ? "-dirty" : ""}`);
   if (mode === "main" || mode === "all") {
     await buildMain();
+    await buildVoiceWorker();
   }
   if (mode === "preload" || mode === "all") {
     await buildPreload();

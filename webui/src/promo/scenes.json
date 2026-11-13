@@ -1,0 +1,47 @@
+{
+  "$comment": "宣传片唯一时间轴。at=虚拟毫秒(promo.tsx 场景驱动)。rateSegments:倒计时段 4× 快进(成片节奏)。sfx.at=成片秒(已按 rate 折算,scripts/promo-sfx.mjs 直接排)。改场景时码后必须重折算 sfx。",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "durationVirtualMs": 36800,
+  "rateSegments": [
+    { "from": 0, "to": 13200, "rate": 1 },
+    { "from": 13200, "to": 20700, "rate": 4 },
+    { "from": 20700, "to": 36800, "rate": 1 }
+  ],
+  "scenes": [
+    { "id": "hook", "at": 0, "caption": "上下文满了？", "kind": "black" },
+    { "id": "hook2", "at": 2600, "caption": "它自己会封箱。", "kind": "black" },
+    { "id": "thread", "at": 5200, "caption": "真组件 · 真时间线 · 就是产品本体", "kind": "ui" },
+    { "id": "seal", "at": 10700, "caption": "", "kind": "ui" },
+    { "id": "countdown", "at": 13200, "caption": "10 秒，交接给新会话", "kind": "ui" },
+    { "id": "fly", "at": 20700, "caption": "", "kind": "ui" },
+    { "id": "blackout", "at": 22300, "caption": "", "kind": "black" },
+    { "id": "open", "at": 22700, "caption": "另一条会话，开箱接着干", "kind": "b" },
+    { "id": "warmpaper", "at": 26000, "caption": "暖纸主题 · 一个 CSS 插件", "kind": "b warm" },
+    { "id": "phi", "at": 29200, "caption": "字号 13 / 15 / 17 / 22 · φ", "kind": "phi" },
+    { "id": "hud", "at": 32600, "caption": "后端常驻 26MB（演示数据）", "kind": "b warm hud" },
+    { "id": "end", "at": 35000, "caption": "上线六个月 · 第一次发片", "kind": "end" }
+  ],
+  "sfx": [
+    { "at": 0.1, "type": "riser", "gain": 0.3 },
+    { "at": 2.45, "type": "clack", "gain": 0.45 },
+    { "at": 5.4, "type": "tick", "gain": 0.2 },
+    { "at": 6.8, "type": "tick", "gain": 0.2 },
+    { "at": 8.2, "type": "tick", "gain": 0.2 },
+    { "at": 9.6, "type": "tick", "gain": 0.2 },
+    { "at": 10.9, "type": "paper", "gain": 0.6 },
+    { "at": 12.3, "type": "lidclack", "gain": 0.7 },
+    { "at": 12.95, "type": "ting", "gain": 0.5 },
+    { "at": 13.35, "type": "accel", "gain": 0.4 },
+    { "at": 15.12, "type": "whoosh", "gain": 0.8 },
+    { "at": 15.3, "type": "land", "gain": 0.5 },
+    { "at": 15.9, "type": "latch", "gain": 0.6 },
+    { "at": 16.45, "type": "riser-up", "gain": 0.5 },
+    { "at": 20.4, "type": "swish", "gain": 0.4 },
+    { "at": 23.6, "type": "swish", "gain": 0.4 },
+    { "at": 27.0, "type": "tick", "gain": 0.3 },
+    { "at": 29.4, "type": "boom", "gain": 0.55 },
+    { "at": 30.2, "type": "shine", "gain": 0.4 }
+  ]
+}

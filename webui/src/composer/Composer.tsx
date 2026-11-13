@@ -30,7 +30,7 @@ import { EffortCard } from "./EffortCard";
 import { ToolModeCard } from "./ToolModeCard";
 import { useDismissable } from "../ui/dismissable";
 
-export type SendBlockReason = "running" | "pending" | "offline" | "no-session" | null;
+export type SendBlockReason = "running" | "pending" | "offline" | "no-session" | "sealed" | null;
 
 /** HUD 里端点原生 usage 字段的展示上限,其余归入 `+N` 的 title。 */
 const EXTRA_HUD_LIMIT = 4;
@@ -235,6 +235,9 @@ export const Composer: Component<{
         return STR.sendDisabledOffline;
       case "no-session":
         return STR.sendDisabledNoSession;
+      case "sealed":
+        // ADR-016:封箱会话 loop 已闭门,后端拒一切新输入——置灰提示去新会话。
+        return STR.sendDisabledSealed;
       default:
         return STR.send;
     }
@@ -445,20 +448,19 @@ export const Composer: Component<{
                     }}
                     title={
                       metrics().isGeneratingToolInput
-                        ? "模型正在生成工具参数；行数估算显示在工具卡片，当前不推算 tok/s"
+                        ? "模型正在生成工具参数；参数 token 已并入吐字速率，行数估算另见工具卡片"
                         : metrics().isStreaming
-                        ? "实时吐字速率：基于流式增量滑动窗口实时测算"
+                        ? "实时吐字速率：基于流式增量滑动窗口实时测算（含思考与工具参数）"
                         : metrics().tokensPerSecond != null
-                          ? "最近一轮完成速率：completion tokens ÷ 首末输出间隔"
+                          ? "最近一轮完成速率：completion tokens ÷ 产出区间（含思考与工具参数）"
                           : "吐字速率：模型生成时将实时显示 (tok/s)"
                     }
                   >
                     <Show when={metrics().isStreaming || metrics().isGeneratingToolInput}>
                       <span class="composer-live-dot" aria-hidden="true" />
                     </Show>
-                    <Show when={metrics().isGeneratingToolInput} fallback={<><strong>{metrics().tokensPerSecond != null ? metrics().tokensPerSecond!.toFixed(1) : "--"}</strong> tok/s</>}>
-                      正在生成工具参数
-                    </Show>
+                    <Show when={metrics().isGeneratingToolInput}>正在生成工具参数 · </Show>
+                    <strong>{metrics().tokensPerSecond != null ? metrics().tokensPerSecond!.toFixed(1) : "--"}</strong> tok/s
                   </span>
                   <span class="composer-context-wrap">
                     <button

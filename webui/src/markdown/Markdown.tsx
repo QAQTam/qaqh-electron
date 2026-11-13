@@ -22,7 +22,6 @@ import { splitBlocks } from "./split";
 import { renderMarkdownHtml } from "./render";
 import { patchMarkdown } from "./patch";
 import { createPaintScheduler } from "./paint";
-import { hydrateWidgetMounts, type WidgetHostContext } from "../widget/host";
 
 /**
  * 单帧同步绘制预算(ms)。120Hz 一帧 8.3ms,留一半给布局与绘制。
@@ -65,8 +64,6 @@ export const Markdown: Component<{
   text: () => string;
   revision?: string | number;
   streaming?: boolean;
-  /** widget-directive：提供后正文 marker 水合成 iframe（assistant 消息专用）。 */
-  widgetCtx?: WidgetHostContext;
 }> = (props) => {
   let host!: HTMLDivElement;
   let tail: HTMLDivElement | undefined;
@@ -98,7 +95,6 @@ export const Markdown: Component<{
     node.className = "md-block";
     node.innerHTML = html; // 已净化输出
     addCodeBlockHeaders(node);
-    if (props.widgetCtx) hydrateWidgetMounts(node, props.widgetCtx);
     host.insertBefore(node, tail!);
   };
 
@@ -154,7 +150,6 @@ export const Markdown: Component<{
     }
     if (!isStreaming && tail != null) {
       addCodeBlockHeaders(tail);
-      if (props.widgetCtx) hydrateWidgetMounts(tail, props.widgetCtx);
     }
     lastCostMs = performance.now() - startedAt;
     earliestAt = performance.now() + (lastCostMs > PAINT_BUDGET_MS ? THROTTLE_MS : 0);

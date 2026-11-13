@@ -5,6 +5,8 @@ const events = new Set([
   "conn://error", "conn://liveness", "conn://reconnect",
   "model-picker:changed", "app://window-state", "app://quit-requested", "browser-view://state",
   "plugins://graph",
+  "voice://status",
+  "notify://handoff",
 ]);
 const pendingQuitEvents: unknown[] = [];
 const quitCallbacks = new Set<(payload: unknown) => void>();
@@ -38,6 +40,10 @@ contextBridge.exposeInMainWorld("qaqhHost", {
   },
   devtools: {
     toggle: () => ipcRenderer.invoke("qaqh:devtools-toggle") as Promise<boolean>,
+  },
+  devmode: {
+    /** 开发者模式开/关同步到主进程(Dev Surface 的 MCP 可见性门控,不落盘)。 */
+    set: (enabled: boolean) => ipcRenderer.invoke("qaqh:devmode-set", { enabled }) as Promise<boolean>,
   },
   powerBlocker: {
     set: (mode: "off" | "keep-awake" | "keep-awake-bright") => ipcRenderer.invoke("qaqh:power-blocker", { mode }),

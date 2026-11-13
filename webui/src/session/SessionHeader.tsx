@@ -15,6 +15,7 @@ import IconCopy from "~icons/lucide/copy";
 import IconEdit from "~icons/lucide/file-pen-line";
 import { localTitleOf, renameSession, sessionCatalog, type Tab } from "../tabs/store";
 import { parentSessionOf } from "../session/handoff-journal";
+import { GoalBadge } from "./GoalBadge";
 import { STR } from "../lib/strings";
 import { useDismissable } from "../ui/dismissable";
 
@@ -48,10 +49,11 @@ export const SessionHeader: Component<SessionHeaderProps> = (props) => {
   const cwd = createMemo(() => session()?.cwd || "");
 
   /**
-   * fork 交接对话标记。后端没有 `parent` 字段可读(§六),血缘来自本地交接账本。
+   * fork 交接对话标记。权威 = 目录血缘字段 `handoff_from_session_id`(ADR-016
+   * 切片 2);本地交接账本只剩升级前旧数据的兼容读取。
    */
   const forkFrom = createMemo(() => {
-    const parentSeed = parentSessionOf(props.tab.seed);
+    const parentSeed = session()?.handoff_from_session_id ?? parentSessionOf(props.tab.seed);
     if (parentSeed == null) return null;
     const parentTitle = sessionCatalog().find((item) => item.session_id === parentSeed)?.title?.trim();
     return parentTitle ? `${STR.forkBadgeTitle} · ${STR.forkFrom(parentTitle)}` : STR.forkBadgeTitle;
@@ -155,6 +157,10 @@ export const SessionHeader: Component<SessionHeaderProps> = (props) => {
             </span>
           )}
         </Show>
+
+        {/* goal 徽标:链上任何会话的 bootstrap 都解析出同一个 goal,状态走
+            goal_updated 整字段替换;徽标点开是用量/控制详情卡(ADR-0015 §二)。 */}
+        <GoalBadge tab={props.tab} />
 
         <div class="session-header-menu-wrap">
           <button

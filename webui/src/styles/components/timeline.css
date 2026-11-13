@@ -62,6 +62,69 @@
     color: var(--accent); font-size: 10px; line-height: 1.5; white-space: nowrap;
   }
   .session-header-fork svg { width: 11px; height: 11px; }
+  /* goal 徽标与详情卡(ADR-0015 §二):状态色点语义 active=ok paused=muted
+     blocked/受限=warn complete=accent,详情卡沿用 dropdown 面板质感。 */
+  .goal-badge-wrap { position: relative; display: flex; align-items: center; flex: none; }
+  .goal-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 7px;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+    color: var(--muted); font-size: 10px; line-height: 1.5; white-space: nowrap;
+    background: transparent; cursor: pointer;
+    transition: all var(--dur-fast) var(--ease);
+  }
+  .goal-badge svg { width: 11px; height: 11px; }
+  .goal-badge:hover, .goal-badge.open { color: var(--text); background: var(--surface-2); }
+  .goal-badge[data-status="active"] { border-color: var(--ok); color: var(--ok); }
+  .goal-badge[data-status="blocked"], .goal-badge[data-status="usage_limited"], .goal-badge[data-status="budget_limited"] {
+    border-color: var(--warn); color: var(--warn);
+  }
+  .goal-badge[data-status="complete"] { border-color: var(--accent); color: var(--accent); }
+  .goal-card {
+    position: absolute; left: 0; top: calc(100% + 4px);
+    z-index: 50; display: grid; gap: 6px;
+    width: 300px; padding: 10px;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-panel);
+    background: var(--surface); box-shadow: var(--shadow-panel);
+  }
+  .goal-card-head { display: flex; align-items: center; gap: 8px; }
+  .goal-card-status {
+    display: inline-flex; align-items: center;
+    font-size: var(--fs-xs); font-weight: 600; color: var(--muted);
+  }
+  .goal-card-status[data-status="active"] { color: var(--ok); }
+  .goal-card-status[data-status="blocked"], .goal-card-status[data-status="usage_limited"], .goal-card-status[data-status="budget_limited"] { color: var(--warn); }
+  .goal-card-status[data-status="complete"] { color: var(--accent); }
+  .goal-card-root { font-size: 10px; color: var(--muted); }
+  .goal-card-objective {
+    font-size: var(--fs-sm); color: var(--text);
+    overflow-wrap: anywhere; white-space: pre-wrap;
+    max-height: 6em; overflow-y: auto;
+  }
+  .goal-card-edit {
+    width: 100%; height: 26px; padding: 2px 6px;
+    font-size: var(--fs-sm); font-family: inherit; color: var(--text);
+    background: var(--bg); border: 1px solid var(--focus-ring); border-radius: var(--r-sm);
+    outline: none;
+  }
+  .goal-card-usage { font-size: var(--fs-xs); color: var(--muted); }
+  .goal-card-note { font-size: var(--fs-xs); color: var(--warn); overflow-wrap: anywhere; }
+  .goal-card-actions, .goal-card-budget { display: flex; align-items: center; gap: 6px; }
+  .goal-card-btn {
+    padding: 2px 8px;
+    border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+    color: var(--text); font-size: var(--fs-xs); background: transparent;
+    cursor: pointer;
+    transition: all var(--dur-fast) var(--ease);
+  }
+  .goal-card-btn:hover { background: var(--surface-2); }
+  .goal-card-btn.danger:hover { border-color: var(--err); color: var(--err); }
+  .goal-card-budget-input {
+    flex: 1; min-width: 0; height: 24px; padding: 2px 6px;
+    font-size: var(--fs-xs); font-family: inherit; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+    outline: none;
+  }
   .session-header-title {
     font-size: var(--fs-sm); font-weight: 600;
     color: var(--text);
@@ -175,13 +238,24 @@
   .turn-user .bubble {
     max-width: 85%;
     background: var(--surface-user);
-    border-radius: var(--r-md);
+    /* 气泡是纸面上的"面板级"对象,吃 panel 档圆角(Claude r-bubble=panel 同级,
+       不跟控件圆角家族)——圆角本身就是深度编码。 */
+    border-radius: var(--r-lg);
     padding: 8px 12px;
     font-family: var(--font-prose);
     font-size: var(--fs-md); line-height: 1.65;
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* 撤回是「删掉整段历史」的入口,弱化成气泡右侧一枚次要控件:平时只有字,
+     hover 才出边框。它不该比气泡显眼,但必须落在同一行右端一眼找得到。 */
+  .turn-recall {
+    align-self: center; flex: 0 0 auto; margin-left: 8px; padding: 2px 6px;
+    font-size: var(--fs-sm); border: 1px solid transparent;
+    border-radius: var(--r-md); color: var(--muted); background: transparent;
+    cursor: pointer;
+  }
+  .turn-recall:hover { border-color: var(--border-strong); color: var(--text); }
   .turn-placeholder { width: min(var(--content-width), 100%); margin-inline: auto; }
 
   .turn-steps { display: grid; gap: 4px; margin-bottom: 10px; }
@@ -346,4 +420,133 @@
   }
   .collapsed-row:hover { background: var(--surface-2); }
   .collapsed-row svg { width: 14px; height: 14px; }
+}
+
+/* ── 开箱交接卡(B 侧):封箱投递的文档不再以 user 裸文本墙呈现 ── */
+@layer components {
+  .turn-user-open { display: flex; justify-content: flex-start; margin-bottom: 12px; }
+  .handoff-open { width: 100%; max-width: min(680px, 100%); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; }
+  .handoff-open-head { display: flex; gap: 10px; padding: 12px 14px 10px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+  .handoff-open-icon svg { width: 18px; height: 18px; color: var(--accent); }
+  .handoff-open-titles { display: grid; gap: 3px; min-width: 0; }
+  .handoff-open-summary { font-size: var(--fs-sm); }
+  .handoff-open-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: var(--fs-xs); }
+  .handoff-open-meta code { font-size: .92em; }
+  .handoff-open-jump { display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: var(--fs-xs); }
+  .handoff-open-jump svg { width: 12px; height: 12px; }
+  .handoff-open-body { padding: 10px 14px; }
+  .handoff-open-body.clipped { max-height: 164px; overflow: hidden; -webkit-mask-image: linear-gradient(#000 calc(100% - 44px), transparent); mask-image: linear-gradient(#000 calc(100% - 44px), transparent); }
+  .handoff-open-raw { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-code); font-size: var(--fs-xs); }
+  .handoff-open-foot { display: flex; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border); }
+}
+
+/* ── 封箱/开箱动画盒(ui/box-anim)：基态=终态，见组件头注释 ── */
+@layer components {
+  .qaqh-box-icon .bx-lid { transform-box: view-box; }
+  .qaqh-box-icon .bx-lid-l { transform-origin: 4px 9px; }
+  .qaqh-box-icon .bx-lid-r { transform-origin: 20px 9px; }
+  /* 终态（无动画时即此画）：封箱=合盖+勾出，开箱=掀盖+签升。 */
+  .qaqh-box-seal .bx-check { stroke-dasharray: 11; stroke-dashoffset: 0; }
+  .qaqh-box-open .bx-lid-l { transform: rotate(-75deg); }
+  .qaqh-box-open .bx-lid-r { transform: rotate(75deg); }
+  .qaqh-box-open .bx-spark { opacity: 1; }
+
+  .qaqh-box-seal .bx-lid-l { animation: bxSealL 2.4s var(--ease) both; }
+  .qaqh-box-seal .bx-lid-r { animation: bxSealR 2.4s var(--ease) both; }
+  .qaqh-box-seal .bx-check { animation: bxDraw 2.4s linear both; }
+  .qaqh-box-open .bx-lid-l { animation: bxOpenL 2.2s var(--ease) both; }
+  .qaqh-box-open .bx-lid-r { animation: bxOpenR 2.2s var(--ease) both; }
+  .qaqh-box-open .bx-spark { transform-box: view-box; animation: bxSpark 2.2s var(--ease) both; }
+
+  @keyframes bxSealL { 0%,12% { transform: rotate(-75deg); } 55%,100% { transform: rotate(0deg); } }
+  @keyframes bxSealR { 0%,12% { transform: rotate(75deg); } 55%,100% { transform: rotate(0deg); } }
+  @keyframes bxDraw { 0%,58% { stroke-dashoffset: 11; } 88%,100% { stroke-dashoffset: 0; } }
+  @keyframes bxOpenL { 0%,15% { transform: rotate(0deg); } 62%,100% { transform: rotate(-75deg); } }
+  @keyframes bxOpenR { 0%,15% { transform: rotate(0deg); } 62%,100% { transform: rotate(75deg); } }
+  @keyframes bxSpark { 0%,45% { opacity: 0; transform: translateY(5px); } 78%,100% { opacity: 1; transform: translateY(0); } }
+
+  /* 零动效面：关掉动画 = 直接落终态画（Lite/工业档 + 系统降级偏好）。 */
+  .theme-lite .qaqh-box-icon *, .theme-zen-console .qaqh-box-icon * { animation: none !important; }
+  @media (prefers-reduced-motion: reduce) { .qaqh-box-icon * { animation: none !important; } }
+}
+
+/* ── 封箱/开箱仪式大盒(ui/box-ritual)+ 飞箱(ui/box-fly) ──
+   时间线：封 = 纸显影→丢入(0–52%)→合盖(52–74%)→描勾(74–92%)→淡出(90–100%)，
+   落位段由组件里 WAAPI 读槽位矩形接力；开 = 勾淡→掀盖→纸升起→淡出。
+   闸门纪律同 box-anim：lite/zen/reduced-motion 整层 display:none，卡片直接终态。 */
+@layer components {
+  .handoff-card, .handoff-open { position: relative; }
+  .handoff-ritual {
+    position: absolute; inset: 0; z-index: 2; overflow: visible;
+    border-radius: inherit; background: var(--surface);
+  }
+  .bxr-seal { animation: bxrFade 2.3s linear both; }
+  .bxr-open { animation: bxrFadeOpen 1.8s linear both; }
+  .bxr-stage { position: absolute; left: 50%; top: 55%; transform: translate(-50%,-50%); width: 110px; height: 150px; }
+  .bxr-box { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); color: var(--accent); }
+  .bxr-box svg { width: 64px; height: 64px; }
+  .bxr-box .bx-lid { transform-box: view-box; }
+  .bxr-box .bx-lid-l { transform-origin: 4px 9px; }
+  .bxr-box .bx-lid-r { transform-origin: 20px 9px; }
+  .bxr-box .bx-check { stroke-dasharray: 11; }
+  .bxr-paper {
+    position: absolute; left: 50%; top: 6px; width: 46px; height: 54px;
+    display: grid; align-content: start; gap: 6px; padding: 9px 7px; box-sizing: border-box;
+    transform: translateX(-50%);
+    background: var(--bg); border: 1px solid var(--border-strong); border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.10);
+  }
+  .bxr-paper i { display: block; height: 2px; border-radius: 1px; background: var(--muted); opacity: .4; }
+  .bxr-paper i:nth-child(1) { width: 86%; }
+  .bxr-paper i:nth-child(2) { width: 70%; }
+  .bxr-paper i:nth-child(3) { width: 82%; }
+  .bxr-paper i:nth-child(4) { width: 55%; }
+
+  /* 封：纸显影→丢入盒口(被盒身挡住,DOM 上纸在盒前)；盖合；勾描。 */
+  .bxr-seal .bxr-paper { animation: bxrPaper 2.3s var(--ease) both; }
+  .bxr-seal .bx-lid-l { animation: bxrSealL 2.3s var(--ease) both; }
+  .bxr-seal .bx-lid-r { animation: bxrSealR 2.3s var(--ease) both; }
+  .bxr-seal .bx-check { animation: bxrCheck 2.3s linear both; }
+  @keyframes bxrPaper {
+    0% { opacity: 0; transform: translateX(-50%) translateY(-14px) scale(.9) rotate(-6deg); }
+    8% { opacity: 1; transform: translateX(-50%) translateY(4px) scale(1) rotate(-2deg); }
+    30% { opacity: 1; transform: translateX(-50%) translateY(10px) scale(1) rotate(0deg); }
+    44% { opacity: 1; transform: translateX(-50%) translateY(40px) scale(.55) rotate(5deg); }
+    52%,100% { opacity: 0; transform: translateX(-50%) translateY(52px) scale(.42) rotate(7deg); }
+  }
+  @keyframes bxrSealL { 0%,52% { transform: rotate(-75deg); } 74%,100% { transform: rotate(0deg); } }
+  @keyframes bxrSealR { 0%,52% { transform: rotate(75deg); } 74%,100% { transform: rotate(0deg); } }
+  @keyframes bxrCheck { 0%,74% { stroke-dashoffset: 11; opacity: 1; } 92%,100% { stroke-dashoffset: 0; opacity: 1; } }
+  @keyframes bxrFade { 0%,90% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* 开：勾淡→掀盖→纸从盒口升起展开(DOM 上纸在盒后=前层)。 */
+  .bxr-open .bx-check { animation: bxrCheckOut 1.8s var(--ease) both; }
+  .bxr-open .bx-lid-l { animation: bxrOpenL 1.8s var(--ease) both; }
+  .bxr-open .bx-lid-r { animation: bxrOpenR 1.8s var(--ease) both; }
+  .bxr-open .bxr-paper { animation: bxrPaperUp 1.8s var(--ease) both; }
+  @keyframes bxrCheckOut { 0%,8% { opacity: 1; } 24%,100% { opacity: 0; } }
+  @keyframes bxrOpenL { 0%,30% { transform: rotate(0deg); } 55%,100% { transform: rotate(-75deg); } }
+  @keyframes bxrOpenR { 0%,30% { transform: rotate(0deg); } 55%,100% { transform: rotate(75deg); } }
+  @keyframes bxrPaperUp {
+    0%,48% { opacity: 0; transform: translateX(-50%) translateY(44px) scale(.4); }
+    58% { opacity: 1; }
+    82% { opacity: 1; transform: translateX(-50%) translateY(-6px) scale(1) rotate(2deg); }
+    94% { opacity: 1; transform: translateX(-50%) translateY(-12px) scale(1) rotate(0deg); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-16px) scale(1.02); }
+  }
+  @keyframes bxrFadeOpen { 0%,82% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* 仪式进行时卡身不叠 fade-in(遮罩淡出本身就是揭示)。 */
+  .handoff-card:has(.bxr-seal) { animation: none; }
+
+  /* 飞箱 ghost:body 级 fixed 层,切视图不拖走。 */
+  .bx-fly-ghost { position: fixed; z-index: 120; width: 42px; height: 42px; color: var(--accent); pointer-events: none; }
+  .bx-fly-ghost svg { width: 42px; height: 42px; display: block; }
+
+  /* 闸门：lite/zen/降级偏好整层不进 DOM 视觉,WAAPI 侧由组件探测 display:none 跳过。 */
+  .theme-lite .handoff-ritual, .theme-zen-console .handoff-ritual { display: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    .handoff-ritual { display: none !important; }
+    .bx-fly-ghost { display: none; }
+  }
 }

@@ -279,6 +279,12 @@ export class RingingClient {
     return this.bootstrap(seed);
   }
 
+  /** Team 投影快照(任务板/花名册/留言板,读侧按需拉取)。 */
+  async teamSnapshot(seed: string): Promise<unknown> {
+    await this.init();
+    return this.native!.teamRaw(seed);
+  }
+
   async uploadContent(seed: string, _filename: string, buffer: Uint8Array, mediaType: string) {
     await this.init();
     return this.native!.uploadContentRaw(seed, mediaType, buffer);

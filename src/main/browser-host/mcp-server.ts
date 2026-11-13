@@ -38,7 +38,20 @@ export interface BrowserMcpServer {
   close(): Promise<void>;
 }
 
-const tools: BrowserToolDef[] = [
+/**
+ * 工具面提供器（组装点在 index.ts bootstrap）：
+ * - listTools 每次现算——dev surface 的可见性门控（开发者模式）在这里生效；
+ * - resolveHandler 覆盖全量 handler 表——门控只决定「扫描时看得见什么」，
+ *   不决定「能不能执行」：rmcp 的 tools 缓存到下次唤醒才刷新，若把门控做进
+ *   执行面，录制中途收回开发者模式会把 record_stop 也锁死（失控录制）。
+ *   安全边界始终是回环绑定 + per-boot token，与此处可见性无关。
+ */
+export interface BrowserMcpSurface {
+  listTools(): BrowserToolDef[];
+  resolveHandler(name: string): BrowserToolHandlers[string] | undefined;
+}
+
+const browserTools: BrowserToolDef[] = [
   {
     name: "browser_navigate",
     description: "打开内嵌浏览器并导航到 URL（自动展示浏览器面板给用户）。返回页面 title 与最终 URL。",
@@ -117,6 +130,7 @@ const tools: BrowserToolDef[] = [
 ];
 
 // tools/list 与 handlers 表的一致性（schema 有而 handler 缺）由单测把守。
+export { browserTools };
 
 /**
  * 启动 MCP server。立即 resolve（含实际端口）；协议错误不外泄——工具执行失败
@@ -124,9 +138,9 @@ const tools: BrowserToolDef[] = [
  */
 export async function startBrowserMcpServer(options: {
   token: string;
-  handlers: BrowserToolHandlers;
+  surface: BrowserMcpSurface;
 }): Promise<BrowserMcpServer> {
-  const { token, handlers } = options;
+  const { token, surface } = options;
   let sessionId: string | null = null;
 
   const server: Server = createServer((request, response) => {
@@ -225,7 +239,7 @@ export async function startBrowserMcpServer(options: {
       case "ping":
         return {};
       case "tools/list":
-        return { tools };
+        return { tools: surface.listTools() };
       case "resources/list":
         return { resources: [] };
       case "prompts/list":
@@ -233,7 +247,7 @@ export async function startBrowserMcpServer(options: {
       case "tools/call": {
         const params = message.params as { name?: unknown; arguments?: Record<string, unknown> } | undefined;
         const name = typeof params?.name === "string" ? params.name : "";
-        const handler = handlers[name];
+        const handler = surface.resolveHandler(name);
         if (name === "" || handler == null) {
           return errorResult(`未知工具 ${name || "(空)"}；可用工具见 tools/list`);
         }

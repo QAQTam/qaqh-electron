@@ -19,6 +19,8 @@ import IconMenu from "~icons/lucide/menu";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import IconListTodo from "~icons/lucide/list-todo";
 import IconGamepad2 from "~icons/lucide/gamepad-2";
+import IconMicrophone from "~icons/lucide/mic";
+import IconSquareTerminal from "~icons/lucide/square-terminal";
 import { observeShellCols, type ShellCols } from "../lib/shell-cols";
 import { restoreSidebarWidth, shouldCollapseSidebar } from "../lib/sidebar-resize";
 import IconX from "~icons/lucide/x";
@@ -26,6 +28,7 @@ import IconX from "~icons/lucide/x";
 import { Sidebar, type GlobalSection } from "./Sidebar";
 import { SessionHeader } from "../session/SessionHeader";
 import { ToolsPage } from "./ToolsPage";
+import { TeamPage } from "./TeamPage";
 import { OAuthPage } from "../oauth/OAuthPage";
 import {
   activeId,
@@ -96,14 +99,18 @@ import {
   GamepadController,
   gamepadPrompts,
   supportsGamepadActions,
+  vibrateGamepad,
   type GamepadAction,
   type GamepadDeviceState,
 } from "../lib/gamepad";
+import { VoiceIO, type VoicePhase } from "../lib/voice";
 import { startPluginHost } from "../plugins/loader";
 import { notifyConfigChanged, onConfigChanged } from "../lib/config-events";
 import { toast, ToastHost } from "../ui/toast";
 import { buildContextMenu, ContextMenuHost, openContextMenu, type ContextMenuItem } from "../ui/contextMenu";
 import { DiffReviewDrawer } from "../diff/DiffReviewDrawer";
+import { ExecSessionDrawer } from "../exec/ExecSessionDrawer";
+import { execPanelStore } from "../exec/panel-store";
 import BrowserPane from "../browser/BrowserPane";
 import "../styles/app.css";
 
@@ -174,6 +181,15 @@ const setRailManual = (value: boolean | null): void => {
 /* docked 态右栏当前是否展开(手动优先,否则按自动规则:有待办就展开)。 */
 const railDockedOpen = (): boolean => railManual() ?? (activeTab()?.store.todos[0]().length ?? 0) > 0;
 const toggleRail = (): void => setRailManual(!railDockedOpen());
+/* 功能区(spec §6.4 延伸):TopBar 右格的会话级功能按钮组——终端(后台执行)/任务/手柄。
+   终端按钮从 SessionHeader 迁入此处,与任务钮同区同态;「更多」是应用级菜单,不入功能区。 */
+const runningExecCount = (): number => {
+  const tab = activeTab();
+  if (tab == null) return 0;
+  return Object.values(tab.store.state[0].execSessions)
+    .filter((session) => session.state.kind !== "finished").length;
+};
+const execPanelOpen = (): boolean => execPanelStore.snapshot().isOpen;
 const toggleSidebar = (): void => {
   setSidebarCollapsed((value) => {
     const next = !value;
@@ -213,6 +229,8 @@ const App: Component = () => {
   const [quitError, setQuitError] = createSignal<string | null>(null);
   /** 打开设置时要落的导航分区；`undefined` = 用设置页自己的默认分区。 */
   const [settingsSection, setSettingsSection] = createSignal<string | undefined>(undefined);
+  /** 工具页分区:与 settingsSection 同套路,导航在左栏(复用会话列表栏位)。 */
+  const [toolsTab, setToolsTab] = createSignal<"skills" | "mcp" | "plugins">("skills");
   /** 同一个分区再次被请求时也要能切回去（设置页已打开、用户手动导航过）。 */
   const [settingsSectionNonce, setSettingsSectionNonce] = createSignal(0);
   /** 重连倒计时的每秒心跳:仅在活动标签 reconnecting 期间运转(见 connectionNotice)。 */
@@ -228,6 +246,41 @@ const App: Component = () => {
   });
   const gamepadHints = () => gamepadPrompts(gamepadDevice().family);
   const toggleGamepadMode = (): void => { setGamepadMode((value) => !value); };
+
+  // —— 语音输入/播报(懒人生形态:手柄按住扳机说话、agent 回复念出来)——
+  const [voiceOn, setVoiceOn] = createSignal(localStorage.getItem("qaqh.voice") === "1");
+  const [voicePhase, setVoicePhase] = createSignal<VoicePhase>(localStorage.getItem("qaqh.voice") === "1" ? "idle" : "off");
+  const [voiceDetail, setVoiceDetail] = createSignal("");
+  const [voiceLevel, setVoiceLevel] = createSignal(0);
+  const voice = new VoiceIO({
+    phase: (next, detail) => {
+      setVoicePhase(next);
+      setVoiceDetail(detail ?? "");
+      if (next !== "recording") setVoiceLevel(0);
+    },
+    level: setVoiceLevel,
+    recognized: (text) => {
+      // 开录时锁定的标签:中途切会话也不把话插错地方(dsh 的迟到结果语义)。
+      const tab = tabs().find((item) => item.seed === talkSeed);
+      talkSeed = "";
+      if (tab == null) return;
+      const current = draftOf(tab.seed);
+      setDraftOf(tab.seed, current.length > 0 && !/\s$/.test(current) ? `${current} ${text}` : current + text);
+      vibrateGamepad(120, 0.35, 0.2);
+    },
+    notice: (message, kind) => { toast(message, kind); },
+  });
+  if (voiceOn()) void voice.enable().catch(() => { toast("语音初始化失败", "err"); });
+  const toggleVoice = (): void => {
+    const next = !voiceOn();
+    setVoiceOn(next);
+    localStorage.setItem("qaqh.voice", next ? "1" : "0");
+    if (next) void voice.enable().catch((error: unknown) => { toast(error instanceof Error ? error.message : String(error), "err"); });
+    else voice.disable();
+  };
+  /** 开录锁定的目标会话 seed:转写迟到也插回原标签。 */
+  let talkSeed = "";
+  const startTalk = (): void => { talkSeed = active()?.seed ?? ""; void voice.talkStart(); };
   const approvalOpen = (): boolean => (activeTab()?.store.pending[0]().length ?? 0) > 0;
 
   /**
@@ -315,6 +368,8 @@ const App: Component = () => {
       return; // Never send/focus/toggle the underlying composer or panel under a modal.
     }
     if (settingsOpen() || onboardingVisible() || quitPrompt() !== undefined) return;
+    if (action.kind === "voice-start") { vibrateGamepad(90, 0.3, 0.15); startTalk(); return; }
+    if (action.kind === "voice-stop") { void voice.talkStop(); return; }
     if (action.kind === "toggle-panel") {
       if (section() === "messages" && !isStartup()) {
         if (appCols() < 3) setRailDrawerOpen((value) => !value);
@@ -338,6 +393,7 @@ const App: Component = () => {
       () => gamepadMode() && !settingsOpen() && !onboardingVisible() && quitPrompt() === undefined,
       (action) => handleGamepadAction(action),
       setGamepadDevice,
+      () => voiceOn(),
     );
     const stopGamepad = gamepad.start();
     startPluginHost();
@@ -598,6 +654,8 @@ const App: Component = () => {
     // 于是每帧流式写入都重算一次发送按钮(高吞吐下的卡顿放大器)。
     const activity = tab.store.activity[0]();
     if (tab.store.isSending[0]() || tab.store.state[0].runningTurns > 0 || activity === "working" || activity === "cancelling") return "running";
+    // ADR-016:封箱会话的 loop 已闭门,后端拒一切新输入——置灰而不是让人撞红线。
+    if (tab.store.isHandoffSealed()) return "sealed";
     return null;
   };
 
@@ -606,6 +664,21 @@ const App: Component = () => {
     const activity = tab.store.activity[0]();
     return tab.store.isSending[0]() || tab.store.state[0].runningTurns > 0 || activity === "working" || activity === "cancelling";
   };
+
+  // 播报闭环:回合从忙碌落到空闲的那一帧,把最终作答念出来(vibrate 兼作"该看屏了"通知)。
+  let spokeRunning = false;
+  createEffect(
+    () => [active(), runningNow(active())] as const,
+    ([tab, busy]) => {
+      if (spokeRunning && !busy && tab != null && voiceOn() && (voicePhase() === "ready" || voicePhase() === "speaking")) {
+        const slots = tab.store.state[0].slots;
+        const lastTurn = [...slots].reverse().find((slot) => slot.kind === "turn");
+        const answer = lastTurn == null ? undefined : tab.store.state[0].turns[lastTurn.key]?.answer?.text;
+        if (answer != null && answer.trim().length > 0) void voice.speak(answer);
+      }
+      spokeRunning = busy;
+    },
+  );
 
   // 倒计时心跳:只在活动标签 reconnecting 时运转,其余时间零定时器。
   createEffect(
@@ -776,6 +849,11 @@ const App: Component = () => {
       // A slow acknowledgement must not erase text typed for the next message.
       if (draftOf(tab.seed) === text) setDraftOf(tab.seed, "");
     } catch (error) {
+      // 封箱竞态(输入在飞时封箱落地):后端 Closed 拒绝不弹红,提示去新会话。
+      if (tab.store.isHandoffSealed()) {
+        toast(STR.sendDisabledSealed, "info");
+        return;
+      }
       toast(`${STR.sendFailed}：${String(error instanceof Error ? error.message : error)}`, "err");
     }
   };
@@ -850,7 +928,7 @@ const App: Component = () => {
             when={section() === "messages" && !settingsOpen() && !isStartup() && activeTab() != null}
             fallback={
               <div class="titlebar-session-title">
-                {settingsOpen() ? "设置" : section() === "tools" ? "工具" : section() === "oauth" ? "接入" : "新会话"}
+                {settingsOpen() ? "设置" : section() === "tools" ? "工具" : section() === "team" ? STR.teamTitle : section() === "oauth" ? "接入" : "新会话"}
               </div>
             }
           >
@@ -859,35 +937,64 @@ const App: Component = () => {
           </Show>
         </div>
         <div class="topbar-right">
-          {/* 任务面板开关(BUG-2026-10-29 主动展开钮):全列态可见——cols<3 唤起抽屉,
-              cols≥3 直接开合 docked 右栏(与面板头部按钮同态,持久化);badge=待办数。 */}
-          <Show when={section() === "messages" && !settingsOpen() && !isStartup() && activeTab() != null}>
+          {/* 功能区:会话级功能按钮组(终端/任务/手柄)。「更多」应用菜单保持独立。 */}
+          <div class="topbar-function-zone" role="group" aria-label="功能区">
+            <Show when={section() === "messages" && !settingsOpen() && !isStartup() && activeTab() != null}>
+              {/* 后台执行终端入口(功能区首位):运行计数徽章驱动,点击开/关后台执行抽屉。 */}
+              <button
+                type="button"
+                class={{ "titlebar-menu function-zone-exec": true, active: execPanelOpen() }}
+                aria-label="后台执行终端"
+                aria-pressed={execPanelOpen() ? "true" : "false"}
+                title={runningExecCount() > 0 ? `后台执行 · ${runningExecCount()} 个运行中` : "后台执行"}
+                onClick={() => execPanelStore.toggle()}
+              >
+                <IconSquareTerminal />
+                <Show when={runningExecCount() > 0}>
+                  <span class="exec-count-badge">{runningExecCount()}</span>
+                </Show>
+              </button>
+              {/* 任务面板开关(BUG-2026-10-29 主动展开钮):全列态可见——cols<3 唤起抽屉,
+                  cols≥3 直接开合 docked 右栏(与面板头部按钮同态,持久化);badge=待办数。 */}
+              <button
+                type="button"
+                class={{ "titlebar-menu rail-trigger": true, active: appCols() < 3 ? railDrawerOpen() : railDockedOpen() }}
+                ref={railTriggerButton}
+                aria-label="任务面板"
+                aria-haspopup={appCols() < 3 ? "dialog" : undefined}
+                aria-pressed={appCols() < 3 ? undefined : railDockedOpen() ? "true" : "false"}
+                title="任务"
+                onClick={() => { if (appCols() < 3) setRailDrawerOpen(true); else toggleRail(); }}
+              >
+                <IconListTodo />
+                <Show when={activeTab()!.store.todos[0]().length > 0}>
+                  <span class="rail-badge">{activeTab()!.store.todos[0]().length}</span>
+                </Show>
+              </button>
+            </Show>
             <button
               type="button"
-              class={{ "titlebar-menu rail-trigger": true, active: appCols() < 3 ? railDrawerOpen() : railDockedOpen() }}
-              ref={railTriggerButton}
-              aria-label="任务面板"
-              aria-haspopup={appCols() < 3 ? "dialog" : undefined}
-              aria-pressed={appCols() < 3 ? undefined : railDockedOpen() ? "true" : "false"}
-              title="任务"
-              onClick={() => { if (appCols() < 3) setRailDrawerOpen(true); else toggleRail(); }}
+              class={`titlebar-menu gamepad-mode-button${gamepadMode() ? " active" : ""}`}
+              aria-label={gamepadMode() ? "退出手柄模式" : "启用手柄模式"}
+              aria-pressed={gamepadMode() ? "true" : "false"}
+              title={gamepadMode() ? "退出手柄模式" : "手柄模式"}
+              onClick={toggleGamepadMode}
             >
-              <IconListTodo />
-              <Show when={activeTab()!.store.todos[0]().length > 0}>
-                <span class="rail-badge">{activeTab()!.store.todos[0]().length}</span>
-              </Show>
+              <IconGamepad2 />
             </button>
-          </Show>
-          <button
-            type="button"
-            class={`titlebar-menu gamepad-mode-button${gamepadMode() ? " active" : ""}`}
-            aria-label={gamepadMode() ? "退出手柄模式" : "启用手柄模式"}
-            aria-pressed={gamepadMode() ? "true" : "false"}
-            title={gamepadMode() ? "退出手柄模式" : "手柄模式"}
-            onClick={toggleGamepadMode}
-          >
-            <IconGamepad2 />
-          </button>
+            <Show when={isDesktop}>
+              <button
+                type="button"
+                class={`titlebar-menu gamepad-mode-button voice-mode-button${voiceOn() ? " active" : ""}`}
+                aria-label={voiceOn() ? "退出语音" : "启用语音"}
+                aria-pressed={voiceOn() ? "true" : "false"}
+                title={voicePhase() === "preparing" ? `语音模型准备中 ${voiceDetail()}` : "语音输入/播报(按住手柄扳机说话)"}
+                onClick={toggleVoice}
+              >
+                <IconMicrophone />
+              </button>
+            </Show>
+          </div>
           <button
             type="button"
             class="titlebar-menu titlebar-more"
@@ -905,6 +1012,8 @@ const App: Component = () => {
         onNavigate={navigateSection}
         settingsSection={settingsSection()}
         onSettingsSection={(id) => { setSettingsSection(id); setSettingsSectionNonce((value) => value + 1); if (appCols() === 1) setSidebarDrawerOpen(false); }}
+        toolsTab={toolsTab()}
+        onToolsTab={(id) => { setToolsTab(id as "skills" | "mcp" | "plugins"); if (appCols() === 1) setSidebarDrawerOpen(false); }}
         collapsed={sidebarCollapsed()}
         drawer={appCols() === 1}
         drawerOpen={appCols() === 1 && sidebarDrawerOpen()}
@@ -1047,7 +1156,8 @@ const App: Component = () => {
               </For>
             </Show>
           </Show>
-          <Show when={section() === "tools"}><ToolsPage /></Show>
+          <Show when={section() === "tools"}><ToolsPage toolsTab={toolsTab()} /></Show>
+          <Show when={section() === "team"}><TeamPage /></Show>
           <Show when={section() === "oauth"}><OAuthPage onOpenSettings={() => navigateSection("settings")} /></Show>
         </main>
         </div>
@@ -1143,12 +1253,21 @@ const App: Component = () => {
           <IconGamepad2 />
           <span>{!gamepadDevice().connected ? "等待连接手柄" : supportsGamepadActions(gamepadDevice()) ? "手柄模式" : "手柄已连接 · 控制布局不受支持"}</span>
           <span class="gamepad-mode-hints">
-            ↑↓ 导航 · {gamepadHints().confirm} 确认 · {gamepadHints().cancel} 取消 · {gamepadHints().send} 发送 · {gamepadHints().panel} 任务 · {gamepadHints().focus} 输入
+            ↑↓ 导航 · {gamepadHints().confirm} 确认 · {gamepadHints().cancel} 取消 · {gamepadHints().send} 发送 · {gamepadHints().panel} 任务 · {gamepadHints().focus} 输入{voiceOn() ? " · 按住扳机说话" : ""}
           </span>
+          <Show when={voiceOn() && voicePhase() !== "off" && voicePhase() !== "ready" && voicePhase() !== "idle"}>
+            <span class={`voice-phase voice-phase-${voicePhase()}`}>
+              {voicePhase() === "preparing" ? `模型准备 ${voiceDetail()}`
+                : voicePhase() === "recording" ? `说话中 · 电平 ${Math.round(voiceLevel() * 100)}`
+                : voicePhase() === "transcribing" ? "识别中…"
+                : voicePhase() === "speaking" ? "播报中" : ""}
+            </span>
+          </Show>
           <button type="button" aria-label="退出手柄模式" onClick={toggleGamepadMode}>退出</button>
         </div>
       </Show>
       <DiffReviewDrawer />
+      <ExecSessionDrawer />
       <ContextMenuHost />
       <ToastHost />
       <Show when={isDesktop}>

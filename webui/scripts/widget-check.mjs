@@ -1,7 +1,7 @@
-/** Headless Edge + widget-directive 全链路验收，无 daemon。pnpm dev 后运行。
+/** Headless Edge + widget-directive C2 全链路验收，无 daemon。pnpm dev 后运行。
  *
- * 断面对齐 webui/src/widget-check.tsx：§1 文法四态（block 挂载 / inline 吞 /
- * JSON 坏降级 / unknown 吞）、§2 srcdoc 沙箱装配、§3 桥往返
+ * 断面对齐 webui/src/widget-check.tsx：§1 visualize 工具段挂载（合法 args /
+ * 缺件降级）、§2 srcdoc 沙箱装配、§3 桥往返
  * （setWidgetState→快照、sendHeight→高度、sendFollowUpMessage→确认浮层→发送）。 */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -63,13 +63,11 @@ try {
     }
     await delay(300);
 
-    // 1) block marker：独占行 → 沙箱 iframe，禁 allow-same-origin。
+    // 1) visualize 工具段 → 沙箱 iframe，禁 allow-same-origin。
     assert.equal(await evaluate("document.querySelectorAll('#case-block iframe.qqh-widget-frame').length"), 1);
     const sandbox = await evaluate("document.querySelector('#case-block iframe')?.getAttribute('sandbox')");
     assert.equal(sandbox, "allow-scripts allow-forms allow-modals allow-popups");
     assert.ok(!(sandbox ?? "").includes("allow-same-origin"), "禁 allow-same-origin");
-    // marker 文本不进渲染后的正文（剪贴板源是 store 原文，DOM 呈现无 PUA）。
-    assert.equal(await evaluate("document.querySelector('#case-block').textContent.includes('\\uE200')"), false);
 
     // 2) 桥往返——自动 follow-up 应升起确认浮层，点「发送」后进 user-send 通道：
     const dialogUp = "document.querySelector('.qqh-widget-dialog-title') != null";
@@ -99,20 +97,7 @@ try {
     const frameHeight = await evaluate("parseInt(document.querySelector('#case-block iframe').style.height, 10)");
     assert.ok(frameHeight > 240, `sendHeight 应把 iframe 顶到 >240，实测 ${frameHeight}`);
 
-    // 5) inline：同行 marker 静默吞，前后文本保留。
-    assert.equal(await evaluate("document.querySelector('#case-inline').textContent.includes('甲') && document.querySelector('#case-inline').textContent.includes('乙')"), true);
-    assert.equal(await evaluate("document.querySelector('#case-inline').textContent.includes('\\uE200')"), false);
-    assert.equal(await evaluate("document.querySelectorAll('#case-inline iframe').length"), 0);
-
-    // 7) JSON 坏：一行降级占位。
-    assert.equal(await evaluate("document.querySelector('#case-badjson .qqh-widget-fallback')?.textContent"), "widget: widget");
-    assert.equal(await evaluate("document.querySelector('#case-badjson').textContent.includes('\\uE200')"), false);
-
-    // 8) unknown type：整行吞（无节点、无 PUA 原文）。
-    assert.equal(await evaluate("document.querySelector('#case-unknown').textContent.includes('\\uE200')"), false);
-    assert.equal(await evaluate("document.querySelectorAll('#case-unknown .qqh-widget-mount').length"), 0);
-
-    // 9) fragment 读取失败：mount 降级为不可用占位。
+    // 5) fragment 读取失败：mount 降级为不可用占位。
     await delay(500);
     const missingText = await evaluate("document.querySelector('#case-missing .qqh-widget-fallback')?.textContent ?? null");
     assert.ok(String(missingText ?? "").includes("缺件"), `缺件降级占位缺失，实测 ${missingText}`);
@@ -120,7 +105,7 @@ try {
     await snapshot(`widget-directive-${theme}-${width}`);
   }
   assert.deepEqual(diagnostics, [], "页面不得抛未捕获异常");
-  console.log("widget-check: OK（文法四态 / 沙箱装配 / 桥往返 / 降级）");
+  console.log("widget-check: OK（C2 挂载 / 沙箱装配 / 桥往返 / 降级）");
 } finally {
   child.kill();
   socket?.close();

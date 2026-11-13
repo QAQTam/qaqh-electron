@@ -31,6 +31,8 @@ import {
 } from "./parse";
 import { resolvedTheme } from "../lib/theme";
 import { STR } from "../lib/strings";
+import { highlight, type Tokens } from "./highlight";
+import { syntaxPackRef } from "../plugins/loader";
 
 /** 超过该改动行数默认折叠(§9.5 大 diff);展开后走虚拟开窗,只挂可见行。 */
 const BIG_DIFF_LINES = 400;
@@ -40,59 +42,6 @@ const RICH_MAX_CHARS = 180_000;
 /** 虚拟开窗的固定行高(px);必须与 CSS `.diff-row` 的行高严格一致。 */
 const ROW_HEIGHT = 21;
 const OVERSCAN = 12;
-
-const LANG_IMPORTS: Record<string, () => Promise<unknown>> = {
-  typescript: () => import("shiki/langs/typescript.mjs"),
-  tsx: () => import("shiki/langs/tsx.mjs"),
-  javascript: () => import("shiki/langs/javascript.mjs"),
-  jsx: () => import("shiki/langs/jsx.mjs"),
-  json: () => import("shiki/langs/json.mjs"),
-  rust: () => import("shiki/langs/rust.mjs"),
-  python: () => import("shiki/langs/python.mjs"),
-  go: () => import("shiki/langs/go.mjs"),
-  java: () => import("shiki/langs/java.mjs"),
-  c: () => import("shiki/langs/c.mjs"),
-  cpp: () => import("shiki/langs/cpp.mjs"),
-  css: () => import("shiki/langs/css.mjs"),
-  html: () => import("shiki/langs/html.mjs"),
-  yaml: () => import("shiki/langs/yaml.mjs"),
-  toml: () => import("shiki/langs/toml.mjs"),
-  markdown: () => import("shiki/langs/markdown.mjs"),
-  shellscript: () => import("shiki/langs/shellscript.mjs"),
-};
-
-type Tokens = Array<Array<{ content: string; color?: string }>>;
-
-let highlighterPromise: Promise<{
-  codeToTokens: (code: string, opts: { lang: string; theme: string }) => { tokens: Tokens };
-  loadLanguage: (input: unknown) => Promise<void>;
-  getLoadedLanguages: () => string[];
-}> | null = null;
-
-function getHighlighter(): NonNullable<typeof highlighterPromise> {
-  if (highlighterPromise == null) {
-    // shiki/core + JS 引擎:全量入口会把所有语言和 wasm 打进产物;这里按需。
-    // 亮/暗两套主题同时注册:主题切换只换 codeToTokens 的 theme 参数,
-    // 不重建 highlighter(重建会丢已加载的语言)。
-    highlighterPromise = (async () => {
-      const [{ createHighlighterCore }, { createJavaScriptRegexEngine }, { bundledThemes }] = await Promise.all([
-        import("shiki/core"),
-        import("shiki/engine/javascript"),
-        import("shiki/themes"),
-      ]);
-      const registrations = await Promise.all([
-        bundledThemes["github-light"]!(),
-        bundledThemes["github-dark"]!(),
-      ]);
-      return createHighlighterCore({
-        themes: registrations.map((registration) => registration.default),
-        langs: [],
-        engine: createJavaScriptRegexEngine({ forgiving: true }),
-      }) as unknown as Awaited<NonNullable<typeof highlighterPromise>>;
-    })();
-  }
-  return highlighterPromise;
-}
 
 const STATUS_TEXT: Record<ParsedFile["status"], string> = {
   modified: "修改",
@@ -255,27 +204,21 @@ export const DiffFileView: Component<{ file: ParsedFile; hidePath?: boolean }> =
       for (const hunk of file().hunks) for (const line of hunk.lines) lines.push(line);
       const content = lines.map((line) => line.text).join("\n");
       const lang = languageOf(file().path);
-      // 主题进依赖:切主题重算高亮(亮/暗两套主题已常驻 highlighter)。
-      return { lang, content, lines, theme: resolvedTheme() };
+      // 主题进依赖:切亮/暗或换语法主题包(含 rev 热更)都重算高亮。
+      return { lang, content, lines, theme: resolvedTheme(), syntax: syntaxPackRef() };
     },
     (job) => {
       if (job == null || job.lang == null) return;
-      const { lang, content, lines } = job;
+      const { lang, content, lines, theme, syntax } = job;
       let disposed = false;
       void (async () => {
         try {
-          const highlighter = await getHighlighter();
-          if (!highlighter.getLoadedLanguages().includes(lang)) {
-            const importer = LANG_IMPORTS[lang];
-            if (importer == null) return;
-            await highlighter.loadLanguage(await importer());
-          }
-          const result = highlighter.codeToTokens(content, { lang, theme: resolvedTheme() });
+          const tokens = await highlight(content, lang, theme, syntax);
           if (disposed) return;
           const map = new WeakMap<ParsedLine, Tokens[number]>();
           // codeToTokens 按换行切 token 行,与 lines 顺序一一对应;防御性兜底长度差。
-          for (let index = 0; index < lines.length && index < result.tokens.length; index += 1) {
-            map.set(lines[index]!, result.tokens[index]!);
+          for (let index = 0; index < lines.length && index < tokens.length; index += 1) {
+            map.set(lines[index]!, tokens[index]!);
           }
           setTokenMap(map);
         } catch {

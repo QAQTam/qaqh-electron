@@ -35,9 +35,23 @@ extraResources:
     filter:
       - "**/plugin.json"
       - "**/dist/**"
+      - "**/theme.css"
+  # 桌面通知静态素材(toastXml <image> 由系统进程直读路径,必须在 asar 外)。
+  - from: resources/notify/
+    to: notify/
 
 linux:
   icon: build/icons
+  # 语音运行时(见 win 段注释):worker 与 sherpa 原生包放 asar 外的 voice-runtime。
+  extraResources:
+    - from: dist/main/voice-worker.cjs
+      to: voice-runtime/voice-worker.cjs
+    - from: dist/main/voice-worker.cjs.map
+      to: voice-runtime/voice-worker.cjs.map
+    - from: node_modules/sherpa-onnx-node
+      to: voice-runtime/node_modules/sherpa-onnx-node
+    - from: node_modules/sherpa-onnx-linux-x64
+      to: voice-runtime/node_modules/sherpa-onnx-linux-x64
   syncDesktopName: true
   executableArgs:
     - "--enable-features=UseOzonePlatform"
@@ -80,6 +94,19 @@ win:
     - target: nsis
       arch:
         - x64
+  # 语音运行时:worker 与 sherpa 原生包必须在 asar 外——ELECTRON_RUN_AS_NODE 子进程
+  # 没有 asar 补丁，且 process.dlopen 无法加载 asar 内的 .node。布局即 node 解析链:
+  # voice-runtime/node_modules/sherpa-onnx-node 内部 require('sherpa-onnx-win-x64')
+  # 沿 voice-runtime/node_modules 命中同级包。
+  extraResources:
+    - from: dist/main/voice-worker.cjs
+      to: voice-runtime/voice-worker.cjs
+    - from: dist/main/voice-worker.cjs.map
+      to: voice-runtime/voice-worker.cjs.map
+    - from: node_modules/sherpa-onnx-node
+      to: voice-runtime/node_modules/sherpa-onnx-node
+    - from: node_modules/sherpa-onnx-win-x64
+      to: voice-runtime/node_modules/sherpa-onnx-win-x64
 
 nsis:
   artifactName: ${productName}-${version}-win-${arch}-setup.${ext}

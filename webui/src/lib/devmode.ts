@@ -7,6 +7,7 @@
  * 的地方交给单测。
  */
 import { createSignal } from "solid-js";
+import { desktopHost } from "./desktop-host";
 
 export const UNLOCK_CLICKS = 5;
 export const UNLOCK_MAX_GAP_MS = 600;
@@ -34,17 +35,28 @@ const [devConsoleOpen, setDevConsoleOpen] = createSignal(false);
 
 export { devMode, devConsoleOpen };
 
+/**
+ * 主进程门控同步:开发者模式的开/关决定 qaqh-browser MCP server 是否向 daemon
+ * 暴露 ui_* / record_* 工具面(见 docs/browser-control-design.md Dev Surface)。
+ * fire-and-forget——信号翻转是本地事实,IPC 失败不改 UI;浏览器 dev 环境无桥,跳过。
+ */
+const syncDevSurface = (enabled: boolean): void => {
+  void desktopHost()?.devmode?.set(enabled).catch(() => {});
+};
+
 export const openDevConsole = (): void => {
   setDevMode(true);
   setDevConsoleOpen(true);
+  syncDevSurface(true);
 };
 
 export const closeDevConsole = (): void => {
   setDevConsoleOpen(false);
 };
 
-/** 收回开发者模式:控制台一并关,再点版本串要重新连点 5 次。 */
+/** 收回开发者模式:控制台一并关,再点版本串要重新连点 5 次;MCP 操作面同步收回。 */
 export const disableDevMode = (): void => {
   setDevConsoleOpen(false);
   setDevMode(false);
+  syncDevSurface(false);
 };

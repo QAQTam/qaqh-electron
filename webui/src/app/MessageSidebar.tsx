@@ -38,13 +38,12 @@ const sessionName = (session: SidebarSession): string =>
 /**
  * fork 血缘徽标文案;不是 fork 对话返回 null。
  *
- * `session.create` 没有 `parent` 字段(加它 = 改命令判别 = 契约破坏,LTS 禁),
- * 所以 B 的后端 `parent_session_id` 恒为 NULL、`SessionListEntry` 也不导出它。
- * 「【此对话为 fork 交接对话】」只能由本地交接账本(child→parent 映射)现算;
- * v3.1 换锁补上 `SessionCreate.parent_session_id` 后这里改读后端字段。
+ * 权威 = 读模型血缘字段 `SessionListEntry.handoff_from_session_id`(ADR-016
+ * 切片 2 导出,内核 fork 与建行同事务写入);本地交接账本只剩升级前旧数据的
+ * 兼容读取(旧数据没有后端血缘字段)。
  */
 function forkLineage(seed: string, catalog: SidebarSession[]): string | null {
-  const parentSeed = parentSessionOf(seed);
+  const parentSeed = catalog.find((item) => item.session_id === seed)?.handoff_from_session_id ?? parentSessionOf(seed);
   if (parentSeed == null) return null;
   const parentTitle = catalog.find((item) => item.session_id === parentSeed)?.title?.trim();
   return parentTitle ? `${STR.forkBadgeTitle} · ${STR.forkFrom(parentTitle)}` : STR.forkBadgeTitle;
@@ -267,6 +266,8 @@ export const MessageSidebar: Component<{
                       <>
                         <div
                           class={{ "message-session-row": true, active: active() }}
+                          // 飞箱落点锚(box-fly 按会话 id 找行,见 ui/box-fly.ts)。
+                          data-session-id={session().session_id}
                           onContextMenu={(e) => {
                             e.preventDefault();
                             if (props.onRename != null || props.onDelete != null) {

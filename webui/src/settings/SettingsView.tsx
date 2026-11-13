@@ -29,6 +29,7 @@ import {
 } from "../lib/visual";
 import { desktopHost } from "../lib/desktop-host";
 import { applyTheme, applyThemePreset, storedTheme, themePreset, THEME_PRESET_OPTIONS, type ThemePreset } from "../lib/theme";
+import { setSyntaxPackSelection, setThemePackSelection, syntaxPackSelection, syntaxThemes, themePackSelection, themePacks } from "../plugins/loader";
 import {
   FONT_PRESETS,
   FONT_SCALE_OPTIONS,
@@ -63,12 +64,13 @@ import {
   setConfirmDiscard,
   setField,
   setExec,
+  setGoals,
   setSandbox,
   setSubagent,
 } from "./store";
 import { Field, Section, Switch, TextInput } from "./controls";
 import { Select } from "../ui/Select";
-import { NumberInput } from "../ui/NumberInput";
+import { NullableNumberInput, NumberInput } from "../ui/NumberInput";
 import { PairingSection } from "./PairingSection";
 import { AboutSection } from "./AboutSection";
 import { HostSection } from "./HostSection";
@@ -80,6 +82,13 @@ import { SETTINGS_NAV, SETTINGS_NAV_GROUPS } from "./navigation";
 const REGISTRY_SECTIONS: ReadonlySet<string> = new Set([
   "section-providers",
   "section-pairing",
+]);
+
+/** 纯本地分区:不读 daemon ConfigDto,后端不可达也照常可用(见 LocalSettings)。 */
+const LOCAL_SECTIONS: ReadonlySet<string> = new Set([
+  "section-host",
+  "section-appearance",
+  "section-about",
 ]);
 
 /**
@@ -155,6 +164,164 @@ const FontPicker: Component<{
   );
 };
 
+/**
+ * 纯本地设置分区(桌面壳/外观/关于):不读 daemon ConfigDto,后端不可达也照常可用。
+ * 与 daemon 草稿解耦——这些偏好本就只存本机(localStorage/壳信号),不该被
+ * config.load 的成败 gating(此前它们被关在 draft() 门里,daemon 宕机即不可用)。
+ */
+const LocalSettings: Component<{
+  activeSection: () => string;
+  onSelect: (id: string) => void;
+}> = (props) => {
+  const [themeChoice, setThemeChoice] = createSignal(storedTheme() ?? "");
+  return (
+    <>
+      <Show when={props.activeSection() === "section-host"}>
+        <HostSection onOpenPairing={() => props.onSelect("section-pairing")} />
+      </Show>
+
+      <Show when={props.activeSection() === "section-appearance"}>
+      <Section id="section-appearance" title="外观" desc={STR.settingsThemeNote}>
+        <Field label="界面风格预设" hint="纯 CSS 主题预设;Win11 22H2+ 由壳启用原生 Mica,旧系统自动回退实底。">
+          <Select
+            value={themePreset()}
+            onChange={(value) => applyThemePreset(value as ThemePreset)}
+            options={THEME_PRESET_OPTIONS}
+            ariaLabel="界面风格预设"
+          />
+        </Field>
+        {/* 消息区配色走主题包插件:装到 plugins/ 目录即出现在这里,
+            rev-bust <link> 热挂/热卸,不重构建;经典 = 岛镜像壳色。 */}
+        <Show when={themePacks().length > 0}>
+          <Field label="消息主题包（插件）" hint="只改消息区（时间线/气泡/代码）配色，外围材质不受影响；导入插件后出现在此列表。">
+            <Select
+              value={themePackSelection()}
+              onChange={(value) => setThemePackSelection(value)}
+              options={[{ value: "", label: "经典（跟随界面）" }, ...themePacks().map((pack) => ({ value: pack.id, label: pack.name }))]}
+              ariaLabel="消息主题包"
+            />
+          </Field>
+        </Show>
+        {/* diff 语法高亮走 syntax-theme 插件包:light/dark 两份 shiki 主题 JSON,
+            按界面明暗自动取用;装到 plugins/ 目录即出现在这里,rev 热更。 */}
+        <Show when={syntaxThemes().length > 0}>
+          <Field label="代码语法主题（插件）" hint="diff 视图的语法高亮配色，亮/暗档各一份自动切换；导入插件后出现在此列表。">
+            <Select
+              value={syntaxPackSelection()}
+              onChange={(value) => setSyntaxPackSelection(value)}
+              options={[{ value: "", label: "经典 GitHub（内置）" }, ...syntaxThemes().map((pack) => ({ value: pack.id, label: pack.name }))]}
+              ariaLabel="代码语法主题"
+            />
+          </Field>
+        </Show>
+        <Field label={STR.settingsTheme}>
+          <Select
+            value={themeChoice()}
+            onChange={(value) => {
+              setThemeChoice(value);
+              applyTheme(value);
+            }}
+            options={THEME_OPTIONS.map((item) => ({ value: item.value, label: item.label }))}
+            ariaLabel={STR.settingsTheme}
+          />
+        </Field>
+        <Field label="会话标签材质" hint="仅保存在此应用窗口，不写入 daemon 配置。">
+          <Select
+            value={sessionMaterial()}
+            onChange={(value) => setSessionMaterial(value as SessionMaterial)}
+            options={[
+              { value: "glass", label: "Glass（跟随窗口材质）" },
+              { value: "solid", label: "Solid（实色）" },
+            ]}
+            ariaLabel="会话标签材质"
+          />
+        </Field>
+        <Field label="渲染性能模式" hint="针对受限硬件（双核CPU、弱核显）优化，自动/强制停用毛玻璃模糊与耗性能动画，避免光栅化打满CPU。Performance/auto-低配 同时禁用壳 GPU 加速（省内存）；Quality 启用。更改需重启壳生效。">
+          <Select
+            value={performanceMode()}
+            onChange={(value) => setPerformanceMode(value as PerformanceMode)}
+            options={[
+              { value: "auto", label: "Auto（自动：低配双核硬件默认开启）" },
+              { value: "low", label: "Performance（低资源/极速模式：纯色实底）" },
+              { value: "quality", label: "Quality（画质模式：保持毛玻璃滤镜）" },
+            ]}
+            ariaLabel="渲染性能模式"
+          />
+        </Field>
+        <Show when={gpuRestartPending()}>
+          <Field label="GPU 偏好待生效" hint="渲染性能模式折算的 GPU 加速偏好已保存，与本次启动的实际状态不一致。重启桌面壳后生效；daemon 与后台任务不受影响。">
+            <button
+              type="button"
+              class="button-secondary"
+              onClick={() => { void desktopHost()?.relaunch?.(); }}
+            >
+              重启壳并生效
+            </button>
+          </Field>
+        </Show>
+
+        <Field label="全局字号缩放" hint="等比缩放界面中所有字阶（90% ~ 120%），纯前端即时生效。">
+          <Select
+            value={typography().scale}
+            onChange={(value) => updateTypography({ scale: value as FontScale })}
+            options={FONT_SCALE_OPTIONS.map((opt) => ({ value: opt.value, label: `${opt.label} — ${opt.desc}` }))}
+            ariaLabel="全局字号缩放"
+          />
+        </Field>
+
+        <FontPicker
+          label="界面骨架字体 (--font-ui)"
+          hint="侧边栏、标题栏与按钮表单，留空为系统默认。"
+          value={typography().fontUi}
+          presets={FONT_PRESETS.ui}
+          onChange={(fontUi) => updateTypography({ fontUi })}
+        />
+
+        <FontPicker
+          label="消息阅读正文 (--font-prose)"
+          hint="AI 回答、用户气泡与 Markdown 正文，留空跟随界面。"
+          value={typography().fontProse}
+          presets={FONT_PRESETS.prose}
+          onChange={(fontProse) => updateTypography({ fontProse })}
+        />
+
+        <FontPicker
+          label="代码块与差异 (--font-code)"
+          hint="Markdown 代码块与 DiffView 对比行，留空为 Cascadia。"
+          value={typography().fontCode}
+          presets={FONT_PRESETS.code}
+          onChange={(fontCode) => updateTypography({ fontCode })}
+        />
+
+        <FontPicker
+          label="终端与工具输出 (--font-terminal)"
+          hint="命令行执行输出与控制台原始日志，留空为 Menlo/Consolas。"
+          value={typography().fontTerminal}
+          presets={FONT_PRESETS.terminal}
+          onChange={(fontTerminal) => updateTypography({ fontTerminal })}
+        />
+
+        <div style={{ "grid-column": "1 / -1", display: "flex", "align-items": "center", "justify-content": "space-between", "margin-top": "4px" }}>
+          <span class="settings-muted">字体与字号偏好保存在本地，不影响后端会话。</span>
+          <button type="button" class="ghost-mini" onClick={resetTypography}>
+            <IconRotate /> 恢复默认排版
+          </button>
+        </div>
+
+        <p class="settings-section-desc">
+          界面内嵌 Cascadia Code 等宽字体；中文正文引用系统字体（macOS 苹方 / Windows 11 24H2+ 自带 Noto Sans SC，旧系统回落微软雅黑）；字体许可与来源见{" "}
+          <FontNotices />。
+        </p>
+      </Section>
+      </Show>
+
+      <Show when={props.activeSection() === "section-about"}>
+        <AboutSection />
+      </Show>
+    </>
+  );
+};
+
 export const SettingsView: Component<{
   initialSection?: string;
   /** 同一分区的重复请求也要生效（App 每次打开菜单时递增）。 */
@@ -166,7 +333,6 @@ export const SettingsView: Component<{
   // 子代理工具清单是「只进不出」的本地缓冲:逗号串要解析成数组,回填会让
   // 用户和输入框互相打架。
   const [toolsInput, setToolsInput] = createSignal("");
-  const [themeChoice, setThemeChoice] = createSignal(storedTheme() ?? "");
   const [activeSection, setActiveSection] = createSignal<string>(
     props.initialSection ?? SETTINGS_NAV[0].id,
   );
@@ -215,6 +381,7 @@ export const SettingsView: Component<{
   };
 
   const registrySection = (id: string): boolean => REGISTRY_SECTIONS.has(id);
+  const localSection = (id: string): boolean => LOCAL_SECTIONS.has(id);
 
   return (
     <main class="settings-page" ref={(node) => { page = node; }} aria-labelledby="settings-title">
@@ -273,6 +440,11 @@ export const SettingsView: Component<{
                   </Show>
 
                   <Show when={!registrySection(activeSection())}>
+                    {/* 纯本地分区(桌面壳/外观/关于):不依赖 daemon 配置,后端不可达也照常可用。 */}
+                    <Show when={localSection(activeSection())}>
+                      <LocalSettings activeSection={activeSection} onSelect={selectSection} />
+                    </Show>
+                    <Show when={!localSection(activeSection())}>
                     <Show
                       when={draft()}
                       fallback={<div class="settings-state">{STR.settingsLoading}</div>}
@@ -345,12 +517,6 @@ export const SettingsView: Component<{
                         placeholder="…/tokenizer.json"
                       />
                     </Field>
-                    <Switch
-                      label={STR.settingsCompliance}
-                      hint={STR.settingsComplianceHint}
-                      checked={config().complianceEnabled}
-                      onToggle={(value) => setField("complianceEnabled", value)}
-                    />
                   </Section>
                   </Show>
 
@@ -377,121 +543,6 @@ export const SettingsView: Component<{
                         ariaLabel={STR.settingsIdleUnload}
                       />
                     </Field>
-                  </Section>
-                  </Show>
-
-                  <Show when={activeSection() === "section-host"}>
-                    <HostSection onOpenPairing={() => selectSection("section-pairing")} />
-                  </Show>
-
-                  <Show when={activeSection() === "section-appearance"}>
-                  <Section id="section-appearance" title="外观" desc={STR.settingsThemeNote}>
-                    <Field label="界面风格预设" hint="纯 CSS 主题预设;Win11 22H2+ 由壳启用原生 Mica,旧系统自动回退实底。">
-                      <Select
-                        value={themePreset()}
-                        onChange={(value) => applyThemePreset(value as ThemePreset)}
-                        options={THEME_PRESET_OPTIONS}
-                        ariaLabel="界面风格预设"
-                      />
-                    </Field>
-                    <Field label={STR.settingsTheme}>
-                      <Select
-                        value={themeChoice()}
-                        onChange={(value) => {
-                          setThemeChoice(value);
-                          applyTheme(value);
-                        }}
-                        options={THEME_OPTIONS.map((item) => ({ value: item.value, label: item.label }))}
-                        ariaLabel={STR.settingsTheme}
-                      />
-                    </Field>
-                    <Field label="会话标签材质" hint="仅保存在此应用窗口，不写入 daemon 配置。">
-                      <Select
-                        value={sessionMaterial()}
-                        onChange={(value) => setSessionMaterial(value as SessionMaterial)}
-                        options={[
-                          { value: "glass", label: "Glass（跟随窗口材质）" },
-                          { value: "solid", label: "Solid（实色）" },
-                        ]}
-                        ariaLabel="会话标签材质"
-                      />
-                    </Field>
-                    <Field label="渲染性能模式" hint="针对受限硬件（双核CPU、弱核显）优化，自动/强制停用毛玻璃模糊与耗性能动画，避免光栅化打满CPU。Performance/auto-低配 同时禁用壳 GPU 加速（省内存）；Quality 启用。更改需重启壳生效。">
-                      <Select
-                        value={performanceMode()}
-                        onChange={(value) => setPerformanceMode(value as PerformanceMode)}
-                        options={[
-                          { value: "auto", label: "Auto（自动：低配双核硬件默认开启）" },
-                          { value: "low", label: "Performance（低资源/极速模式：纯色实底）" },
-                          { value: "quality", label: "Quality（画质模式：保持毛玻璃滤镜）" },
-                        ]}
-                        ariaLabel="渲染性能模式"
-                      />
-                    </Field>
-                    <Show when={gpuRestartPending()}>
-                      <Field label="GPU 偏好待生效" hint="渲染性能模式折算的 GPU 加速偏好已保存，与本次启动的实际状态不一致。重启桌面壳后生效；daemon 与后台任务不受影响。">
-                        <button
-                          type="button"
-                          class="button-secondary"
-                          onClick={() => { void desktopHost()?.relaunch?.(); }}
-                        >
-                          重启壳并生效
-                        </button>
-                      </Field>
-                    </Show>
-
-                    <Field label="全局字号缩放" hint="等比缩放界面中所有字阶（90% ~ 120%），纯前端即时生效。">
-                      <Select
-                        value={typography().scale}
-                        onChange={(value) => updateTypography({ scale: value as FontScale })}
-                        options={FONT_SCALE_OPTIONS.map((opt) => ({ value: opt.value, label: `${opt.label} — ${opt.desc}` }))}
-                        ariaLabel="全局字号缩放"
-                      />
-                    </Field>
-
-                    <FontPicker
-                      label="界面骨架字体 (--font-ui)"
-                      hint="侧边栏、标题栏与按钮表单，留空为系统默认。"
-                      value={typography().fontUi}
-                      presets={FONT_PRESETS.ui}
-                      onChange={(fontUi) => updateTypography({ fontUi })}
-                    />
-
-                    <FontPicker
-                      label="消息阅读正文 (--font-prose)"
-                      hint="AI 回答、用户气泡与 Markdown 正文，留空跟随界面。"
-                      value={typography().fontProse}
-                      presets={FONT_PRESETS.prose}
-                      onChange={(fontProse) => updateTypography({ fontProse })}
-                    />
-
-                    <FontPicker
-                      label="代码块与差异 (--font-code)"
-                      hint="Markdown 代码块与 DiffView 对比行，留空为 Cascadia。"
-                      value={typography().fontCode}
-                      presets={FONT_PRESETS.code}
-                      onChange={(fontCode) => updateTypography({ fontCode })}
-                    />
-
-                    <FontPicker
-                      label="终端与工具输出 (--font-terminal)"
-                      hint="命令行执行输出与控制台原始日志，留空为 Menlo/Consolas。"
-                      value={typography().fontTerminal}
-                      presets={FONT_PRESETS.terminal}
-                      onChange={(fontTerminal) => updateTypography({ fontTerminal })}
-                    />
-
-                    <div style={{ "grid-column": "1 / -1", display: "flex", "align-items": "center", "justify-content": "space-between", "margin-top": "4px" }}>
-                      <span class="settings-muted">字体与字号偏好保存在本地，不影响后端会话。</span>
-                      <button type="button" class="ghost-mini" onClick={resetTypography}>
-                        <IconRotate /> 恢复默认排版
-                      </button>
-                    </div>
-
-                    <p class="settings-section-desc">
-                      界面内嵌 Cascadia Code 等宽字体；中文正文引用系统字体（macOS 苹方 / Windows 11 24H2+ 自带 Noto Sans SC，旧系统回落微软雅黑）；字体许可与来源见{" "}
-                      <FontNotices />。
-                    </p>
                   </Section>
                   </Show>
 
@@ -545,6 +596,31 @@ export const SettingsView: Component<{
                           setToolsInput(value);
                           setSubagent("defaultTools", parseToolList(value));
                         }}
+                      />
+                    </Field>
+                  </Section>
+                  </Show>
+
+                  <Show when={activeSection() === "section-goals"}>
+                  <Section
+                    id="section-goals"
+                    title="目标模式"
+                    desc="会话持久目标与自动续跑(ADR-0015)。总开关只管模型能不能声明新 goal;会话头部徽标可暂停/恢复/清除单个目标。"
+                  >
+                    <Switch
+                      label="启用目标模式"
+                      hint="目标活跃时空闲自动续跑;跨 handoff 交接不断链。关闭后既有 goal 仍按各自预算审计。"
+                      checked={config().goals.enabled}
+                      onToggle={(value) => setGoals("enabled", value)}
+                    />
+                    <Field label="单目标预算上限 (tokens)" hint="空 = 无上限;同时是 create_goal 未显式给预算时的默认值。全局上限,单 goal 预算在会话徽标里调。" compact>
+                      <NullableNumberInput
+                        value={config().goals.maxTokenBudget}
+                        min={1}
+                        integer
+                        placeholder="无上限"
+                        ariaLabel="单目标预算上限"
+                        onCommit={(value) => setGoals("maxTokenBudget", value)}
                       />
                     </Field>
                   </Section>
@@ -615,11 +691,9 @@ export const SettingsView: Component<{
                   </Section>
                   </Show>
 
-                  <Show when={activeSection() === "section-about"}>
-                    <AboutSection />
-                  </Show>
                         </>
                       )}
+                    </Show>
                     </Show>
                   </Show>
                 </div>

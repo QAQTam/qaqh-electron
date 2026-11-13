@@ -22,4 +22,17 @@
   .gamepad-mode-status > svg { flex: none; width: 16px; height: 16px; color: var(--accent); }
   .gamepad-mode-hints { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
   .gamepad-mode-status button { flex: none; color: var(--accent); }
+  /* 语音状态:HUD 芯片与标题栏麦克风按钮复用游戏按钮样式,相位驱动配色。 */
+  .voice-mode-button.active { color: var(--accent); }
+  .voice-phase {
+    flex: none;
+    padding: 1px 8px;
+    border: 1px solid var(--surface-2);
+    border-radius: 999px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .voice-phase-recording,
+  .voice-phase-speaking { color: var(--accent); border-color: var(--accent); }
+  .voice-phase-preparing { color: var(--warn, #d97706); }
 }

@@ -254,6 +254,12 @@
   .tool-icon.muted { color: var(--muted); }
   .tool-name { flex: none; font-size: var(--fs-xs); color: var(--muted); }
   .st-running .tool-name, .st-failed .tool-name { color: var(--text); }
+  /* spawn_subagent 上下文 fork 徽标:与 handoff 的文档 fork 并存不合并。 */
+  .tool-fork-badge {
+    flex: none; padding: 0 5px;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+    color: var(--muted); font-size: 10px; line-height: 1.5; white-space: nowrap;
+  }
   .tool-chevron { flex: none; width: 12px; height: 12px; color: var(--muted); transition: transform var(--dur-fast) var(--ease); }
   .tool-chevron.is-open { transform: rotate(90deg); }
   .tool-summary {
@@ -304,19 +310,8 @@
     min-width: 0; margin: 0;
   }
   .tool-text { max-height: 280px; overflow: auto; overscroll-behavior: contain; }
-  .tool-progress { color: var(--muted); max-height: 160px; overflow: auto; }
-  /* 一份输出只有一个表面和一个滚动区，stdout/stderr 不再各套边框。 */
-  .tool-output {
-    min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-control);
-    background: var(--surface-code); overflow: hidden;
-  }
-  .tool-output > .tool-detail-label { padding: 4px 10px; border-bottom: 1px solid var(--border); }
-  .tool-shell-output { display: grid; gap: 0; min-width: 0; max-height: 280px; overflow: auto; overscroll-behavior: contain; }
-  .tool-shell-output.tool-progress { max-height: 160px; }
-  .tool-shell-output .tool-text {
-    max-height: none; overflow: visible;
-    border: 0; border-radius: 0; background: transparent; font-size: var(--fs-xs);
-  }
+  /* exec 正文（运行中与终态）只在后台执行抽屉渲染；消息区不再有输出表面。 */
+  .tool-shell-output { display: grid; gap: 0; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior: contain; }
   .tool-xterm {
     box-sizing: border-box; width: max-content; min-width: 100%; min-height: 31px;
     padding: 8px 10px; overflow: hidden;
@@ -327,12 +322,8 @@
   .tool-xterm .xterm { width: max-content; height: auto; }
   .tool-xterm .xterm-viewport { background: var(--surface-code); }
   .tool-xterm-loading { height: 31px; }
-  .tool-shell-output > .tool-detail-label { padding: 4px 10px 0; }
-  .tool-stderr { color: var(--err); }
   .tool-text .tool-section-line { display: block; margin: 2px 0 1px; color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }
   .tool-error { color: var(--err); }
-  .tool-exit { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
-  .tool-exit.err { color: var(--err); }
   .tool-truncated { color: var(--warn); font-size: var(--fs-xs); }
   .tool-waiting { color: var(--warn); font-size: var(--fs-sm); }
   .kv-table { display: grid; gap: 2px; font-size: var(--fs-sm); }
@@ -349,4 +340,19 @@
   .ghost-mini:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
   .ghost-mini:active:not(:disabled), .icon-btn:active:not(:disabled) { background: var(--accent-soft); }
   .ghost-mini svg { width: 12px; height: 12px; }
+}
+
+/* ── 前端插件管理行(分区导航在左栏 Sidebar,不在内容区) ── */
+@layer components {
+  .fp-toolbar { display: flex; gap: 8px; }
+  .fp-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+  .fp-titles { display: grid; gap: 2px; min-width: 0; }
+  .fp-titles strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fp-sub { color: var(--muted); font-size: var(--fs-xs); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fp-status { flex: none; padding: 3px 10px; border-radius: var(--radius-pill); font-size: var(--fs-xs); font-weight: 600; }
+  .fp-status.on { background: var(--accent-soft); color: var(--accent); }
+  .fp-status.off { background: var(--surface-2); color: var(--muted); }
+  .fp-actions { margin-left: auto; display: flex; gap: 6px; flex: none; }
+  .fp-diag { color: var(--muted); font-family: var(--font-mono); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+  .fp-diag-fail { color: var(--err); }
 }

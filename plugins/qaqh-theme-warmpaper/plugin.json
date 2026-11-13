@@ -1,0 +1,7 @@
+{
+  "id": "qaqh-theme-warmpaper",
+  "name": "暖纸 · Claude 米黄消息区",
+  "version": "0.1.0",
+  "slot": "theme",
+  "css": "theme.css"
+}

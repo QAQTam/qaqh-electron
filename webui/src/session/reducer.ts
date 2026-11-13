@@ -5,7 +5,6 @@ import {
   type Slot,
   type Step,
   type ToolOutput,
-  type ToolProgressStream,
   type Turn,
   type TurnStatus,
 } from "./types";
@@ -60,7 +59,9 @@ export function pendingContentRefs(draft: SessionState): Set<string> {
     for (const step of turn.steps) {
       if (step.kind === "tool") {
         if (step.argsRef) refs.add(step.argsRef);
-        if (step.outputRef) refs.add(step.outputRef);
+        // exec_command 的输出正文只有抽屉消费，且抽屉读的是 session.output；
+        // 消息区只留命令+exit code，重建不再水合每个 exec 调用的全文。
+        if (step.outputRef && step.name !== "exec_command") refs.add(step.outputRef);
       } else if (step.contentRef) refs.add(step.contentRef);
     }
   }
@@ -109,7 +110,6 @@ export function resolveContentRef(draft: SessionState, ref: string, text: string
     for (const session of Object.values(draft.execSessions)) {
       if (session.output?.kind === "ref" && session.output.data.content_ref === ref) {
         session.output = { kind: "inline", data: { text } };
-        syncExecSession(draft, session);
       }
     }
   }
@@ -240,6 +240,40 @@ export function recomputeDerived(draft: SessionState): void {
   draft.activeReasoningTurnKey = open?.turnKey ?? null;
 }
 
+/**
+ * 撤回的本地整形:按后端给定的回合集合整枝移除。
+ *
+ * 三处随行清理是同一件事的不同面——留着就是让 UI 指向一条已被删除的历史:
+ * `slots`(渲染序)、`waits`/`interactionIds`(后端 interaction 行已删)、
+ * `execSessions`(后端 exec 行已删,按 `origin_turn_id` 判定)。
+ * `totalTurns` 用**后端权威**的删除条数递减:未加载的回合也在删除之列,本地遍历数不出来。
+ */
+function removeTurns(draft: SessionState, turnIds: Set<string>, removedCount: number): void {
+  const removedKeys = new Set<string>();
+  for (const turn of Object.values(draft.turns)) {
+    if (turnIds.has(turn.id)) removedKeys.add(turn.key);
+  }
+  if (removedKeys.size > 0) {
+    for (const key of removedKeys) delete draft.turns[key];
+    draft.slots = draft.slots.filter(
+      (slot) => !(slot.kind === "turn" && removedKeys.has(slot.key)),
+    );
+    const dropped = draft.waits.filter(
+      (wait) => wait.turnKey != null && removedKeys.has(wait.turnKey),
+    );
+    draft.waits = draft.waits.filter(
+      (wait) => !(wait.turnKey != null && removedKeys.has(wait.turnKey)),
+    );
+    for (const wait of dropped) {
+      draft.interactionIds = draft.interactionIds.filter((id) => id !== wait.interactionId);
+    }
+  }
+  for (const [id, session] of Object.entries(draft.execSessions)) {
+    if (turnIds.has(session.origin_turn_id)) delete draft.execSessions[id];
+  }
+  draft.totalTurns = Math.max(0, draft.totalTurns - removedCount);
+}
+
 function findTurn(draft: SessionState, turnId: string | null | undefined): Turn | undefined {
   if (!turnId) return undefined;
   return Object.values(draft.turns).find((turn) => turn.id === turnId);
@@ -335,6 +369,9 @@ function upsertToolCall(draft: SessionState, call: ToolCallView, fallbackTurnId?
   const args = displayJson(call.args);
   const index = turn.steps.findIndex((step) => step.id === call.call_id);
   const outputText = call.output ? contentValueToText(call.output) : "";
+  const session = call.exec_session_id ? draft.execSessions[call.exec_session_id]
+    : Object.values(draft.execSessions).find((item) => item.origin_call_id === call.call_id);
+  const sessionId = call.exec_session_id ?? session?.id;
   const next: Extract<Step, { kind: "tool" }> = {
     kind: "tool",
     id: call.call_id,
@@ -344,8 +381,8 @@ function upsertToolCall(draft: SessionState, call: ToolCallView, fallbackTurnId?
     argsRef: undefined,
     status: toolStatusFromState(call.state),
     state: call.state,
-    execSessionId: call.exec_session_id ?? undefined,
-    execSessionState: call.exec_session_id ? draft.execSessions[call.exec_session_id]?.state : undefined,
+    execSessionId: sessionId,
+    execSessionState: sessionId ? draft.execSessions[sessionId]?.state : undefined,
     startedAt: call.metrics?.started_at_ms,
     endedAt: call.metrics?.finished_at_ms,
     elapsedMs: call.metrics && call.metrics.finished_at_ms >= call.metrics.started_at_ms
@@ -360,9 +397,6 @@ function upsertToolCall(draft: SessionState, call: ToolCallView, fallbackTurnId?
   };
   if (index >= 0 && turn.steps[index]?.kind === "tool") turn.steps[index] = { ...turn.steps[index] as Extract<Step, { kind: "tool" }>, ...next };
   else turn.steps.push(next);
-  const session = call.exec_session_id ? draft.execSessions[call.exec_session_id]
-    : Object.values(draft.execSessions).find((session) => session.origin_call_id === call.call_id);
-  if (session) syncExecSession(draft, session);
   demoteAnswerIfStale(turn);
   turn.renderVersion = (turn.renderVersion ?? 0) + 1;
 }
@@ -430,6 +464,7 @@ function applyInputEntry(draft: SessionState, data: InputEntryData): void {
   if (existing != null && existing.kind === "interject") {
     // 同一 block 重放(权威页校正/事件补发):就地更新,不产生第二行。
     existing.text = text;
+    existing.subagentTerminal = subagentTerminalOf(data);
     if (ref != null) existing.contentRef = ref; else delete existing.contentRef;
     turn.renderVersion = (turn.renderVersion ?? 0) + 1;
     return;
@@ -448,8 +483,20 @@ function applyInputEntry(draft: SessionState, data: InputEntryData): void {
     actorName: actor?.display_name ?? null,
     text,
     ...(ref != null ? { contentRef: ref } : {}),
+    subagentTerminal: subagentTerminalOf(data),
   });
   turn.renderVersion = (turn.renderVersion ?? 0) + 1;
+}
+
+/** input 条目携带的子代理终态通知;缺席 = 普通插话。 */
+function subagentTerminalOf(data: InputEntryData): { childSessionId: string; parentCallId: string | null; terminal: string } | null {
+  const notice = data.subagent_terminal;
+  if (notice == null) return null;
+  return {
+    childSessionId: notice.child_session_id,
+    parentCallId: typeof notice.parent_call_id === "string" ? notice.parent_call_id : null,
+    terminal: notice.terminal,
+  };
 }
 
 function applyTimelineEntry(draft: SessionState, entry: TimelineEntry, tools: Map<string, ToolCallView>): void {
@@ -533,6 +580,8 @@ export function applySessionBootstrap(draft: SessionState, bootstrap: RingingBoo
     kind: item.kind === "ask" ? "ask" : "approval",
     from: now(),
   }));
+  // wire 侧 goal 缺席 = 无 goal(skip_serializing_if),本地归一成 null。
+  draft.goal = bootstrap.state.goal ?? null;
 
   const tools = new Map(bootstrap.state.tools.map((tool) => [tool.call_id, tool]));
   for (const entry of bootstrap.state.timeline) applyTimelineEntry(draft, entry, tools);
@@ -581,22 +630,6 @@ export function sessionTurnFromSnapshot(snapshot: SessionTurnSnapshot): Turn {
   return turn;
 }
 
-function appendBounded(current: string | undefined, addition: string): { value: string; truncated: boolean } {
-  const combined = (current ?? "") + addition;
-  const limit = 16 * 1024;
-  return combined.length > limit ? { value: combined.slice(-limit), truncated: true } : { value: combined, truncated: false };
-}
-
-function appendProgressStream(
-  current: ToolProgressStream | undefined,
-  addition: string,
-  initialTail: string | undefined,
-  data: string,
-): ToolProgressStream {
-  const endOffset = (current?.endOffset ?? initialTail?.length ?? 0) + addition.length;
-  return { startOffset: endOffset - data.length, endOffset, data };
-}
-
 function appendUtf8Tail(current: string, addition: string, maxBytes: number): string {
   const combined = current + addition;
   if (new TextEncoder().encode(combined).length <= maxBytes) return combined;
@@ -613,14 +646,17 @@ function appendUtf8Tail(current: string, addition: string, maxBytes: number): st
   return chars.slice(start).join("");
 }
 
-/** Pair by protocol identity, including the period before tool_finished supplies an id. */
+/**
+ * 配对协议身份(含 tool_finished 补 id 之前的窗口期)。
+ * 只同步 id/state 两个标量:会话正文(`output_preview`)只被抽屉从
+ * `draft.execSessions` 细粒度读取,消息区不再复制整份 transcript。
+ */
 function syncExecSession(draft: SessionState, session: ExecSessionView): void {
   for (const turn of Object.values(draft.turns)) {
     for (const step of turn.steps) {
       if (step.kind !== "tool" || (step.id !== session.origin_call_id && step.execSessionId !== session.id)) continue;
       step.execSessionId = session.id;
       step.execSessionState = session.state;
-      step.execSession = { ...session };
       turn.renderVersion = (turn.renderVersion ?? 0) + 1;
     }
   }
@@ -668,9 +704,16 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
     case "tool_arguments_delta": {
       const turn = turnForEvent(draft, event.turn_id);
       const step = turn.steps.find((item) => item.kind === "tool" && item.id === event.call_id);
-      if (step?.kind === "tool") { step.name = event.tool_name; step.argsJson = event.text; }
+      // 内核数出来的目标文件与「参数吐完」标志:都是累计替换语义,与 text 同帧,
+      // 所以丢帧自愈、重帧幂等 —— 缺席就是缺席,不许补成空数组以外的含义。
+      const preview = {
+        argsJson: event.text,
+        targetFiles: event.target_files ?? undefined,
+        argsComplete: event.args_complete === true,
+      };
+      if (step?.kind === "tool") { step.name = event.tool_name; Object.assign(step, preview); }
       else {
-        turn.steps.push({ kind: "tool", id: event.call_id, seq: turn.steps.length, name: event.tool_name, argsJson: event.text, status: "declared" });
+        turn.steps.push({ kind: "tool", id: event.call_id, seq: turn.steps.length, name: event.tool_name, status: "declared", ...preview });
         demoteAnswerIfStale(turn);
         structureChanged = true;
       }
@@ -703,33 +746,10 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
       turn.renderVersion = (turn.renderVersion ?? 0) + 1;
       break;
     }
-    case "tool_output_delta": {
-      for (const turn of Object.values(draft.turns)) {
-        const step = turn.steps.find((item) => item.kind === "tool" && item.id === event.call_id);
-        if (step?.kind === "tool") {
-          const isStderr = event.stream === "stderr";
-          const currentTail = isStderr ? step.progressStderrTail : step.progressTail;
-          const next = appendBounded(currentTail, event.text);
-          const progressStream = appendProgressStream(
-            isStderr ? step.progressStderrStream : step.progressStream,
-            event.text,
-            currentTail,
-            next.value,
-          );
-          if (isStderr) {
-            step.progressStderrTail = next.value;
-            step.progressStderrStream = progressStream;
-          } else {
-            step.progressTail = next.value;
-            step.progressStream = progressStream;
-          }
-          step.progressTruncated = step.progressTruncated === true || next.truncated;
-          turn.renderVersion = (turn.renderVersion ?? 0) + 1;
-          break;
-        }
-      }
+    case "tool_output_delta":
+      // 消息区不再渲染 exec 进度事实:运行中输出只存在于抽屉(会话尾窗),
+      // 这里不留尾窗、不 bump renderVersion——高频帧对转录零成本。
       break;
-    }
     case "tool_finished": {
       const target = Object.values(draft.turns).find((turn) =>
         turn.steps.some((item) => item.kind === "tool" && item.id === event.call_id),
@@ -752,10 +772,6 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
         step.error = toolErrorFromOutcome(event.outcome);
         step.codeDelta = event.code_delta;
         step.effects = event.effects;
-        step.progressTail = undefined;
-        step.progressStderrTail = undefined;
-        step.progressStream = undefined;
-        step.progressStderrStream = undefined;
         target.renderVersion = (target.renderVersion ?? 0) + 1;
       }
       break;
@@ -775,13 +791,22 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
         session.next_offset = Math.max(session.next_offset, event.end_offset);
         session.preview_start_offset = session.next_offset - new TextEncoder().encode(session.output_preview).length;
         session.stream_dropped_bytes += gap;
-        syncExecSession(draft, session);
       }
       break;
     }
     case "timeline_appended":
       applyTimelineEntry(draft, event.entry, new Map(bootstrapTools(draft)));
       break;
+    case "timeline_truncated": {
+      // 撤回:内核已经按 `ord` 把 `from_turn_id`(含)之后的块、工具、交互、exec 行
+      // 全删了,这里只做本地整形。删除集合用后端给出的 `removed_turn_ids`,前端不按
+      // 顺序自行推断该删谁——未加载的回合也在删除之列,本地遍历根本数不出来。
+      // 压缩摘要不在此列:它没有写入方(后端 assemble_context 只读不写),真接线时
+      // 由 bootstrap 重建,不在这里发明「摘要属于某回合」的假口径。
+      removeTurns(draft, new Set(event.removed_turn_ids), event.removed_turn_ids.length);
+      structureChanged = true;
+      break;
+    }
     case "message_delta": {
       structureChanged = upsertAssistantBlock(draft, event.turn_id, event.block_id, event.block_kind, { kind: "inline", data: { text: event.text } }, false);
       break;
@@ -800,6 +825,16 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
     case "session_meta_changed":
     case "driver_changed":
       break;
+    case "goal_updated": {
+      // 链根与当前会话两条流会送同一事件:按 updated_at_ms 单调幂等,滞后的
+      // 倒灌不覆盖;null 即清空,整字段替换(driver_changed 同律,契约口径)。
+      const goal = event.goal;
+      if (goal == null) draft.goal = null;
+      else if (draft.goal?.goal_id !== goal.goal_id || goal.updated_at_ms >= draft.goal.updated_at_ms) {
+        draft.goal = goal;
+      }
+      break;
+    }
   }
   if (!streaming || structureChanged) recomputeDerived(draft);
   return draft;

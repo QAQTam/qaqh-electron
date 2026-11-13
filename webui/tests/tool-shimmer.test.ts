@@ -18,8 +18,8 @@ describe("工具调用摘要条 shimmer 动效与 120 帧率设计", () => {
   const css = loadCss();
 
   test("CSS 定义了针对 120fps 调校的动画参数与主题高光变量", () => {
-    // 包含 1.6s 周期（在 120fps 下对应 192 帧的丝滑位移）
-    expect(css).toContain("--tool-shimmer-dur: 1.6s;");
+    // 包含 1.618s 周期（φ 秒,黄金律调校的丝滑位移）
+    expect(css).toContain("--tool-shimmer-dur: 1.618s;");
     // 浅色与深色主题分别定义了高光变量
     expect(css).toContain("--tool-shimmer-highlight: color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, 0.6));");
     expect(css).toContain("--tool-shimmer-highlight: rgba(255, 255, 255, 0.22);");

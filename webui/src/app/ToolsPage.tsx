@@ -25,6 +25,8 @@ import IconUserRound from "~icons/lucide/user-round";
 import { Markdown } from "../markdown/Markdown";
 import { rescanSkills, scanState, type SkillEntry, type SkillIssue } from "../skills/scan";
 import { workspaceCatalog } from "../tabs/store";
+import { pluginStatus } from "../plugins/loader";
+import { isDesktopRuntime, requireDesktopHost } from "../lib/desktop-host";
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
 
 /** 一张 skill 卡:头行常显,点开渲染正文。 */
@@ -104,21 +106,118 @@ const SkillGroup: Component<{
   </section>
 );
 
-/** codex PluginManifest 形状的只读占位(等后端)。 */
-const PluginPlaceholder: Component = () => (
-  <div class="tools-note">
-    <span class="tools-note-icon" aria-hidden="true"><IconPuzzle /></span>
-    <div>
-      <strong>插件(占位)</strong>
-      <p>
-        codex 的 plugin = manifest(name/version/description + skills、mcp_servers、hooks
-        资源声明)。等后端重写后在这里接 manifest 目录与启停;届时 skills 也能从插件共享资源目录发现。
-      </p>
-    </div>
-  </div>
-);
+/* ── 前端插件管理 ──────────────────────────────────────────────────────
+ * main 侧 frontend-plugins.ts 是事实源(双根合并 + state.json 启停);
+ * 这里只是它的操作面。graph 帧(热应用)由 plugins/loader.ts 独立消费,
+ * 启停/导入/删除后 stat-poll 1s 内自动生效——本面板不需要等推送。 */
 
-export const ToolsPage: Component = () => {
+interface ManagedPlugin {
+  id: string;
+  name: string;
+  version: string;
+  slot: string;
+  source: "bundled" | "user";
+  enabled: boolean;
+  path: string;
+}
+
+const SLOT_LABELS: Record<string, string> = { theme: "主题包", overlay: "浮层" };
+
+const PluginManager: Component = () => {
+  const desktop = isDesktopRuntime();
+  const [plugins, setPlugins] = createSignal<ManagedPlugin[]>([]);
+  const [error, setError] = createSignal<string | null>(null);
+  const [busy, setBusy] = createSignal(false);
+  const invoke = <T,>(cmd: Parameters<ReturnType<typeof requireDesktopHost>["invoke"]>[0], args?: Record<string, unknown>): Promise<T> =>
+    desktop ? requireDesktopHost().invoke<T>(cmd, args) : Promise.reject(new Error("桌面壳不可用"));
+  const fail = (cause: unknown): void => { setError(cause instanceof Error ? cause.message : String(cause)); };
+  const refresh = (): void => {
+    if (!desktop) return;
+    invoke<ManagedPlugin[]>("frontend_plugins:list").then(setPlugins).catch(fail);
+  };
+  refresh(); // setup 期一次性拉取;后续动作都以返回值同步列表
+  const afterMutation = (list: ManagedPlugin[]): void => { setPlugins(list); setError(null); };
+  const toggle = (plugin: ManagedPlugin): void => {
+    setBusy(true);
+    invoke<ManagedPlugin[]>("frontend_plugins:set_enabled", { id: plugin.id, enabled: !plugin.enabled })
+      .then(afterMutation).catch(fail).finally(() => setBusy(false));
+  };
+  const remove = (plugin: ManagedPlugin): void => {
+    setBusy(true);
+    invoke<ManagedPlugin[]>("frontend_plugins:remove", { id: plugin.id })
+      .then(afterMutation).catch(fail).finally(() => setBusy(false));
+  };
+  const importPlugin = (): void => {
+    setBusy(true);
+    invoke<ManagedPlugin | null>("frontend_plugins:import")
+      .then((entry) => { if (entry != null) refresh(); })
+      .catch(fail)
+      .finally(() => setBusy(false));
+  };
+  return (
+    <section class="tools-section" aria-labelledby="plugins-title">
+      <h2 id="plugins-title"><IconPackage /> 前端插件</h2>
+      <p class="tools-muted">插件是纯数据:装在 <code>~/.qaqh/frontend-plugin</code>(用户根),壳每秒扫描热应用;主题包只改消息区配色,浮层插件挂界面元素。</p>
+      <Show when={!desktop}>
+        <div class="tools-note">
+          <span class="tools-note-icon" aria-hidden="true"><IconTriangleAlert /></span>
+          <div><strong>仅在桌面壳内可用</strong><p>浏览器开发模式没有插件宿主。</p></div>
+        </div>
+      </Show>
+      <div class="fp-toolbar">
+        <button type="button" class="ghost-mini" onClick={importPlugin} disabled={busy() || !desktop}>
+          <IconPuzzle /> 导入插件包（zip / 文件夹）
+        </button>
+        <button type="button" class="ghost-mini" onClick={refresh} disabled={busy() || !desktop}>
+          <IconRefreshCw class={`tools-refresh-icon${busy() ? " spinning" : ""}`} /> 刷新
+        </button>
+        {/* 轻量"重启壳":整页重载 → did-finish-load 再次强制重发插件图。 */}
+        <button type="button" class="ghost-mini" onClick={() => void invoke("force_refresh")} disabled={!desktop}
+          title="重新加载整个界面(等价重启壳,会话不丢)">
+          <IconRefreshCw /> 强制刷新页面
+        </button>
+      </div>
+      {/* 装载器自述:图到了没(frames>0)、挂了谁、失败为什么——一眼定位"插件没上线"。 */}
+      <p class="fp-diag">
+        装载器: 收图 {pluginStatus().frames} 帧 · 图内 {pluginStatus().entries.map((entry) => entry.id).join(", ") || "空"} ·
+        已挂载 {pluginStatus().mounted.join(", ") || "无"} ·
+        主题面 {pluginStatus().themeApplied ?? "经典(未挂)"}
+        <For each={Object.entries(pluginStatus().failed)}>
+          {([id, message]) => <span class="fp-diag-fail"> · {id} 失败: {message}</span>}
+        </For>
+      </p>
+      <Show when={error()}>
+        <p class="tools-issue"><IconTriangleAlert /> <span>{error()}</span></p>
+      </Show>
+      <Show when={desktop && !busy() && plugins().length === 0} fallback={null}>
+        <p class="tools-muted skill-group-empty">还没有前端插件——把插件文件夹或 .zip 导入进来。</p>
+      </Show>
+      <For each={plugins()}>
+        {(plugin) => (
+          <article class="fp-row">
+            <span class="skill-group-icon" aria-hidden="true">{plugin.slot === "theme" ? <IconSparkles /> : <IconPuzzle />}</span>
+            <span class="fp-titles">
+              <strong>{plugin.name}</strong>
+              <span class="fp-sub">{plugin.id}{plugin.version !== "" ? ` · v${plugin.version}` : ""} · {SLOT_LABELS[plugin.slot] ?? plugin.slot} · {plugin.source === "user" ? "用户导入" : "随包"}</span>
+            </span>
+            <span class={`fp-status${plugin.enabled ? " on" : " off"}`}>{plugin.enabled ? "已激活" : "已禁用"}</span>
+            <span class="fp-actions">
+              <button type="button" class="ghost-mini" onClick={() => void invoke("frontend_plugins:reveal", { id: plugin.id })} title="打开所在目录">目录</button>
+              <button type="button" class="ghost-mini" onClick={() => toggle(plugin)} disabled={busy()}>{plugin.enabled ? "禁用" : "激活"}</button>
+              <Show when={plugin.source === "user"}>
+                <button type="button" class="ghost-mini" onClick={() => remove(plugin)} disabled={busy()}>删除</button>
+              </Show>
+            </span>
+          </article>
+        )}
+      </For>
+    </section>
+  );
+};
+
+export const ToolsPage: Component<{ toolsTab?: "skills" | "mcp" | "plugins" }> = (props) => {
+  /* 分区导航在左栏(Sidebar 的 TOOLS_NAV,App 持状态)——内容区不再自带菜单。 */
+  const tab = () => props.toolsTab ?? "skills";
   const state = scanState;
   const [config, setConfig] = createSignal<ConfigDto | null>(null);
   const [configError, setConfigError] = createSignal<string | null>(null);
@@ -160,14 +259,17 @@ export const ToolsPage: Component = () => {
     <div class="tools-page">
       <header class="tools-page-head">
         <h1>工具</h1>
-        <p>会话可用的 skills 与扩展。条目由 daemon 按当前工作区目录解析与校验。</p>
-        <button type="button" class="ghost-mini tools-refresh" onClick={refresh} disabled={state().status === "scanning"}>
-          <IconRefreshCw class={`tools-refresh-icon${state().status === "scanning" ? " spinning" : ""}`} />
-          {state().status === "scanning" ? "扫描中…" : "重新扫描"}
-        </button>
+        <p>会话可用的 skills、MCP 与前端插件。skills/MCP 由 daemon 解析校验；前端插件由壳管理。</p>
+        <Show when={tab() !== "plugins"}>
+          <button type="button" class="ghost-mini tools-refresh" onClick={refresh} disabled={state().status === "scanning"}>
+            <IconRefreshCw class={`tools-refresh-icon${state().status === "scanning" ? " spinning" : ""}`} />
+            {state().status === "scanning" ? "扫描中…" : "重新扫描"}
+          </button>
+        </Show>
       </header>
 
       {/* ── Skills ── */}
+      <Show when={tab() === "skills"}>
       <section class="tools-section" aria-labelledby="skills-title">
         <h2 id="skills-title"><IconBlocks /> Skills</h2>
         <Show when={state().daemonUnreachable}>
@@ -197,8 +299,10 @@ export const ToolsPage: Component = () => {
           empty={state().status === "scanning" ? "读取中…" : "catalog 没有 user skills。"}
         />
       </section>
+      </Show>
 
       {/* ── MCP / LSP(config.load 只读,与设置页同源) ── */}
+      <Show when={tab() === "mcp"}>
       <section class="tools-section" aria-labelledby="mcp-title">
         <h2 id="mcp-title"><IconCable /> MCP / LSP</h2>
         <Show when={configError != null}>
@@ -253,12 +357,12 @@ export const ToolsPage: Component = () => {
           )}
         </Show>
       </section>
+      </Show>
 
-      {/* ── 插件占位 ── */}
-      <section class="tools-section" aria-labelledby="plugins-title">
-        <h2 id="plugins-title"><IconPackage /> 插件</h2>
-        <PluginPlaceholder />
-      </section>
+      {/* ── 前端插件(管理面,详见文件头注释) ── */}
+      <Show when={tab() === "plugins"}>
+        <PluginManager />
+      </Show>
     </div>
   );
 

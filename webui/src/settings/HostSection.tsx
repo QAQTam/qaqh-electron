@@ -191,10 +191,11 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
         <b>{build()?.display ?? (build()?.unavailable ? "浏览器环境（无壳）" : "读取中…")}</b>
         <span>commit</span>
         <b title={build()?.commit ?? ""}>{build()?.commit?.slice(0, 12) ?? "—"}</b>
-        <span>后端版本</span>
-        <b>{daemonVersionLabel()}</b>
-        <span>后端协议</span>
-        <b>{protocolVersion()}</b>
+        {/* 口径同 AboutSection:批次指纹=打包原子配对(前端仓 HEAD 注入),协议层级=API level。 */}
+        <span>后端批次</span>
+        <b title="发布批次指纹,非后端源码 commit(详见「关于」页分层说明)">{daemonVersionLabel()}</b>
+        <span>协议层级</span>
+        <b title="控制协议 level(API level 语义,与构建批次无关)">{protocolVersion()}</b>
         <span>局域网</span>
         <b>{lan()?.active === true ? (lan()?.lan_endpoint ?? "已开启") : lan()?.running === true ? "未开启" : "daemon 未运行"}</b>
         <span>窗口</span>

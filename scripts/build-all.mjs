@@ -9,8 +9,8 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { parseArgs, parseBuildIdentity, assertInputs } = require("./packaging.cjs");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// 后端源目录由 justfile 的 QAQH_BACKEND_DIR 统一导出（冻结期默认 ../qaqh-backend-lts）。
-const backend = resolve(root, process.env.QAQH_BACKEND_DIR ?? "../qaqh-backend-lts");
+// 后端源目录由 justfile 的 QAQH_BACKEND_DIR 统一导出（默认 ../qaqh-backend）。
+const backend = resolve(root, process.env.QAQH_BACKEND_DIR ?? "../qaqh-backend");
 const frontend = resolve(root, "webui");
 const nativeCrate = resolve(root, "crates/qaqh-napi-client");
 

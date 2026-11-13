@@ -50,3 +50,19 @@ test("single stream turn segments: tool followed by answer", () => {
   const segments = turnSegments(turn.steps, false);
   expect(segments.length).toBeGreaterThan(0);
 });
+
+test("内核随参数流下发的目标文件与「吐完」标志落到 step(累计替换语义)", () => {
+  const state = emptySession();
+  const step = () => state.turns.t1!.steps[0] as any;
+  applySessionEvent(state, { seq: 1, type: "turn_started", turn_id: "t1", input_id: "in1", mode: "normal" });
+  // 补丁头还没收尾:内核没认出来 = 字段缺席,前端不得拿前缀自己凑一个文件名。
+  applySessionEvent(state, { seq: 2, type: "tool_arguments_delta", turn_id: "t1", call_id: "call1", tool_name: "apply_patch", text: '{"patch":"*** Begin Patch\\n*** Update File: a.rs\\n' });
+  expect(step().targetFiles).toBeUndefined();
+  expect(step().argsComplete).toBe(false);
+  applySessionEvent(state, { seq: 3, type: "tool_arguments_delta", turn_id: "t1", call_id: "call1", tool_name: "apply_patch", text: '{"patch":"*** Begin Patch\\n*** Update File: a.rs\\n*** End Patch\\n"}', target_files: ["a.rs"], args_complete: true });
+  expect(step().targetFiles).toEqual(["a.rs"]);
+  expect(step().argsComplete).toBe(true);
+  // 声明不带补丁文件名(补丁文法归内核),所以 step 上的内核结论必须留住。
+  applySessionEvent(state, { seq: 4, type: "tool_declared", turn_id: "t1", call_id: "call1", tool_name: "apply_patch", args: { patch: "*** Begin Patch\\n*** Update File: a.rs\\n*** End Patch\\n" } });
+  expect(step().targetFiles).toEqual(["a.rs"]);
+});

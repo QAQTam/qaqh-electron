@@ -226,5 +226,13 @@ export function setSandbox(enabled: boolean): void {
   setNote(null);
 }
 
+export function setGoals<K extends keyof ConfigDto["goals"]>(
+  key: K,
+  value: ConfigDto["goals"][K],
+): void {
+  setDraft((prev) => (prev == null ? prev : { ...prev, goals: { ...prev.goals, [key]: value } }));
+  setNote(null);
+}
+
 export { open, loading, busy, error, note, requireBypass, bypassAck, confirmDiscard, reloadPending, baseline, draft };
 export { setConfirmDiscard, fetchConfig as reload, setBypassAck };

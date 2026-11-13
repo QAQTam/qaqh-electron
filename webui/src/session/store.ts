@@ -13,16 +13,43 @@ import { onConfigChanged } from "../lib/config-events";
 import { applySessionBootstrap, applySessionEvent, contentRefsInPayload, emptySession, forceSealTurn, pendingContentRefs, resolveContentRef } from "./reducer";
 import { ContentLoader } from "./content-loader";
 import { evictForWindow, fillGapHeights } from "./pagination";
-import { HANDOFF_TOOL, handoffFactsOfTurn, type HandoffFact } from "./handoff";
+import { HANDOFF_TOOL, handoffFactsOfTurn, type HandoffSealedView } from "./handoff";
 import type { SessionState, Wait } from "./types";
 import { normalizeActivity, type SessionActivity } from "./projection";
 import type {
- ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch, WidgetContext, JsonValue 
+ GoalStatus, GoalView, ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch, WidgetContext, JsonValue
 } from "../api/contract";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 import { registry, refreshRegistry } from "../settings/registry";
 
 function pendingContentRefsFromSnapshot(snapshot: unknown): Set<string> { return contentRefsInPayload(snapshot); }
+
+/** goal.set/goal.get 的 ack.result 形状(`{ goal: GoalView | null }`)。null 是合法结果(无 goal),形状不对才抛。 */
+function goalOfAck(ack: { result?: unknown }, command: string): GoalView | null {
+  const result = ack.result as { goal?: unknown } | null | undefined;
+  if (result == null || typeof result !== "object") throw new Error(`${command} 未返回结果`);
+  if (result.goal == null) return null;
+  const goal = result.goal as GoalView;
+  if (typeof goal.goal_id !== "string" || typeof goal.objective !== "string" || typeof goal.status !== "string") {
+    throw new Error(`${command} 返回了无效的 goal`);
+  }
+  return goal;
+}
+
+/**
+ * Team 页的刷新触发(施工单:无推送,主触发 = timeline 出现 task_* 与 board_*
+ * 工具的 tool_result)。SessionStore 在 applyProjection 里广播,订阅方自行
+ * 过滤 seed。返回反订阅函数。
+ */
+type BoardToolListener = (seed: string, toolName: string) => void;
+const boardToolListeners = new Set<BoardToolListener>();
+export function onBoardToolActivity(listener: BoardToolListener): () => void {
+  boardToolListeners.add(listener);
+  return () => boardToolListeners.delete(listener);
+}
+function emitBoardToolActivity(seed: string, toolName: string): void {
+  for (const listener of boardToolListeners) listener(seed, toolName);
+}
 
 export type ConnectionKind = "connected" | "reconnecting" | "offline";
 
@@ -93,7 +120,7 @@ export function estimateTokens(text: string): number {
   return Math.max(1, Math.round(cjkTokens + nonCjkTokens));
 }
 
-/** 相邻 message_delta 间隙 ≤ 此值视为模型连续产出,计入速率分母;更长的间隙是工具/等待/网络卡顿,只重锚产出段起点。 */
+/** 相邻产出 delta(message reasoning/answer、tool_arguments)间隙 ≤ 此值视为模型连续产出,计入速率分母;更长的间隙是工具执行/等待/网络卡顿,只重锚产出段起点。 */
 const OUTPUT_GAP_MAX_MS = 1500;
 /** 实时读数滑动窗口长度(与结算口径同为 estimateTokens 家族,到达时不会跳变)。 */
 const LIVE_WINDOW_MS = 3000;
@@ -101,6 +128,12 @@ const LIVE_WINDOW_MS = 3000;
 const LIVE_MIN_SPAN_MS = 400;
 /** 实时读数最少多久刷新一次,防 delta 洪峰把 composer 信号打穿。 */
 const LIVE_UPDATE_MIN_MS = 300;
+/**
+ * 实时读数上限:分母是客户端**到货时间**,代理缓冲/卡顿补发/工具参数整段上船时
+ * 比值测的是到货突发,不是产出速率。真实端点产出不超过约两百 tok/s;超过此值
+ * 必是伪影,钳住显示,结算值(后端 generated_ms)到达后自会接管。
+ */
+const LIVE_RATE_MAX = 500;
 
 /**
  * 输入区模型/参数选择器的会话视图。
@@ -205,23 +238,17 @@ export class SessionStore {
   onSessionTitleChanged: ((title: string) => void) | null = null;
   /** 标签层注入的回调:`MetaDelta::Deleted` 是权威终态,目录项与标签一起收掉。 */
   onSessionDeleted: (() => void) | null = null;
+  // ── ADR-016:封箱投影(只读;fork 决策权在内核,这里没有任何 fork 接线) ──
   /**
-   * 标签层注入的回调:本会话检测到一份交接事实。
-   *
-   * 两条路都发:**实时封箱**(`tool_finished` / 引用正文回填后)与**断线窗口结算**
-   * (快照落地时回合还在跑的封箱,见 `settleHandoffFacts`——重开/重连/resync 后
-   * declare 只存在于快照里,不结算就会「模型调用完卡在交接卡」谁也不 fork)。
-   * **已终态回合的历史交接不发**——否则每次重开标签/切回会话都会照着历史再
-   * fork 一条会话。历史里的交接靠回合尾部那条「继续这条交接 →」入口(数据同样
-   * 来自 timeline,离线可重建)。
+   * `HandoffSealed` 事件投影:A/B 两条流各收一份,按 (sealed, turn) 幂等。
+   * A 侧(sealed==本会话)供封箱卡续接态与自动跳转;B 侧(successor==本会话)
+   * 供开箱卡。null = 本流还没收到。
    */
-  onHandoffDetected: ((fact: HandoffFact) => void) | null = null;
-  /** 已经上报过的交接 key(`from_session_id|turn_id`),防同一事实重复触发。 */
-  private reportedHandoffKeys = new Set<string>();
-  /** 本会话**事件流里**声明过、或快照里仍在跑的 handoff 调用 id(有 fork 资格)。 */
-  private liveHandoffCallIds = new Set<string>();
-  /** 快照里回合已终态的 handoff 调用 id:历史封箱,后续旧帧重放(B01 水位缺口)不得翻案。 */
-  private historicalHandoffCallIds = new Set<string>();
+  private handoffSealedSig = createSignal<HandoffSealedView | null>(null);
+  /** 本会话已读到封箱事实(`handed_off:true`):composer 置灰依据,离线可重建。 */
+  private sealedLocallySig = createSignal(false);
+  /** 本会话事件流里声明过 handoff 调用:收窄封箱事实扫描面,tool_finished 热路径不全量扫。 */
+  private sawHandoffCall = false;
 
   /** 宿主事件反订阅。 */
   private hostUnlisten: (() => void) | null = null;
@@ -237,7 +264,7 @@ export class SessionStore {
       this.mutate((draft) => resolveContentRef(draft, ref, text, resolved));
       // 交接结果正文很长,后端可能只给引用:引用回填后才读得出 `handed_off:true`,
       // 所以这条路径也要补看一次(只有声明过 handoff 的会话会真扫,见方法注释)。
-      this.reportHandoffFacts();
+      this.refreshSealedFacts();
     },
     (ref, status) => this.contentStatus[1]((current) => {
       const next = { ...current };
@@ -524,7 +551,15 @@ export class SessionStore {
     this.contentStatus[1]({});
     const refs = pendingContentRefsFromSnapshot(bootstrap.state);
     this.mutate((draft) => { applySessionBootstrap(draft, bootstrap); });
-    this.settleHandoffFacts();
+    // 重开/重连后封箱事实只存在于快照里:扫一遍立起「已封箱」投影(composer 置灰
+    // 与卡片续接态共用)。内核 fork 时代没有「上报 fork」这回事(ADR-016 切片 1)。
+    for (const turn of Object.values(this.stateGet.turns)) {
+      if (turn.steps.some((step) => step.kind === "tool" && step.name === HANDOFF_TOOL)) {
+        this.sawHandoffCall = true;
+        break;
+      }
+    }
+    this.refreshSealedFacts();
     this.contentLoader.retryFailed();
     this.hydrateContent(refs);
     this.loadError[1](false);
@@ -536,58 +571,33 @@ export class SessionStore {
 
   // ── Flattened SessionEventFrame reducer ────────────────────────────────────
 
+  /** HandoffSealed 事件投影(A/B 双流各一份,幂等);null = 本流未收到。 */
+  handoffSealed(): HandoffSealedView | null { return this.handoffSealedSig[0](); }
+
   /**
-   * 快照落地后的交接结算:决定哪些封箱算「刚刚发生的」,哪些算历史。
-   *
-   * 断线/重开/resync 窗口里落地的封箱(快照里回合还在跑)与实时封箱**同等对待**:
-   * 调用 id 进 `liveHandoffCallIds`,事实一读得出就上报 fork。实时闸门原本要求
-   * declare 走过事件流,快照里的 declare 永远进不了集合——结果是「模型调用完
-   * 卡在交接卡」,谁也不 fork,连 toast 都没有。
-   * 回合已终态的是历史:id 进 `historicalHandoffCallIds`,已读出的事实按已上报
-   * 记账——每次切回标签/重开客户端都不会照着历史再开一条会话(施工单 §五边界
-   * 不变),也挡住水位缺口(后端 B01)下旧帧重发把陈年交接再 fork 一遍。
+   * 本会话 loop 是否已闭门(封箱)。composer 置灰与竞态提示的唯一依据:
+   * 封箱事实在场(离线可重建)或 HandoffSealed 指向本会话都算;
+   * B 侧不算——后继是活会话,composer 照常。
    */
-  private settleHandoffFacts(): void {
-    for (const turn of Object.values(this.stateGet.turns)) {
-      const settled = turn.status !== "running";
-      for (const step of turn.steps) {
-        if (step.kind !== "tool" || step.name !== HANDOFF_TOOL) continue;
-        (settled ? this.historicalHandoffCallIds : this.liveHandoffCallIds).add(step.id);
-      }
-      if (!settled) continue;
-      for (const fact of handoffFactsOfTurn(turn, this.seed)) this.reportedHandoffKeys.add(fact.key);
-    }
-    this.reportHandoffFacts();
+  isHandoffSealed(): boolean {
+    if (this.sealedLocallySig[0]()) return true;
+    const sealed = this.handoffSealedSig[0]();
+    return sealed != null && sealed.sealedSessionId === this.seed;
   }
 
   /**
-   * 封箱检测:扫本会话里有 fork 资格的 handoff 调用,把新读得出的交接事实交给
-   * 标签层去 fork(§一·2「立刻 fork」)。
-   *
-   * 边界都是刻意的:
-   * - fork 资格来自 `liveHandoffCallIds`(实时 declare / 快照里仍在跑,见
-   *   `settleHandoffFacts`);`historicalHandoffCallIds` 里的历史封箱只记账不 fork。
-   * - 判据是 `handed_off:true`(见 `./handoff`):`tool_name` 只用来把扫描面收窄到
-   *   这一个调用上,不用 declare 当"该 fork 了"的信号——`handoff_invalid_args` 之后
-   *   模型可以改参数重试,按 declare fork 会把没写成的文档投进 B。
-   * - 每个 key 只上报一次;上报后把调用 id 摘出扫描集,引用回填路径不再重复扫。
+   * 封箱事实扫描(ADR-016:fork 权威在内核,这里只立「已封箱」投影)。
+   * 三路收口:bootstrap 落地、tool_finished、引用正文回填——断线窗口里落地的
+   * 封箱与实时封箱同律,重开(resync)后 declare 只在快照里也要扫得到。
+   * 幂等:立起之后直接短路;旧帧重放(B01 水位缺口)翻不了案。
    */
-  private reportHandoffFacts(): void {
-    const notify = this.onHandoffDetected;
-    if (notify == null) return;
-    if (this.liveHandoffCallIds.size === 0 && this.historicalHandoffCallIds.size === 0) return;
+  private refreshSealedFacts(): void {
+    if (this.sealedLocallySig[0]()) return;
+    if (!this.sawHandoffCall) return;
     for (const turn of Object.values(this.stateGet.turns)) {
-      for (const fact of handoffFactsOfTurn(turn, this.seed)) {
-        // 历史封箱:记账后跳过。卡片照常渲染(它不经过这里),但绝不自动 fork。
-        if (this.historicalHandoffCallIds.has(fact.callId)) {
-          this.reportedHandoffKeys.add(fact.key);
-          continue;
-        }
-        // `delete` 的返回值就是这次扫描的收尾:上报过一次的调用不再重扫。
-        if (!this.liveHandoffCallIds.delete(fact.callId)) continue;
-        if (this.reportedHandoffKeys.has(fact.key)) continue;
-        this.reportedHandoffKeys.add(fact.key);
-        notify(fact);
+      if (handoffFactsOfTurn(turn, this.seed).length > 0) {
+        this.sealedLocallySig[1](true);
+        return;
       }
     }
   }
@@ -599,6 +609,15 @@ export class SessionStore {
       draft.watermark = event.seq;
     });
     if (refs.size > 0) this.hydrateContent(refs);
+
+    // Team 页刷新触发(subagent-team 施工单 §一·3):task_* 与 board_* 工具收尾
+    // 即广播,Team 页自行过滤 seed 后 refetch /team。其余事件不广播。
+    if (event.type === "timeline_appended" && event.entry.kind === "tool_result") {
+      const step = this.toolStepOf(event.entry.data.call_id);
+      if (step != null && (step.name.startsWith("task_") || step.name.startsWith("board_"))) {
+        emitBoardToolActivity(this.seed, step.name);
+      }
+    }
 
     switch (event.type) {
       case "activity_changed": {
@@ -623,7 +642,7 @@ export class SessionStore {
         this.activity[1](event.phase === "waiting_user" ? "waiting_user" : event.phase === "cancelling" ? "cancelling" : "working");
         break;
       case "turn_ended": {
-        if (event.outcome.kind === "finished" && event.outcome.data.usage) this.updateComposerUsage(event.outcome.data.usage);
+        if (event.outcome.kind === "finished" && event.outcome.data.usage) this.updateComposerUsage(event.outcome.data.usage, null);
         this.clearCancelWatchdog();
         this.isSending[1](false);
         this.activeTurnStartedAt = null;
@@ -639,28 +658,46 @@ export class SessionStore {
         break;
       }
       case "timeline_appended":
-        if (event.entry.kind === "assistant_block" && event.entry.data.usage) this.updateComposerUsage(event.entry.data.usage);
+        if (event.entry.kind === "assistant_block" && event.entry.data.usage) this.updateComposerUsage(event.entry.data.usage, event.entry.data.generated_ms ?? null);
         if (event.entry.kind === "input" && this.isSending[0]()) this.isSending[1](false);
         break;
       case "tool_finished":
         void this.refreshApprovals();
         void this.refreshTodos();
         this.onSessionsChanged?.();
-        // 封箱结果(`handed_off:true`)到达 = 立刻 fork(§一·2)。只有活动中的 store
-        // 收得到这条事件;断线窗口里落地的封箱由 `settleHandoffFacts` 在快照落地时
-        // 结算,已终态的历史交接走回合尾部那条人工入口。
-        this.reportHandoffFacts();
+        // 封箱结果到达(`handed_off:true`)= 立「已封箱」投影(composer 置灰、卡片
+        // 续接态)。fork 本身归内核(ADR-016 切片 1);断线窗口里落地的封箱由
+        // bootstrap 落地时同一扫描收口。
+        this.refreshSealedFacts();
         break;
       case "tool_declared":
       case "tool_arguments_delta":
-        // 声明只用来把后续扫描收窄到这一个调用上(交接工具不受 allowlist 约束,
-        // minimal/custom 档也照样可能出现)。
-        if (event.tool_name === HANDOFF_TOOL) this.liveHandoffCallIds.add(event.call_id);
+        // 声明把封箱事实的扫描面收窄到「见过 handoff 调用」的会话上(交接工具
+        // 不受 allowlist 约束,minimal/custom 档也照样可能出现)。
+        if (event.tool_name === HANDOFF_TOOL) this.sawHandoffCall = true;
         if (event.type === "tool_arguments_delta" && this.activeTurnStartedAt != null) {
-          // 工具参数生成阶段:速率表盘让位(Composer 切行数估算),等 message_delta 回来。
-          this.composerMetrics[1]((current) => (current.isGeneratingToolInput ? current : { ...current, isGeneratingToolInput: true }));
+          // 工具参数也是模型产出:并入速率分母与实时滑动窗口——completion_tokens
+          // 分子从来就含参数 token,分母不认它们才是结算虚高的根因(2026-11-12)。
+          this.trackOutputDelta(event.text, true);
         }
         break;
+      case "handoff_sealed": {
+        // ADR-016 切片 1/2:内核 T+10s 一体完成建 B+投文档+开回合,本事件是
+        // 「链已接」的权威信号,双发到链根与后继两条流。按 (sealed, turn) 幂等,
+        // 滞后的重发不翻案。
+        const prev = this.handoffSealedSig[0]();
+        const duplicate = prev != null && prev.sealedSessionId === event.sealed_session_id && prev.turnId === event.turn_id;
+        if (!duplicate) {
+          this.handoffSealedSig[1]({
+            sealedSessionId: event.sealed_session_id,
+            successorSessionId: event.successor_session_id,
+            turnId: event.turn_id,
+            workSummary: event.work_summary,
+            atMs: event.at_ms,
+          });
+        }
+        break;
+      }
       case "exec_session_started":
       case "exec_session_state_changed":
       case "exec_session_finished":
@@ -685,10 +722,21 @@ export class SessionStore {
       case "subagent_updated":
         break;
       case "message_delta":
-        // message_delta 是"模型确实在产出"的唯一可靠证据(工具输出走 *_output_delta,不混)。
-        if (this.activeTurnStartedAt != null) this.trackOutputDelta(event.text);
+        // message_delta(reasoning/answer 两类 block_kind 都算,不按 kind 过滤)是
+        // "模型确实在产出"的可靠证据;工具/子进程输出走 *_output_delta,不进这里。
+        if (this.activeTurnStartedAt != null) this.trackOutputDelta(event.text, false);
         break;
     }
+  }
+
+  /** 按调用 id 找已归约的工具步(仅 tool_result 事件路径用)。 */
+  private toolStepOf(callId: string): { name: string } | null {
+    for (const turn of Object.values(this.stateGet.turns)) {
+      for (const step of turn.steps) {
+        if (step.kind === "tool" && step.id === callId) return step;
+      }
+    }
+    return null;
   }
 
   /**
@@ -698,8 +746,10 @@ export class SessionStore {
    * 更长的段间空隙(工具执行/等待/网络卡顿)只重锚,不进分母。
    * 实时值:LIVE_WINDOW_MS 滑动窗口内 estimateTokens 之和 ÷ 样本跨度,
    * 按 LIVE_UPDATE_MIN_MS 节流;窗口估算与结算同一估计器家族,结算到达时平滑衔接。
+   * 输入源(2026-11-12 起):message_delta(reasoning+answer)与 tool_arguments_delta
+   * 全部并入——与 completion_tokens 分子(从来含思考与参数 token)对齐口径。
    */
-  private trackOutputDelta(text: string): void {
+  private trackOutputDelta(text: string, isToolArgs: boolean): void {
     const t = now();
     if (this.activeOutputStartedAt == null) this.activeOutputStartedAt = t;
     const gap = this.lastOutputDeltaAt == null ? 0 : t - this.lastOutputDeltaAt;
@@ -719,27 +769,43 @@ export class SessionStore {
       this.composerMetrics[1]((current) => ({
         ...current,
         isStreaming: true,
-        isGeneratingToolInput: false,
-        tokensPerSecond: sum / (spanMs / 1000),
+        isGeneratingToolInput: isToolArgs,
+        tokensPerSecond: Math.min(sum / (spanMs / 1000), LIVE_RATE_MAX),
       }));
       return;
     }
     // 没到刷新节拍:只保证流式态点亮(这两个布尔以前无人置 true,"is-live" 一直是死的)。
     this.composerMetrics[1]((current) =>
-      current.isStreaming && !current.isGeneratingToolInput ? current : { ...current, isStreaming: true, isGeneratingToolInput: false });
+      current.isStreaming && current.isGeneratingToolInput === isToolArgs
+        ? current
+        : { ...current, isStreaming: true, isGeneratingToolInput: isToolArgs });
   }
 
-  private updateComposerUsage(usage: UsageInfo): void {
+  private updateComposerUsage(usage: UsageInfo, backendGeneratedMs: number | null): void {
+    // 分母优先级(2026-11-12 起):后端内核实测 `generated_ms`(本次尝试首个
+    // 产出碎片到最后一个碎片的跨度,与 completion_tokens 同一次请求口径)是
+    // 真·产出区间;客户端到货时间降为兜底——代理缓冲/批量冲刷会把到货跨度
+    // 压成假小分母(展示面上千 tok/s 的老根子)。
     // 速率分母只算「模型确实在产出」的累计区间（见 activeOutputActiveMs 的累加规则）。
     // 下面那条首末差一直自称 "excluding tool and user-wait time"，其实没排除：
     // 中间跑一个 30 秒的 exec，40 tok/s 能被压成 2 tok/s。首末差只留给
     // 没观测到任何增量的回放/纯历史路径当兜底。
-    const durationMs = this.activeOutputActiveMs > 0
+    // BUG-2026-11-12（展示面 10000 tok/s）：单条 message_delta / 整段批量冲刷时
+    // 观测跨度为 0，旧逻辑 Math.max(0.001, …) 把分母钳成常量 1 毫秒，
+    // completion_tokens ÷ 0.001s = 速率直接乘 1000 倍——10 token 回合一跳就是
+    // 10000 tok/s。跨度测不出来就不再除假分母：先退回回合总时长，连锚点都没有
+    // （纯回放）则维持旧值不动。
+    const observedMs = this.activeOutputActiveMs > 0
       ? this.activeOutputActiveMs
       : this.activeOutputStartedAt != null && this.activeOutputEndedAt != null
         ? this.activeOutputEndedAt - this.activeOutputStartedAt
-        : this.activeTurnStartedAt == null ? null : now() - this.activeTurnStartedAt;
-    const elapsedSeconds = durationMs == null ? null : Math.max(0.001, durationMs / 1_000);
+        : 0;
+    const durationMs = backendGeneratedMs != null && backendGeneratedMs >= LIVE_MIN_SPAN_MS
+      ? backendGeneratedMs
+      : observedMs >= LIVE_MIN_SPAN_MS
+      ? observedMs
+      : this.activeTurnStartedAt == null ? null : Math.max(0, now() - this.activeTurnStartedAt);
+    const elapsedSeconds = durationMs == null || durationMs < 1 ? null : durationMs / 1_000;
     // 服务端 usage 的 prompt_tokens 就是这一轮真正发出去的上下文(系统提示 + 工具
     // schema + 历史),直接当占用真值;它只统计到本轮 prompt,答案那部分要等下一轮
     // 才进 prompt,所以这个表盘天然滞后一轮。
@@ -1290,6 +1356,53 @@ export class SessionStore {
     // 命令已入队才布防:投递失败走异常,Composer 的 catch 会复位 stopping,
     // 不需要看门狗代劳。真实终态 delta 到达时撤防(见 applyProjection)。
     this.armCancelWatchdog(turnId);
+  }
+
+  /**
+   * 撤回一个回合:`conversation.truncate` 把该回合(**含自身**)及其后的整段历史
+   * 硬截断——不落备份、不可恢复;文件改动、执行会话进程、子代理、已通过的审批
+   * 一律不回滚(要回文件另有 journal 路径)。
+   *
+   * 这里**不动本地视图**:删除是 `timeline_truncated` 事件的责任,单一事实源在
+   * 事件流——乐观地先删本地行,会让"后端拒了"和"后端删了"两种结局长成一个样子。
+   * 回合还在跑时后端当场拒(不允许冲突撤回),异常原样抛给调用方出 toast。
+   */
+  async truncateTurn(turnId: string): Promise<void> {
+    await transport.command(
+      { type: "conversation.truncate", turn_id: turnId },
+      sessionTarget(this.seed),
+    );
+  }
+
+  /**
+   * goal 控制面(ADR-0015):三条命令都走既有命令通道,同步 ack.result。
+   * `goal.set` 的 `token_budget` 是双层语义——缺席=不动,`null`=清除,
+   * 数值=设置——所以载荷按 key 缺席与否组装,不能 `?? null` 一把梭。
+   * 拒绝原样抛 `CommandRejectedError`(`goal_exists`/`no_goal`),文案分型
+   * 由调用方按码分支,不在这里吞。
+   */
+  async goalSet(patch: { objective?: string; status?: GoalStatus; tokenBudget?: number | null }): Promise<GoalView> {
+    const payload: { type: "goal.set"; objective?: string; status?: GoalStatus; token_budget?: number | null } = { type: "goal.set" };
+    if (patch.objective !== undefined) payload.objective = patch.objective;
+    if (patch.status !== undefined) payload.status = patch.status;
+    if (patch.tokenBudget !== undefined) payload.token_budget = patch.tokenBudget;
+    const ack = await transport.command(payload, sessionTarget(this.seed));
+    // goal.set 恒返回 goal(创建/更新后读模型),null 视为后端违约。
+    const goal = goalOfAck(ack, "goal.set");
+    if (goal == null) throw new Error("goal.set 未返回 goal");
+    return goal;
+  }
+
+  async goalGet(): Promise<GoalView | null> {
+    const ack = await transport.command({ type: "goal.get" }, sessionTarget(this.seed));
+    return goalOfAck(ack, "goal.get");
+  }
+
+  /** 幂等清除:已无 goal 也返回 cleared,不抛 no_goal。 */
+  async goalClear(): Promise<boolean> {
+    const ack = await transport.command({ type: "goal.clear" }, sessionTarget(this.seed));
+    const result = ack.result as { cleared?: unknown } | null;
+    return result?.cleared === true;
   }
 
   /**

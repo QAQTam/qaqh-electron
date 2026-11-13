@@ -1,0 +1,343 @@
+/* 后台执行抽屉 (ExecSessionDrawer)
+   动画纪律与 diff 抽屉同一套(deliverables.css §2):
+   1. 背板不用 backdrop-filter——壳禁了 3D API,blur 在软件光栅化下每帧 CPU 高斯模糊,滑入等于闪现;
+   2. keyframes 复用 drawerFadeIn / drawerSlideIn / skeletonPulse(同一文档已定义);
+   3. 抽屉关闭即物理卸载,这里没有任何常驻样式状态。 */
+.exec-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 55%);
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+  animation: drawerFadeIn var(--dur-drawer, 240ms) var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.exec-drawer-panel {
+  width: min(92vw, 860px);
+  height: 100%;
+  background: var(--bg);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: -8px 0 32px rgb(0 0 0 / 22%);
+  display: flex;
+  flex-direction: column;
+  animation: drawerSlideIn var(--dur-drawer, 240ms) var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
+  overflow: hidden;
+}
+
+.exec-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.exec-drawer-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.exec-drawer-title {
+  font-size: var(--fs-md);
+  font-weight: 650;
+  color: var(--text);
+}
+
+.exec-drawer-live-count {
+  font-size: var(--fs-xs);
+  color: var(--accent);
+}
+
+.exec-drawer-close-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.exec-drawer-close-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.exec-drawer-close-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.exec-drawer-body {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.exec-drawer-sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  user-select: none;
+}
+
+.exec-drawer-filter {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.exec-drawer-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.exec-drawer-input:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+}
+
+.exec-drawer-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.exec-drawer-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 120ms ease;
+}
+
+.exec-drawer-row:hover {
+  background: var(--surface-2);
+}
+
+.exec-drawer-row.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-left: 3px solid var(--accent);
+}
+
+.exec-drawer-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.exec-drawer-row-command {
+  font-family: var(--font-code);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.exec-drawer-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.exec-drawer-row-cwd {
+  font-family: var(--font-code);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+}
+
+.exec-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted);
+}
+
+.exec-state-dot.running {
+  background: var(--accent);
+  animation: skeletonPulse 1.2s ease-in-out infinite alternate;
+}
+
+.exec-state-dot.stopping {
+  background: var(--warn);
+}
+
+.exec-state-dot.ok {
+  background: var(--ok);
+}
+
+.exec-state-dot.err {
+  background: var(--err);
+}
+
+.exec-drawer-empty {
+  padding: 24px 16px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.exec-drawer-content-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.exec-drawer-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.exec-drawer-banner-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.exec-drawer-banner-command {
+  font-family: var(--font-code);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.exec-drawer-banner-state,
+.exec-drawer-banner-elapsed {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.exec-drawer-banner-elapsed {
+  font-variant-numeric: tabular-nums;
+}
+
+.exec-drawer-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.exec-drawer-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.exec-drawer-action-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.exec-drawer-action-btn.danger:hover {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.exec-drawer-action-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.exec-drawer-terminal {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.exec-drawer-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px;
+}
+
+.exec-drawer-skeleton-line {
+  height: 18px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  animation: skeletonPulse 1.2s ease-in-out infinite alternate;
+}
+
+/* 功能区终端按钮的运行计数徽章(按钮本体样式在 shell/layout.css .function-zone-exec) */
+.exec-count-badge {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+/* StepRow 的 yielded 状态徽章入口 */
+.tool-state.clickable {
+  cursor: pointer;
+}
+
+.tool-state.clickable:hover {
+  color: var(--accent);
+}

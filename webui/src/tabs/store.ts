@@ -16,8 +16,6 @@ import { notifyConfigChanged } from "../lib/config-events";
 import { STR } from "../lib/strings";
 import { SessionStore, attachmentName, type PendingAttachment } from "../session/store";
 import { overlayLocalTitles } from "../session/title-override";
-import { forkRecordOfFact, markHandoffDelivered, recordHandoffFork } from "../session/handoff-journal";
-import type { HandoffFact } from "../session/handoff";
 import { toast } from "../ui/toast";
 import type { ModelSelection } from "../api/qaqh/ModelSelection";
 import type { SessionContentRef } from "../api/qaqh/SessionContentRef";
@@ -50,6 +48,8 @@ export type SidebarSession = {
   title?: string | null;
   cwd?: string | null;
   updated_at?: number;
+  /** 会话创建时刻(unix ms):开箱卡「封箱于」的血缘路径取值。 */
+  created_at?: number;
   archived?: boolean;
   /**
    * 回合在跑,或卡在用户这一侧(授权/ask/计划评审)。宿主按 `SessionRunStatus`
@@ -66,6 +66,11 @@ export type SidebarSession = {
   workspace_id?: string | null;
   /** 会话工具模式(standard、minimal 家族、custom);空串/缺省 = standard,侧栏不显示 badge。 */
   tool_mode?: string | null;
+  /**
+   * ADR-0016:handoff 工作链直接前驱(内核 fork 写入)。血缘徽标的权威读模型;
+   * 缺席 = 非交接会话。
+   */
+  handoff_from_session_id?: string | null;
 };
 export type SidebarWorkspace = { id: string; title: string; path: string; order: number; missing_dir?: boolean };
 function workspaceEntryToSidebar(entry: WorkspaceEntry): SidebarWorkspace {
@@ -448,16 +453,9 @@ function addTab(seed: string): Tab {
     ));
   };
   tab.store.onSessionDeleted = () => { void dropSession(seed); };
-  // 封箱成功 = 立刻 fork(实时封箱与断线窗口结算都走这条回调,见 session/store
-  // 的 settleHandoffFacts)。判据是 `handed_off:true` 那份工具结果(不是 turn 终态、
-  // 不是阈值),只有**当前活动**的 store 会收到事件流。已建且已投的交接不再自动把
-  // 用户拽到 B(重开卡死的旧回合时,重复激活会反复触发结算,此时安静留在卡片上,
-  // 「打开交接会话」仍是入口);未投递的照常走 fork(它会补投)。去重与血缘都在
-  // 交接账本里。
-  tab.store.onHandoffDetected = (fact) => {
-    if (forkRecordOfFact(fact)?.delivered) return;
-    void forkHandoffSession(seed, fact);
-  };
+  // 封箱续推归内核(ADR-016 切片 1):内核在 T+10s 一体完成建 B、投文档、开回合、
+  // 发 HandoffSealed。前端没有任何 fork 写者(防双 fork 的收口),卡片只投影与跳转,
+  // 见 turn/TurnView 的 HandoffCard。
   setTabs((list) => [...list, tab]);
   return tab;
 }
@@ -648,102 +646,10 @@ export async function submitStartupSession(options: StartupSubmitOptions): Promi
 }
 
 /**
- * 交接 fork —— 三条现成命令,零新 API(施工单 §一·2)。
- *
- * 1. `session.create { cwd, model_selection, tool_mode, custom_tools, title }`
- *    四项全部抄 A 的 `session.meta`(都是导出字段);`title` 直接用 `work_summary`,
- *    新 tab 一出生就可读——自动标题是死代码,不等后端。
- * 2. `conversation.send_message { text = handoff_doc, input_purpose = "trigger_turn" }`
- *    交接文档就是 B 的第一条 user 角色消息;后端不拼位置,位置由这条输入天然决定
- *    (落在 `[Project instructions](AGENTS.md)` 之下)。
- * 3. 会话接管:走本仓现有流程——`openSession` → `SessionStore.activate()` →
- *    宿主 `attach`(`session.resume`)。daemon 的会话面命令鉴权看的是 **lease 归属**
- *    (`commands.rs` 的 `owns_session`),attach 已经把归属建立了;`driver.claim`
- *    的 payload 里 `client_session_id` 由 daemon 从信封取(`DriverClaim { client_session_id: _, ... }`
- *    显式忽略),renderer 也拿不到租约 id(它在主进程),所以这里不另发一条只会
- *    被忽略的 claim。接管语义与"用户点开一个既有会话"完全一致。
- *
- * **只在封箱结果到达后 fork**:`tool_declared{tool_name:"handoff"}` 用来识别与展示
- * (标签/图标),但 `handoff_invalid_args` / `handoff_write_failed` 之后模型可以改参数
- * 重试——按 declare 就 fork 会把一份没写成的文档投进 B。判据因此是 `handed_off:true`
- * 那份 `tool_finished.output`;同回合重复调用后端只回一句人话、不再给 `handed_off`,
- * 天然不会二次 fork。
+ * 交接续推的决策权在内核(ADR-016 切片 1):封箱后 T+10s 建 B、投文档、开回合、
+ * 发 HandoffSealed。前端不存在 fork 写者,卡片只投影与跳转(turn/TurnView 的
+ * HandoffCard);旧实现的三条命令调用整段退役,防双 fork 的收口即在此。
  */
-
-/** 在飞的 fork(fact.key):并发触发(事件重放/双击)只跑一次。 */
-const handoffForkFlights = new Set<string>();
-
-/** 新会话标题:后端按此持久化;过长截断,可读性优先于行宽。 */
-export function handoffTitle(fact: { workSummary: string; handoffDoc: string }): string {
-  const summary = fact.workSummary.replace(/\s+/g, " ").trim();
-  if (summary !== "") return summary.length > 72 ? `${summary.slice(0, 71)}…` : summary;
-  const firstLine = fact.handoffDoc.split(/\r?\n/).map((line) => line.trim()).find((line) => line !== "") ?? "";
-  return firstLine.length > 72 ? `${firstLine.slice(0, 71)}…` : firstLine;
-}
-
-/** 把交接文档投成 B 的第一条输入(`input_purpose = "trigger_turn"`)。 */
-async function deliverHandoffDoc(childSeed: string, fact: HandoffFact): Promise<boolean> {
-  try {
-    const tab = await openSession(childSeed);
-    if (tab != null) await tab.store.sendMessageWithAttachments(fact.handoffDoc, []);
-    else {
-      // 激活被更晚的点击取代:命令照发,别让 B 停成零轮次会话。
-      await transport.command(
-        { type: "conversation.send_message", text: fact.handoffDoc, attachments: [], input_purpose: "trigger_turn" },
-        sessionTarget(childSeed),
-      );
-    }
-    markHandoffDelivered(fact.key);
-    void pollSessions();
-    return true;
-  } catch (error) {
-    toast(STR.handoffForkFailed(error instanceof Error ? error.message : String(error)), "err");
-    return false;
-  }
-}
-
-/**
- * fork 一条交接。返回 B 的 session_id(null = 失败,状态都留在 toast 与账本里)。
- *
- * 幂等性:同一 `from_session_id + turn_id` 只会有一条会话被开出来。已经 fork 过
- * 就直接打开那条;若「会话已建、文档没投出去」,只补投递,绝不再开第二条。
- */
-export async function forkHandoffSession(sourceSeed: string, fact: HandoffFact): Promise<string | null> {
-  const recorded = forkRecordOfFact(fact);
-  if (recorded != null) {
-    if (recorded.delivered) {
-      await openSession(recorded.childSessionId);
-      return recorded.childSessionId;
-    }
-    const retried = await deliverHandoffDoc(recorded.childSessionId, fact);
-    return retried ? recorded.childSessionId : null;
-  }
-  if (handoffForkFlights.has(fact.key)) return null;
-  handoffForkFlights.add(fact.key);
-  try {
-    const meta = await transport.query("session.meta", { session_id: sourceSeed || fact.fromSessionId }).catch(() => null);
-    const toolMode = typeof meta?.tool_mode === "string" && meta.tool_mode !== "" ? meta.tool_mode : null;
-    const child = await createSessionWithCwd({
-      cwd: meta?.cwd ?? null,
-      modelSelection: meta?.model_selection ?? null,
-      toolMode,
-      customTools: toolMode === "custom" && Array.isArray(meta?.custom_tools) ? meta.custom_tools : null,
-      title: handoffTitle(fact),
-    });
-    // 先记账再投递:投递失败也不能让下一次点击变成"第二条会话"。
-    recordHandoffFork(fact, child, false);
-    const delivered = await deliverHandoffDoc(child, fact);
-    if (delivered) toast(STR.handoffForked(handoffTitle(fact)), "ok");
-    else toast(STR.handoffDeliveredPartial, "err");
-    return child;
-  } catch (error) {
-    toast(STR.handoffForkFailed(error instanceof Error ? error.message : String(error)), "err");
-    return null;
-  } finally {
-    handoffForkFlights.delete(fact.key);
-  }
-}
-
 /**
  * 注册目录为工作区(`workspace.create`)。后端按 canonical 路径查重,重复注册
  * 返回既有条目,所以「再选一次同一个文件夹」是幂等的。
@@ -886,10 +792,19 @@ export async function deleteSession(seed: string): Promise<void> {
 
 /** 启动:选一个非归档会话(优先运行中)作为第一个标签。 */
 export async function boot(): Promise<void> {
-  const [list] = await Promise.all([
-    transport.sessions() as Promise<SidebarSession[]>,
-    refreshWorkspaces(),
-  ]);
+  let list: SidebarSession[];
+  try {
+    [list] = await Promise.all([
+      transport.sessions() as Promise<SidebarSession[]>,
+      refreshWorkspaces(),
+    ]);
+  } catch (error) {
+    // 会话列表是后端投影:后端不可达 ≠ 壳启动失败。照常打开本地启动页,
+    // 错误以非阻塞 banner 呈现(App connectionNotice + 重试),壳保持可导航。
+    setBootError(String(error instanceof Error ? error.message : error));
+    openStartup();
+    return;
+  }
   applySessionList(list);
   const live = list.find((item) => !item.archived && item.busy) ?? list.find((item) => !item.archived) ?? list[0];
   if (live?.session_id == null) {

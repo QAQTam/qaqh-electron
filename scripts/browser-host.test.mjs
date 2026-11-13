@@ -13,6 +13,7 @@ async function bundleModule(entry) {
 const wiring = await bundleModule("src/main/browser-host/config-wiring.ts");
 const serverModule = await bundleModule("src/main/browser-host/mcp-server.ts");
 const snapshotModule = await bundleModule("src/main/browser-host/snapshot-script.ts");
+const devDefsModule = await bundleModule("src/main/dev-host/tool-defs.ts");
 
 const url = "http://127.0.0.1:41235/mcp";
 const token = "tok-abc123";
@@ -80,6 +81,31 @@ test("spliceMcpSection: [mcp] 头在 server 子段之后时补齐 enabled", () =
   assert.match(out, /url = "http:\/\/127\.0\.0\.1:41235\/mcp"/);
 });
 
+test("spliceMcpSection: daemon 子表形态 headers 不产生 duplicate key", () => {
+  // 真实事故形态：daemon 把 headers 序列化成 [mcp.servers.qaqh-browser.headers]
+  // 子表段回写，壳若只替换到下一个 section 头会留下它，与内联 headers 重复定义。
+  const input = [
+    "[mcp]",
+    "enabled = true",
+    "",
+    "[mcp.servers.qaqh-browser]",
+    'url = "http://127.0.0.1:1/mcp"',
+    "default_timeout_secs = 120",
+    "",
+    "[mcp.servers.qaqh-browser.headers]",
+    'Authorization = "Bearer stale"',
+    "",
+    "[lsp]",
+    "enabled = false",
+    "",
+  ].join("\n");
+  const out = wiring.spliceMcpSection(input, url, token);
+  assert.doesNotMatch(out, /\[mcp\.servers\.qaqh-browser\.headers\]/, "daemon 子表段必须被移除");
+  assert.match(out, /headers = \{ Authorization = "Bearer tok-abc123" \}/);
+  assert.match(out, /\[lsp\]/, "无关 section 保留");
+  assert.equal(wiring.spliceMcpSection(out, url, token), out, "归一后幂等");
+});
+
 test("wireBrowserMcpConfig: 幂等落盘", () => {
   const dir = mkdtempSync(join(tmpdir(), "qaqh-wire-"));
   try {
@@ -97,6 +123,14 @@ const stubHandlers = {
   browser_snapshot: async () => ({ content: "elements: 0" }),
 };
 
+/** 与 index.ts bootstrap 同形态的门控 surface：devOn 只影响 tools/list 可见性。 */
+function makeSurface({ devOn = false, handlers = stubHandlers, extraTools = [], allHandlers = handlers } = {}) {
+  return {
+    listTools: () => (devOn ? [...serverModule.browserTools, ...extraTools] : [...serverModule.browserTools]),
+    resolveHandler: (name) => allHandlers[name],
+  };
+}
+
 async function post(port, path, body, headers = {}, method = "POST") {
   const response = await fetch(`http://127.0.0.1:${port}${path}`, {
     method,
@@ -108,7 +142,7 @@ async function post(port, path, body, headers = {}, method = "POST") {
 }
 
 test("MCP server: 完整 JSON-RPC 往返（rmcp 兼容面）", async () => {
-  const server = await serverModule.startBrowserMcpServer({ token, handlers: stubHandlers });
+  const server = await serverModule.startBrowserMcpServer({ token, surface: makeSurface() });
   try {
     // 错误 token → 401
     const bad = await post(server.port, "/mcp", { jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, { authorization: "Bearer wrong" });
@@ -206,13 +240,14 @@ test("snapshot 序列化器：头部与截断口径", () => {
   assert.match(cut, /已截断/);
 });
 
-test("工具 schema：9 个工具全部具备 name/description/inputSchema", async () => {
+test("工具 schema：browser 9 工具全部具备 name/description/inputSchema", async () => {
+  const handlers = Object.fromEntries(
+    ["browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_press_key", "browser_scroll", "browser_screenshot", "browser_console", "browser_close"]
+      .map((name) => [name, async () => ({ content: "ok" })]),
+  );
   const server = await serverModule.startBrowserMcpServer({
     token,
-    handlers: Object.fromEntries(
-      ["browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_press_key", "browser_scroll", "browser_screenshot", "browser_console", "browser_close"]
-        .map((name) => [name, async () => ({ content: "ok" })]),
-    ),
+    surface: { listTools: () => [...serverModule.browserTools], resolveHandler: (name) => handlers[name] },
   });
   try {
     const init = await post(server.port, "/mcp", { jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, { authorization: `Bearer ${token}` });
@@ -227,5 +262,57 @@ test("工具 schema：9 个工具全部具备 name/description/inputSchema", asy
     }
   } finally {
     await server.close();
+  }
+});
+
+test("Dev Surface 门控：tools/list 随开关变化，handler 执行面恒定可解析", async () => {
+  const devHandlers = Object.fromEntries(
+    devDefsModule.devToolDefs.map((tool) => [tool.name, async () => ({ content: `ran:${tool.name}` })]),
+  );
+  const handlers = { ...stubHandlers, ...devHandlers };
+  let devOn = false;
+  const surface = {
+    listTools: () => (devOn ? [...serverModule.browserTools, ...devDefsModule.devToolDefs] : [...serverModule.browserTools]),
+    resolveHandler: (name) => handlers[name],
+  };
+  const server = await serverModule.startBrowserMcpServer({ token, surface });
+  try {
+    const init = await post(server.port, "/mcp", { jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, { authorization: `Bearer ${token}` });
+    const session = init.headers.get("mcp-session-id");
+    const listTools = async () => {
+      const res = await post(server.port, "/mcp", { jsonrpc: "2.0", id: 2, method: "tools/list" }, {
+        authorization: `Bearer ${token}`, "mcp-session-id": session,
+      });
+      return JSON.parse(res.text).result.tools.map((tool) => tool.name);
+    };
+
+    // 门关：只列 browser 9 件。
+    assert.equal((await listTools()).length, 9, "开发者模式关闭时不得暴露 dev 工具");
+
+    // 门开：19 件，名称唯一。
+    devOn = true;
+    const open = await listTools();
+    assert.equal(open.length, 19);
+    assert.equal(new Set(open).size, 19, "工具名不得冲突");
+
+    // 门关时直呼 record_stop 仍可执行：门控只管可见性，不管执行
+    //（否则收回开发者模式会锁死进行中的录制——见 mcp-server.ts BrowserMcpSurface 注释）。
+    devOn = false;
+    const call = await post(server.port, "/mcp", {
+      jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "record_stop", arguments: {} },
+    }, { authorization: `Bearer ${token}`, "mcp-session-id": session });
+    const result = JSON.parse(call.text).result;
+    assert.equal(result.content[0].text, "ran:record_stop");
+    assert.ok(!result.isError);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Dev Surface schema：ui_*/record_* 10 件全部具备完整描述面", () => {
+  const defs = devDefsModule.devToolDefs;
+  assert.equal(defs.length, 10);
+  for (const tool of defs) {
+    assert.ok(tool.name && tool.description && tool.inputSchema?.type === "object", `${tool.name} 必须具备完整描述面`);
   }
 });

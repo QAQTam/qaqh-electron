@@ -136,6 +136,7 @@ export interface NativeRingingClient {
   serviceCall(method: string, params: unknown): Promise<unknown>;
   bootstrap(seed: string): Promise<unknown>;
   approvalsRaw(seed: string): Promise<unknown>;
+  teamRaw(seed: string): Promise<unknown>;
   downloadContent(reference: string): Promise<Uint8Array>;
   uploadContentRaw(seed: string, mediaType: string, data: Uint8Array): Promise<NativeUploadedContent>;
   stopDaemon(idleOnly: boolean): Promise<"stopping" | "busy" | "unsupported">;

@@ -1,0 +1,84 @@
+/* Team 页(子代理/任务板):任务卡按状态着色,花名册按 agent_path 深度缩进。 */
+.team-page {
+  display: grid;
+  gap: var(--space-5);
+  align-content: start;
+  padding: var(--space-5) var(--content-gutter);
+  overflow-y: auto;
+}
+.team-toolbar { display: flex; align-items: center; gap: 10px; }
+.team-toolbar-label { flex: none; font-size: var(--fs-sm); color: var(--muted); }
+.team-session-select { min-width: 220px; max-width: 420px; }
+.team-refresh {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: transparent; color: var(--text);
+  font-size: var(--fs-xs); cursor: pointer;
+  transition: all var(--dur-fast) var(--ease);
+}
+.team-refresh:hover { background: var(--surface-2); }
+.team-refresh:disabled { opacity: 0.6; cursor: default; }
+.team-refresh svg { width: 13px; height: 13px; }
+.team-refresh svg.spin { animation: team-spin 0.9s linear infinite; }
+@keyframes team-spin { to { transform: rotate(360deg); } }
+
+.team-error { color: var(--err); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.team-empty { color: var(--muted); font-size: var(--fs-sm); }
+.team-note { color: var(--muted); font-size: var(--fs-xs); }
+
+.team-section {
+  display: grid; gap: 8px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+.team-section h3 { font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
+
+.team-task-list { display: grid; gap: 8px; }
+.team-task {
+  display: grid; gap: 6px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  padding: 8px 10px;
+}
+.team-task[data-state="completed"], .team-task[data-state="closed"] { opacity: 0.72; }
+.team-task-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.team-task-state {
+  flex: none; padding: 0 7px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+  font-size: 10px; line-height: 1.6; color: var(--muted);
+}
+.team-task-state[data-state="claimed"] { border-color: var(--accent); color: var(--accent); }
+.team-task-state[data-state="completed"], .team-task-state[data-state="closed"] { border-color: var(--ok); color: var(--ok); }
+.team-task-state[data-state="cancelled"] { border-color: var(--err); color: var(--err); }
+.team-task-blocked {
+  flex: none; padding: 0 7px;
+  border: 1px solid var(--warn); border-radius: var(--radius-pill);
+  font-size: 10px; line-height: 1.6; color: var(--warn);
+}
+.team-task-title { font-size: var(--fs-sm); color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
+.team-task-owner, .team-task-epoch { font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
+.team-task-deps, .team-task-meta { font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
+.team-task-acceptance {
+  margin: 0; padding-left: 18px;
+  font-size: var(--fs-xs); color: var(--text);
+  display: grid; gap: 2px;
+}
+
+.team-roster { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.team-agent {
+  display: flex; align-items: center; gap: 10px;
+  padding-left: calc(var(--depth, 0) * 18px);
+  font-size: var(--fs-xs);
+}
+.team-agent-path { color: var(--text); font-family: var(--mono, monospace); overflow-wrap: anywhere; }
+.team-agent-status { color: var(--muted); }
+
+.team-board { display: grid; gap: 10px; }
+.team-channel { display: grid; gap: 6px; }
+.team-channel-name { font-size: var(--fs-sm); color: var(--text); font-weight: 500; }
+.team-channel-topic { font-size: var(--fs-xs); color: var(--muted); margin-left: 8px; }
+.team-threads { margin: 0; padding-left: 14px; list-style: none; display: grid; gap: 2px; }
+.team-thread { display: flex; align-items: center; gap: 10px; font-size: var(--fs-xs); }
+.team-thread-title { color: var(--text); overflow-wrap: anywhere; }
+.team-thread-count { color: var(--muted); flex: none; }

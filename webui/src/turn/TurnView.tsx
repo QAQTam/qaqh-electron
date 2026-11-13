@@ -2,27 +2,33 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, Switch, Match, untrack, type Accessor, type Component } from "solid-js";
 import IconChevronDown from "~icons/lucide/chevron-down";
 import IconChevronRight from "~icons/lucide/chevron-right";
-import IconHandoff from "~icons/lucide/package-check";
+import { BoxSeal } from "../ui/box-anim";
+import { SealRitual } from "../ui/box-ritual";
+import { flyBoxToSession } from "../ui/box-fly";
 import IconFork from "~icons/lucide/git-fork";
 import IconSiren from "~icons/lucide/siren";
 import { Collapse } from "../ui/Collapse";
 import { Markdown } from "../markdown/Markdown";
 import { AssistantContent } from "./AssistantContent";
 import type { WidgetHostContext } from "../widget/host";
+import { WidgetMount } from "../widget/WidgetMount";
 import { StepRow } from "../tools/StepRow";
 import { TurnDeliverablesCard } from "../diff/TurnDeliverablesCard";
+import { toast } from "../ui/toast";
+import { CommandRejectedError } from "../lib/transport";
 import { STR, formatWorkDuration } from "../lib/strings";
 import { workDurationMs } from "../lib/time";
 import type { SessionStore } from "../session/store";
 import { HANDOFF_FATAL_CODES, handoffFactOfTurn, type HandoffFact } from "../session/handoff";
-import { forkRecordOfFact } from "../session/handoff-journal";
+import { registerHandoffRemote, unregisterHandoffRemote } from "../session/handoff-remote";
+import { HandoffOpenCard } from "../session/HandoffOpenCard";
 import type { InterjectionStep, Step, Turn, Wait } from "../session/types";
 import { turnSegments, workSegmentEnd, type TurnSegment, type WorkSegment } from "./segments";
 import { interjectionHint, interjectionLabel, isSystemInterjection } from "./interjection";
 import { thinkingLabel, thinkingRichSummary, thinkingTitle } from "./thinking-label";
-import { forkHandoffSession, sessionCatalog } from "../tabs/store";
+import { openSession, sessionCatalog } from "../tabs/store";
 
-const WorkStep: Component<{ step: Accessor<Step>; turn: Turn; thinkingRich: () => boolean; cwd?: string | null; isLatest?: boolean }> = (props) => {
+const WorkStep: Component<{ step: Accessor<Step>; turn: Turn; thinkingRich: () => boolean; cwd?: string | null; isLatest?: boolean; onFollowUp?: (text: string) => void; widgetCtx: WidgetHostContext }> = (props) => {
   const thinking = createMemo(() => { const step = props.step(); return step.kind === "thinking" ? step : null; });
   // 套餐路径的思考是服务端摘要而非模型原文:标签必须分开(见 ./thinking-label)。
   const thinkingText = () => thinkingLabel(thinking()?.reasoningKind);
@@ -95,7 +101,7 @@ const WorkStep: Component<{ step: Accessor<Step>; turn: Turn; thinkingRich: () =
           </Collapse>
         </div>
       </Match>
-      <Match when={tool() != null}><StepRow step={tool()!} turn={props.turn} cwd={props.cwd} isLatest={props.isLatest} /></Match>
+      <Match when={tool() != null}>{tool()!.name === "visualize" ? <WidgetMount step={tool()!} ctx={props.widgetCtx} /> : <StepRow step={tool()!} turn={props.turn} cwd={props.cwd} isLatest={props.isLatest} onFollowUp={props.onFollowUp} />}</Match>
     </Switch>
   );
 };
@@ -119,7 +125,7 @@ function getCachedWorkDuration(turnKey: string, workKey: string): number | undef
   return undefined;
 }
 
-const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null }> = (props) => {
+const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null; onFollowUp?: (text: string) => void; widgetCtx: WidgetHostContext }> = (props) => {
   const [override, setOverride] = createSignal<boolean | null>(null);
   // 回复边界自动收起一次;之后用户仍可展开这个已完成工作段。
   let wasClosed = untrack(() => props.group.closed);
@@ -166,7 +172,7 @@ const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thin
       {/* 回复边界的自动收起也播放回收动画；历史闭合段初次挂载仍不挂详情。 */}
       <Collapse open={open()}>
         <div class="timeline turn-steps">
-          <For each={groups()} keyed={(group) => group.key}>{(group) => <div class="work-step-group"><For each={group().steps} keyed={(step) => step.id}>{(step) => <WorkStep step={step} turn={props.turn} thinkingRich={props.thinkingRich} cwd={props.cwd} isLatest={props.latestToolStepId != null && step().id === props.latestToolStepId} />}</For></div>}</For>
+          <For each={groups()} keyed={(group) => group.key}>{(group) => <div class="work-step-group"><For each={group().steps} keyed={(step) => step.id}>{(step) => <WorkStep step={step} turn={props.turn} thinkingRich={props.thinkingRich} cwd={props.cwd} isLatest={props.latestToolStepId != null && step().id === props.latestToolStepId} onFollowUp={props.onFollowUp} widgetCtx={props.widgetCtx} />}</For></div>}</For>
           <For each={waits().filter((wait) => wait.kind !== "approval")}>{(wait) => <div class="timeline-row wait"><span class="timeline-label">{STR.waitAnswer(formatWorkDuration(Math.max(0, (wait.to ?? wait.from) - wait.from)))}</span></div>}</For>
         </div>
       </Collapse>
@@ -184,55 +190,97 @@ const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thin
 const InterjectRow: Component<{ step: InterjectionStep; contentStatus: Record<string, "loading" | "ready" | "failed">; retryContent: () => void }> = (props) => {
   const system = () => isSystemInterjection(props.step);
   const pending = () => props.step.contentRef != null && props.step.text === "";
+  // 子代理终态通知:runtime 生成的陈述(含子级最终答复),不是子代理说的话——
+  // 必须长成系统通知卡,不能渲染成子代理聊天气泡(施工单 §三·1)。
+  const terminal = () => props.step.subagentTerminal ?? null;
+  const locateSpawn = (callId: string): void => {
+    const el = document.querySelector(`[data-tool-call-id="${CSS.escape(callId)}"]`);
+    if (el == null) { toast(STR.subagentSpawnGone, "info", { dedupeKey: `spawn:${callId}` }); return; }
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.add("flash-target");
+    setTimeout(() => el.classList.remove("flash-target"), 1600);
+  };
   return (
-    <div class={{ "interject-row": true, "is-system": system(), "is-user": !system() }} data-interject-id={props.step.id}>
-      <span class="interject-icon" aria-hidden="true">{system() ? <IconSiren /> : <IconChevronRight />}</span>
-      <div class="interject-body">
-        <span class="interject-label" title={interjectionHint(props.step)}>{interjectionLabel(props.step)}</span>
-        <Show when={pending()} fallback={<p class="interject-text">{props.step.text}</p>}>
-          <Show when={props.step.contentRef != null && props.contentStatus[props.step.contentRef] === "failed"}
-            fallback={<p class="interject-text muted" role="status">正文加载中…</p>}>
-            <button type="button" class="content-placeholder retry" onClick={() => props.retryContent()}>正文加载失败，重试</button>
-          </Show>
-        </Show>
-      </div>
-    </div>
+    <Show
+      when={terminal()}
+      fallback={
+        <div class={{ "interject-row": true, "is-system": system(), "is-user": !system() }} data-interject-id={props.step.id}>
+          <span class="interject-icon" aria-hidden="true">{system() ? <IconSiren /> : <IconChevronRight />}</span>
+          <div class="interject-body">
+            <span class="interject-label" title={interjectionHint(props.step)}>{interjectionLabel(props.step)}</span>
+            <Show when={pending()} fallback={<p class="interject-text">{props.step.text}</p>}>
+              <Show when={props.step.contentRef != null && props.contentStatus[props.step.contentRef] === "failed"}
+                fallback={<p class="interject-text muted" role="status">正文加载中…</p>}>
+                <button type="button" class="content-placeholder retry" onClick={() => props.retryContent()}>正文加载失败，重试</button>
+              </Show>
+            </Show>
+          </div>
+        </div>
+      }
+    >
+      {(notice) => (
+        <div class="subagent-notice" data-terminal={notice().terminal} data-interject-id={props.step.id}>
+          <div class="subagent-notice-head">
+            <span class="subagent-notice-label">
+              {notice().terminal === "completed" ? STR.subagentTerminalCompleted
+                : notice().terminal === "failed" ? STR.subagentTerminalFailed
+                : notice().terminal === "cancelled" ? STR.subagentTerminalCancelled
+                : notice().terminal === "timed_out" ? STR.subagentTerminalTimedOut
+                : notice().terminal}
+            </span>
+            <span class="subagent-notice-child" title={notice().childSessionId}>{notice().childSessionId.slice(0, 12)}</span>
+          </div>
+          <p class="subagent-notice-text">{props.step.text}</p>
+          <div class="subagent-notice-actions">
+            <button type="button" class="subagent-notice-btn" onClick={() => void openSession(notice().childSessionId)}>{STR.subagentOpenChild}</button>
+            <Show when={notice().parentCallId}>
+              {(callId) => <button type="button" class="subagent-notice-btn" onClick={() => locateSpawn(callId())}>{STR.subagentLocateSpawn}</button>}
+            </Show>
+          </div>
+        </div>
+      )}
+    </Show>
   );
 };
 
 /** 挂载时刻距封箱在此窗口内才播「刚封箱」动画:历史重放(重开/滚动重挂)不播。 */
 const FRESH_SEAL_WINDOW_MS = 10_000;
-/** 卡片上的自动继续倒计时:到期即 fork + 跳转,可取消(打前端包即热补丁生效)。 */
+/** 卡片上的阅读窗倒计时:**纯展示**(ADR-016 §决策 3),窗口长度与内核 FORK_DELAY_MS 同值。 */
 const AUTO_CONTINUE_MS = 10_000;
 
 /**
- * 回合尾部的交接卡 —— §五 那个必须有的产品层兜底。
+ * 回合尾部的交接卡 —— ADR-016 §决策 6 的投影壳。
  *
- * `(b)` 方案的代价:后端不会自动开 B。客户端关掉/掉线时 A 就停在 `completed`,
- * 交接文档躺在存档里没人接。这条常驻入口把同一份数据(权威在 A 的 timeline 与
- * `tool_calls.args_json`,离线也能重建)接回三条现成命令。
+ * fork 的决策权在内核(切片 1:封箱 T+10s 建 B、投文档、开回合、发 HandoffSealed),
+ * 这张卡只剩三件事:阅读窗倒计时**纯展示**(显示后端窗口的剩余时间,到点不自做
+ * 任何事)、[立即继续]/[取消自动] 两颗纯前端标记(eager / 「不拽我」)、后继已知
+ * 后的「打开交接会话」入口。HandoffSealed 一到(挂载后才到,defer)自动精确跳转
+ * ——飞箱动画与 provider 首字延迟自然重叠;「不拽我」在场则安静留在卡片上。
  *
  * `handoff_path` 刻意**不显示**:那只是本地镜像 `.md`,不是 URL、也不是权威副本,
  * 摆出来只会被当成可下载的链接(§二)。
  */
-const HandoffCard: Component<{ fact: HandoffFact; sessionId: string; sealedAt: number | null; isLatest: boolean }> = (props) => {
+export const HandoffCard: Component<{ fact: HandoffFact; sealedAt: number | null; isLatest: boolean; successor: () => string | null }> = (props) => {
   const [docOpen, setDocOpen] = createSignal(false);
-  const [busy, setBusy] = createSignal(false);
+  const [eager, setEager] = createSignal(false);
   // 「刚封箱」在挂载那一刻定格(读一次,不进响应式):daemon 与前端同机,封箱
   // 时间戳可以直接比对;之后翻回这条历史不重播动画。
   const fresh = props.sealedAt != null && Date.now() - props.sealedAt < FRESH_SEAL_WINDOW_MS;
-  // 在飞标记必须是**普通变量**:本仓的 Solid 在 root 外写信号不会同步可读
-  // (见 `session/handoff-journal` 同款说明),连点两下若只靠信号就会双双通过守卫,
-  // 而"同一交接只 fork 一次"正是这条守卫要挡的事。
-  let inFlight = false;
-  // 账本是本地权威:fork 完立刻变「已在新会话继续」,不给第二次点击开第二条会话的机会。
-  const record = () => forkRecordOfFact(props.fact);
-  // 倒计时武装在挂载那一刻定格:刚封箱(fresh)或本会话最新一条交接卡才自动;
-  // 更早的历史卡保持人工入口——重开客户端时不会对着陈年交接成批点火。
-  // 已交付的交接不再武装。
-  const armed = (fresh || props.isLatest) && record()?.delivered !== true;
+  // 封箱仪式只在 fresh 挂载播一次(纸入盒→封→落位);历史重放直接看终态卡。
+  const [ritual, setRitual] = createSignal(fresh);
+  // 飞箱起点:卡头槽位的真实矩形,WAAPI 层不猜坐标。
+  let iconSlot: HTMLSpanElement | undefined;
+  // 「取消自动」=「不拽我」(ADR-016 §决策 6):内核照常 fork,只是前端不自动
+  // 跳转。主进程 toast 的 cancel 与卡上按钮都落这个标记;必须是**普通变量**,
+  // 本仓 Solid 在 root 外写信号不会同步可读,而迟到的主进程消息跑在 Solid 之外。
+  let stay = false;
+  // 倒计时从决策者降级为展示(§决策 3):从封箱时刻实算后端 T+10s 阅读窗的
+  // 剩余时间,重挂不再回满 10s;到点只停表,不自做任何事。
   const totalSeconds = AUTO_CONTINUE_MS / 1000;
-  const [remaining, setRemaining] = createSignal<number | null>(armed ? totalSeconds : null);
+  const armed = (fresh || props.isLatest) && props.successor() == null;
+  const [remaining, setRemaining] = createSignal<number | null>(
+    armed ? Math.max(0, Math.ceil(((props.sealedAt ?? Date.now()) + AUTO_CONTINUE_MS - Date.now()) / 1000)) : null,
+  );
   let countdownTimer: ReturnType<typeof setInterval> | null = null;
   const stopCountdown = (): void => {
     if (countdownTimer != null) {
@@ -241,43 +289,54 @@ const HandoffCard: Component<{ fact: HandoffFact; sessionId: string; sealedAt: n
     }
     setRemaining(null);
   };
+  const cancelAuto = (): void => {
+    stay = true;
+    stopCountdown();
+  };
+  const openSuccessor = async (): Promise<void> => {
+    const child = props.successor();
+    if (child == null) return;
+    // 纯跳转:先飞箱再开 B。视图一切换,起点矩形就没了,顺序不能反。
+    await flyBoxToSession(iconSlot, child);
+    await openSession(child);
+  };
   const percent = () => {
     const used = props.fact.contextUsedTokens;
     const window = props.fact.contextWindowTokens;
     if (used == null || window == null || window <= 0) return null;
     return `${Math.round((used / window) * 100)}%（${used} / ${window} tokens）`;
   };
-  const continueHandoff = async (): Promise<void> => {
-    if (inFlight) return;
-    inFlight = true;
-    setBusy(true);
-    try { await forkHandoffSession(props.sessionId, props.fact); } finally {
-      inFlight = false;
-      setBusy(false);
-    }
-  };
   if (armed) {
-    countdownTimer = setInterval(() => {
-      const next = (remaining() ?? 0) - 1;
-      if (next <= 0) {
-        stopCountdown();
-        void continueHandoff();
-      } else {
-        setRemaining(next);
-      }
-    }, 1000);
+    // 主进程 toast 的收口:[立即继续] 落 eager 标记,[取消自动] 落「不拽我」。
+    // 内核 fork 与后继出现和这两个标记无关;标记只决定前端跳不跳。
+    registerHandoffRemote({
+      key: props.fact.key,
+      onContinue: () => setEager(true),
+      onCancel: cancelAuto,
+    });
   }
-  // fork 落账(实时路径的立即 fork / 到期自动 fork)即停表:账本 revision 是响应的,
-  // delivered 翻真那一刻这里就会停,不给「到期再拽一次」留缝。
+  // HandoffSealed 一到(successor 由 null 变有值)就停表并按标记跳转。defer:
+  // 挂载时后继已在(目录血缘/事件早到)不跳——那是「重开历史卡」,跳转走按钮;
+  // 只有挂载后 null→有值的跃迁才触发。
   createEffect(
-    () => record()?.delivered === true,
-    (delivered) => { if (delivered) stopCountdown(); },
+    () => props.successor(),
+    (child, prev) => {
+      if (child == null || prev != null) return;
+      stopCountdown();
+      unregisterHandoffRemote(props.fact.key);
+      if (!stay) void openSuccessor();
+    },
+    { defer: true },
   );
-  onCleanup(stopCountdown);
+  onCleanup(() => {
+    stopCountdown();
+    unregisterHandoffRemote(props.fact.key);
+  });
   return (
-    <div class={{ "handoff-card": true, "is-fresh": fresh, "is-busy": busy() }} data-handoff-turn={props.fact.turnId}>
+    <div class={{ "handoff-card": true, "is-fresh": fresh }} data-handoff-turn={props.fact.turnId}>
+      <Show when={ritual()}><SealRitual onDone={() => setRitual(false)} /></Show>
       <div class="handoff-head">
-        <span class="handoff-icon" aria-hidden="true"><IconHandoff /></span>
+        <span class="handoff-icon" aria-hidden="true" ref={(el: HTMLSpanElement) => { iconSlot = el; }}><BoxSeal /></span>
         <div class="handoff-title-wrap">
           <strong>{STR.handoffSealed}</strong>
           <small>{STR.handoffSealedHint}</small>
@@ -302,26 +361,23 @@ const HandoffCard: Component<{ fact: HandoffFact; sessionId: string; sealedAt: n
           <div class="handoff-countdown-track" aria-hidden="true">
             <div class="handoff-countdown-bar" style={{ width: `${(Math.max(0, remaining() ?? 0) / totalSeconds) * 100}%` }} />
           </div>
-          <span class="handoff-countdown-label">{STR.handoffCountdown(remaining() ?? 0)}</span>
-          <button type="button" class="handoff-countdown-cancel" onClick={stopCountdown}>{STR.handoffCountdownCancel}</button>
+          <span class="handoff-countdown-label">{eager() ? STR.handoffEagerNote : STR.handoffCountdown(remaining() ?? 0)}</span>
+          <button type="button" class="handoff-countdown-cancel" onClick={cancelAuto}>{STR.handoffCountdownCancel}</button>
         </div>
       </Show>
       <div class="handoff-actions">
-        <Show when={record()?.delivered === true} fallback={
-          <button type="button" class="handoff-continue" disabled={busy()} onClick={() => void continueHandoff()}>
-            {record() != null ? STR.handoffRetryDelivery : STR.handoffContinue}
+        <Show when={props.successor() != null} fallback={
+          <button type="button" class="handoff-continue" onClick={() => setEager(true)}>
+            {STR.handoffContinue}
           </button>
         }>
-          <button type="button" class="handoff-opened" onClick={() => void continueHandoff()}>{STR.handoffOpenChild}</button>
+          <button type="button" class="handoff-opened" onClick={() => void openSuccessor()}>{STR.handoffOpenChild}</button>
         </Show>
         <button type="button" class="handoff-doc-toggle" aria-expanded={docOpen() ? "true" : "false"} onClick={() => setDocOpen(!docOpen())}>
           {docOpen() ? STR.handoffHideDoc : STR.handoffViewDoc}
           <Show when={docOpen()} fallback={<IconChevronRight />}><IconChevronDown /></Show>
         </button>
       </div>
-      <Show when={record() != null && record()!.delivered === false}>
-        <p class="handoff-warn">{STR.handoffDeliveredPartial}</p>
-      </Show>
       <Collapse open={docOpen()}>
         {/* 交接文档本体(模型亲手写的那份、args 里的结构化字段)。只在这里渲染,
             工具行默认折叠不回显整段 JSON。 */}
@@ -339,7 +395,7 @@ const SegmentView: Component<{ segment: Accessor<TurnSegment>; turn: Turn; waits
   const interject = createMemo(() => { const segment = props.segment(); return segment.kind === "interject" ? segment.step : null; });
   return (
     <Switch>
-      <Match when={work() != null}><WorkGroup group={work()!} turn={props.turn} waits={props.waits} thinkingRich={props.thinkingRich} cwd={props.cwd} latestToolStepId={props.latestToolStepId} /></Match>
+      <Match when={work() != null}><WorkGroup group={work()!} turn={props.turn} waits={props.waits} thinkingRich={props.thinkingRich} cwd={props.cwd} latestToolStepId={props.latestToolStepId} onFollowUp={props.onFollowUp} widgetCtx={props.widgetCtx} /></Match>
       <Match when={interject() != null}>
         <InterjectRow step={interject()!} contentStatus={props.contentStatus ?? {}} retryContent={() => props.retryContent?.()} />
       </Match>
@@ -351,7 +407,6 @@ const SegmentView: Component<{ segment: Accessor<TurnSegment>; turn: Turn; waits
               : text()!.text}
             revision={text()!.id}
             streaming={props.turn.status === "running" && text()!.endedAt == null}
-            widgetCtx={props.widgetCtx}
           />
         </div>
       </Match>
@@ -385,6 +440,28 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
     }
     return true;
   });
+  /* 开箱判据(B 侧,ADR-016 权威两源):本会话是交接后继、当前是时间线第一个
+     turn。源一:HandoffSealed 事件(双发到后继线,successor==本会话);源二:目录
+     血缘字段 session.list 的 handoff_from_session_id(重开/事件错过也能重建,
+     workSummary 用后继标题——内核把它写成 work_summary 同源值)。命中则该
+     "用户消息"画成开箱卡,不再是裸文本墙;旧投递指纹已随前端 fork 退役。 */
+  const handoffOpen = createMemo(() => {
+    const text = props.turn.user.text;
+    if (text == null || text === "") return null;
+    const firstTurn = props.store.state[0].slots.find((slot) => slot.kind === "turn");
+    if (firstTurn == null || firstTurn.key !== props.turn.key) return null;
+    const seed = props.store.seed;
+    const sealed = props.store.handoffSealed();
+    if (sealed != null && sealed.successorSessionId === seed && sealed.sealedSessionId !== seed) {
+      return { sessionId: sealed.sealedSessionId, workSummary: sealed.workSummary, atMs: sealed.atMs };
+    }
+    const entry = sessionCatalog().find((item) => item.session_id === seed);
+    const parent = entry?.handoff_from_session_id;
+    if (parent != null && parent !== "") {
+      return { sessionId: parent, workSummary: entry?.title?.trim() ?? "", atMs: entry?.created_at ?? 0 };
+    }
+    return null;
+  });
   const latestToolStepId = createMemo(() => {
     if (!isLatestTurn()) return null;
     const steps = props.turn.steps;
@@ -401,10 +478,17 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
   }, { name: "turn.structure" });
   /**
    * 交接事实:判据只有 `tool_name === "handoff"` 且结果里 `handed_off:true`
-   * (见 `session/handoff` 的取舍说明)。回合尾部的卡是常驻入口——
-   * 客户端掉线/关掉时 A 就停在 completed,这条是唯一接得回 B 的地方。
+   * (见 `session/handoff` 的取舍说明)。回合尾部的卡是常驻入口——封箱后本线
+   * 已闭门,续推由内核负责(ADR-016 切片 1),卡片只投影与跳转。
    */
   const handoff = createMemo(() => handoffFactOfTurn(props.turn, props.store.seed), { name: "turn.handoff" });
+  // 后继会话(ADR-016 权威两源):HandoffSealed 事件指向本会话,或目录血缘字段
+  // 指回本会话(事件错过——用户切走又回来、或内核 sweep 补 fork——时照样重建)。
+  const handoffSuccessor = createMemo(() => {
+    const sealed = props.store.handoffSealed();
+    if (sealed != null && sealed.sealedSessionId === props.store.seed) return sealed.successorSessionId;
+    return sessionCatalog().find((entry) => entry.handoff_from_session_id === props.store.seed)?.session_id ?? null;
+  }, { name: "turn.handoffSuccessor" });
   // 封箱发生时刻(工具步 endedAt,daemon 与前端同机):给交接卡「刚封箱」动画定 fresh。
   const sealedAtOf = (fact: HandoffFact): number | null => {
     const step = props.turn.steps.find((item) => item.kind === "tool" && item.id === fact.callId);
@@ -423,16 +507,43 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
   const showUserBubble = () => props.turn.user.text !== ""
     || props.turn.user.contentRef != null
     || !hasInterjection();
+  /**
+   * 撤回本回合及其后的全部历史。运行中的回合不摆按钮——后端不允许冲突撤回,
+   * 点了只会被拒;要先把那条掐掉(Composer 的停止)。
+   * 本地一行都不预先删:删除由 `timeline_truncated` 事件落地,失败只出声不改动。
+   */
+  const recall = async () => {
+    try {
+      await props.store.truncateTurn(props.turn.id);
+    } catch (error) {
+      // 按后端稳定码分支:`turn_active` 的出路是「先停止」,`turn_not_found` 的出路是
+      // 「本地已陈旧」——都不是「再点一次」。其余失败才回落到原文案。
+      const code = error instanceof CommandRejectedError ? error.code : "";
+      const text = code === "turn_active"
+        ? STR.recallTurnActive
+        : code === "turn_not_found"
+          ? STR.recallGone
+          : STR.recallFailed(error instanceof Error ? error.message : String(error));
+      toast(text, "err", { dedupeKey: `recall:${props.turn.id}` });
+    }
+  };
   return (
     <section class="turn">
       <Show when={showUserBubble()}>
-        <div class="turn-user"><div class="bubble">
+        <Show
+          when={handoffOpen()}
+          fallback={<div class="turn-user"><div class="bubble">
           <Show when={props.turn.user.contentRef && !props.turn.user.text} fallback={props.turn.user.text}>
             <Show when={props.store.contentStatus[0]()[props.turn.user.contentRef!] === "failed"} fallback={<span class="content-placeholder" role="status">正文加载中…</span>}>
               <button type="button" class="content-placeholder retry" onClick={() => props.store.retryContent()}>正文加载失败，重试</button>
             </Show>
           </Show>
-        </div></div>
+        </div>
+        {/* 撤回挂在气泡右侧同一行:`.turn-user` 本来就是 flex-end,不额外加壳。 */}
+        <Show when={props.turn.status !== "running"}>
+          <button type="button" class="turn-recall" title={STR.recallTitle} onClick={() => void recall()}>{STR.recall}</button>
+        </Show></div>}
+        >{(info) => <div class="turn-user-open"><HandoffOpenCard doc={props.turn.user.text!} source={info()} /></div>}</Show>
       </Show>
       <For each={segments()} keyed={(segment) => segment.key}>{(segment) => <SegmentView segment={segment} turn={props.turn} waits={props.waits} thinkingRich={thinkingRich} cwd={cwd()} latestToolStepId={latestToolStepId()} contentStatus={props.store.contentStatus[0]()} retryContent={() => props.store.retryContent()} widgetCtx={widgetCtx} onFollowUp={(text) => void props.store.sendMessage(text)} />}</For>
       <Show when={props.turn.status === "aborted" && props.turn.steps.length === 0}><div class="turn-aborted">{STR.interrupted}</div></Show>
@@ -452,7 +563,7 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
         </div>
       </Show>
       <Show when={handoff()}>
-        {(fact) => <HandoffCard fact={fact()} sessionId={props.store.seed} sealedAt={sealedAtOf(fact())} isLatest={isLatestTurn()} />}
+        {(fact) => <HandoffCard fact={fact()} sealedAt={sealedAtOf(fact())} isLatest={isLatestTurn()} successor={handoffSuccessor} />}
       </Show>
       {/* 只在回合密封后挂载:运行中每帧都要重扫全部工具步做指纹聚合,
           而且列到一半的文件清单读起来像是「本回合最终交付」,实际是过程态。 */}

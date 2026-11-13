@@ -10,10 +10,12 @@ export type HostCommand =
   | "session_list"
   | "attach"
   | "pending_approvals"
+  | "team_snapshot"
   | "invalidate_approvals"
   | "respond_approval"
   | "command"
   | "service_query"
+  | "git_status"
   | "session_bootstrap"
   | "content_read_text"
   | "content_read_cancel"
@@ -21,6 +23,12 @@ export type HostCommand =
   | "stop_stale_daemon"
   | "pick_directory"
   | "pick_attachments"
+  | "force_refresh"
+  | "frontend_plugins:list"
+  | "frontend_plugins:set_enabled"
+  | "frontend_plugins:remove"
+  | "frontend_plugins:import"
+  | "frontend_plugins:reveal"
   | "capture_screenshot"
   | "upload_attachment"
   | "open_external"
@@ -40,7 +48,13 @@ export type HostCommand =
   | "device_revoke"
   | "daemon_lan_status"
   | "daemon_lan_enable"
-  | "daemon_lan_disable";
+  | "daemon_lan_disable"
+  | "voice_status"
+  | "voice_prepare"
+  | "voice_transcribe"
+  | "voice_synthesize"
+  | "widget_state_get_all"
+  | "widget_state_put";
 
 export type HostEvent =
   | "projection://status"
@@ -54,7 +68,9 @@ export type HostEvent =
   | "app://window-state"
   | "app://quit-requested"
   | "browser-view://state"
-  | "plugins://graph";
+  | "plugins://graph"
+  | "voice://status"
+  | "notify://handoff";
 
 /** 主进程内嵌浏览器面板状态（browser-view://state 事件与 browser_view_state 命令）。 */
 export interface BrowserPaneState {
@@ -86,6 +102,11 @@ export interface DesktopWindowControls {
 export interface DevToolsBridge {
   /** 切换 Chrome DevTools;返回开关后的状态(true=已打开)。 */
   toggle(): Promise<boolean>;
+}
+
+/** 开发者模式 → 主进程 Dev Surface 门控(ui_* / record_* 的 MCP 可见性)。 */
+export interface DevModeBridge {
+  set(enabled: boolean): Promise<boolean>;
 }
 
 /** 休眠限制模式:off=不干预;keep-awake=阻止系统休眠(允许熄屏);
@@ -154,6 +175,7 @@ export interface DesktopHostBridge {
   listen(event: HostEvent, callback: (payload: any) => void): () => void;
   windowControls?: DesktopWindowControls;
   devtools?: DevToolsBridge;
+  devmode?: DevModeBridge;
   powerBlocker?: PowerBlockerBridge;
   gpuPref?: GpuPrefBridge;
   relaunch?(): Promise<void>;

@@ -32,9 +32,9 @@ const baseConfig = (): ConfigDto => ({
   fontFamily: "",
   theme: null,
   notificationsEnabled: true,
-  complianceEnabled: false,
   exec: { defaultShell: null },
   sessionIdleUnloadSecs: 0,
+  goals: { enabled: true, maxTokenBudget: null },
   subagent: {
     timeoutSecs: 120,
     defaultTools: ["read", "write"],

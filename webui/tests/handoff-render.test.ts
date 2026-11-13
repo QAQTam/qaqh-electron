@@ -16,7 +16,7 @@ vi.mock("@solidjs/web", () => import("../node_modules/@solidjs/web/dist/web.dev.
 import { createComponent, flush } from "solid-js";
 import { render } from "@solidjs/web";
 import { TurnView } from "../src/turn/TurnView";
-import { recordHandoffFork } from "../src/session/handoff-journal";
+import type { HandoffSealedView } from "../src/session/handoff";
 import type { SessionStore } from "../src/session/store";
 import type { Turn } from "../src/session/types";
 
@@ -75,7 +75,7 @@ function makeTurn(options: { withUserPrompt: boolean; sealed: boolean; endedAt?:
 }
 
 /** TurnView 只读这几路信号；视图测试不需要真的状态机。 */
-function fakeStore(turn: Turn, latest = true): SessionStore {
+function fakeStore(turn: Turn, latest = true, sealed: HandoffSealedView | null = null): SessionStore {
   // latest=false 时在槽位尾部塞一个更新的回合键:isLatestTurn 据此判这条卡不是最新。
   const slots: Array<{ kind: "turn"; key: string }> = latest
     ? [{ kind: "turn", key: turn.key }]
@@ -86,6 +86,7 @@ function fakeStore(turn: Turn, latest = true): SessionStore {
     composerProfile: [{ providerKind: "byok" }],
     composerModel: ["gpt-5-flash"],
     contentStatus: [{}],
+    handoffSealed: () => sealed,
     retryContent: () => {},
     sendMessage: async () => {},
   } as unknown as SessionStore;
@@ -93,11 +94,11 @@ function fakeStore(turn: Turn, latest = true): SessionStore {
 
 let root: HTMLElement;
 
-function mount(turn: Turn, latest = true): void {
+function mount(turn: Turn, latest = true, sealed: HandoffSealedView | null = null): void {
   root = document.createElement("div");
   document.body.append(root);
   render(() => createComponent(TurnView, {
-    turn, waits: [], store: fakeStore(turn, latest),
+    turn, waits: [], store: fakeStore(turn, latest, sealed),
     // latest=false 时必须留给 TurnView 自己扫槽位:显式 true 会短路 isLatestTurn。
     isLatestTurn: latest ? true : undefined,
   }), root);
@@ -177,30 +178,20 @@ test("更早的历史交接卡不武装倒计时（重开客户端不成批点�
   expect(root.querySelector(".handoff-continue")).not.toBeNull();
 });
 
-test("已经 fork 过的交接不再给「继续」，只给「打开交接会话」", async () => {
-  recordHandoffFork(
-    { key: "ses_A|turn_A", fromSessionId: "ses_A", turnId: "turn_A", workSummary: REPORT.work_summary },
-    "ses_CHILD",
-    true,
-  );
-  mount(makeTurn({ withUserPrompt: true, sealed: true }));
+test("后继已知(HandoffSealed 到过/血缘在场):只给「打开交接会话」,不再武装倒计时", async () => {
+  const sealed: HandoffSealedView = {
+    sealedSessionId: REPORT.from_session_id,
+    successorSessionId: "ses_CHILD",
+    turnId: REPORT.turn_id,
+    workSummary: REPORT.work_summary,
+    atMs: Date.now(),
+  };
+  mount(makeTurn({ withUserPrompt: true, sealed: true }), true, sealed);
   await flush();
 
   expect(root.querySelector(".handoff-continue")).toBeNull();
   expect(root.querySelector(".handoff-opened")?.textContent).toBe("打开交接会话");
-});
-
-test("文档没投出去时入口改成「补投交接文档」并说明现状", async () => {
-  recordHandoffFork(
-    { key: "ses_A|turn_A", fromSessionId: "ses_A", turnId: "turn_A", workSummary: REPORT.work_summary },
-    "ses_CHILD",
-    false,
-  );
-  mount(makeTurn({ withUserPrompt: true, sealed: true }));
-  await flush();
-
-  expect(root.querySelector(".handoff-continue")?.textContent?.trim()).toBe("补投交接文档");
-  expect(root.querySelector(".handoff-warn")?.textContent).toContain("没投出去");
+  expect(root.querySelector(".handoff-countdown")).toBeNull();
 });
 
 test("机器面整段读不出来时入口照样在，并标明这条是推定", async () => {

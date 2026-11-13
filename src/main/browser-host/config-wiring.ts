@@ -31,24 +31,35 @@ export function spliceMcpSection(text: string, url: string, token: string): stri
   ].join("\n");
 
   const lines = text.split("\n");
-  const serverHeader = `[mcp.servers.${BROWSER_MCP_SERVER_NAME}]`;
-
-  // 1) 已有本 server 子段：整段替换（到下一个 section 头）。
-  //    [mcp] 头可能在该子段之前（常规），也可能之后（TOML 允许超表后置）——
-  //    之后时把 [mcp] enabled 块插在本子段紧前面。
-  const existing = findSection(lines, serverHeader);
-  if (existing) {
-    const before = lines.slice(0, existing.start);
-    const after = lines.slice(existing.end);
-    const mcpAhead = findSection(before, "[mcp]") != null;
-    const mcpLines = mcpAhead ? upsertMcpEnabled(before) : [...before, "[mcp]", "enabled = true", ""];
-    return [...mcpLines, ...serverBlockLines(serverBlock), ...after].join("\n");
-  }
-
-  // 2) 无本 server 子段：文末追加；[mcp] 段存在则只补 enabled，否则整段补。
-  const mcpSection = findSection(lines, "[mcp]");
-  const base = mcpSection ? upsertMcpEnabled(lines) : [...lines, "", "[mcp]", "enabled = true", ""];
+  // 壳与 daemon 共用 config.toml，但序列化形态不同：壳写内联 headers，daemon 的
+  // TOML 序列化器把 headers 写成 [mcp.servers.qaqh-browser.headers] 子表段。
+  // 若替换 server 段时只到「下一个 section 头」，会把该子表当兄弟段留下，与新块
+  // 的内联 headers 重复定义 → daemon 解析报 duplicate key。因此先移除本 server
+  // 的整棵子树（server 段 + 所有 mcp.servers.qaqh-browser.* 子表段），再统一以
+  // 壳的内联形态追加，保证任何来料都产出合法 TOML。
+  const cleaned = removeServerSubtree(lines, `mcp.servers.${BROWSER_MCP_SERVER_NAME}`);
+  const mcpSection = findSection(cleaned, "[mcp]");
+  const base = mcpSection ? upsertMcpEnabled(cleaned) : [...cleaned, "", "[mcp]", "enabled = true", ""];
   return [...stripTrailingBlank(base), ...serverBlockLines(serverBlock)].join("\n").replace(/\s*$/, "\n");
+}
+
+/** 移除 server 段及其全部子表段（[name] 与 [name.*]），其余行原样保留。 */
+function removeServerSubtree(lines: string[], serverName: string): string[] {
+  const childPrefix = `${serverName}.`;
+  const kept: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const name = SECTION_HEADER.exec(lines[i])?.[1];
+    if (name === serverName || (name != null && name.startsWith(childPrefix))) {
+      let j = i + 1;
+      while (j < lines.length && !SECTION_HEADER.test(lines[j])) j++;
+      i = j;
+      continue;
+    }
+    kept.push(lines[i]);
+    i++;
+  }
+  return kept;
 }
 
 /** 追加形态下消掉旧文末与新增块之间的多余空行，保证整洁拼接。 */

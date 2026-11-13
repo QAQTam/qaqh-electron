@@ -1,10 +1,14 @@
-import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { release as osRelease } from "node:os";
 import { readDiscovery, DaemonManager } from "./daemon.js";
 import { globalCommandTarget, loadNativeAddon, sessionCommandTarget } from "./native-client.js";
 import { isAlive } from "./daemon.js";
+import { pluginsRoot, notifyPluginsChanged } from "./plugins.js";
+import { importPlugin, listManagedPlugins, removePlugin, setPluginEnabled } from "./frontend-plugins.js";
+import { readGitStatus } from "./git-status.js";
 import type { RingingCommand } from "../../webui/src/api/qaqh/RingingCommand";
 import type { CommandTarget } from "../../webui/src/api/qaqh/CommandTarget";
 import type { CommandPrecondition } from "../../webui/src/api/qaqh/CommandPrecondition";
@@ -22,9 +26,10 @@ import {
   openExternalUrl,
   uploadAttachment,
 } from "./native-dialogs.js";
-import { putWidgetState, readWidgetStates } from "./widget-states.js";
 import { processGroup } from "./process-metrics.js";
 import { readGpuStatus } from "./gpu-info.js";
+import { putWidgetState, readWidgetStates } from "./widget-states.js";
+import { voice } from "./voice/manager.js";
 import type { ApprovalView, MainServiceMap, MainServiceMethod } from "./types.js";
 import { MAIN_SERVICE_METHODS } from "./types.js";
 import type { BrowserPaneControl, PaneRect } from "./browser-host/engine.js";
@@ -77,7 +82,8 @@ function applyNativeMica(dark: boolean, followSystem: boolean): boolean {
 const RINGING_COMMAND_TYPES: ReadonlySet<RingingCommand["type"]> = new Set([
   "session.create", "session.settings.patch", "session.resume", "session.attach", "session.close",
   "session.rename", "session.archive", "session.unarchive", "session.delete", "session.shutdown",
-  "agent.reload_config", "conversation.send_message", "conversation.cancel", "interaction.ask.respond",
+  "agent.reload_config", "conversation.send_message", "conversation.cancel", "conversation.truncate", "interaction.ask.respond",
+  "goal.set", "goal.get", "goal.clear",
   "interaction.ask.dismiss", "driver.claim", "driver.release", "tool.permission.respond",
   "provider.list", "provider.presets.list", "provider.upsert", "provider.delete",
   "provider.model.upsert", "provider.model.delete",
@@ -313,6 +319,119 @@ function isTrustedPicker(rawUrl: string): boolean {
   } catch { return false; }
 }
 
+/**
+ * pending_approvals 管线单一实现：admin approvals + bootstrap 快照交叉验证 +
+ * challenge 签发/verify。渲染层 IPC case 与主进程 notifier 都走这里——通知按钮
+ * 不存在第二条免验证快车道。
+ */
+export async function collectPendingApprovals(
+  client: RingingClient,
+  challenges: ChallengeManager,
+  rawSeed: unknown,
+): Promise<ApprovalView[]> {
+  const seed = requireId(rawSeed, "session_id");
+  try {
+    const view = await client.approvals(seed);
+    if (view.kind !== "admin") throw new Error("Electron host requires admin approvals, not device challenges");
+    const bootstrap = await client.approvalsSnapshot(seed);
+    const state = bootstrap.state;
+    const pending = flattenAdminApprovals(view.pending);
+    const activeInteractions = state.interactions.filter((item) => item.resolution == null);
+    const kindFor = (kind: ApprovalView["kind"]) => kind === "tool_permission" ? "permission" : kind;
+    const matchesSnapshot = pending.length === activeInteractions.length && pending.every((approval) => {
+      const interaction = activeInteractions.find((item) => item.kind === kindFor(approval.kind)
+        && (approval.kind === "tool_permission" ? item.call_id === approval.internalId : item.interaction_id === approval.internalId));
+      if (!interaction) return false;
+      approval.snapshotId = interaction.interaction_id;
+      return true;
+    });
+    const views = challenges.issueViews(seed, pending);
+    if (!matchesSnapshot) {
+      for (const approval of views) challenges.markChallengeUnverified(seed, approval.challenge_id);
+    }
+    return views.map((approval, index) => {
+      const source = pending[index];
+      const matches = source != null && activeInteractions.some((item) => item.kind === kindFor(source.kind)
+        && item.interaction_id === source.snapshotId
+        && (source.kind !== "tool_permission" || item.call_id === source.internalId));
+      if (matches && matchesSnapshot) {
+        challenges.confirmChallenge(seed, approval.challenge_id);
+        approval.verified = true;
+      } else {
+        challenges.markChallengeUnverified(seed, approval.challenge_id);
+        approval.verified = false;
+      }
+      return { ...approval, verified: matches && matchesSnapshot };
+    });
+  } catch (error) {
+    console.warn(`[approvals] Failed to read pending interactions for ${seed}:`, error);
+    BrowserWindow.getAllWindows().forEach(window => {
+      if (!window.isDestroyed()) {
+        window.webContents.send("qaqh:event:conn://error", { message: `Pending interactions unavailable for ${seed}: ${error instanceof Error ? error.message : String(error)}` });
+      }
+    });
+    throw error;
+  }
+}
+
+/**
+ * respond_approval 管线单一实现：challenge 一次性消费、approve/trust/submit 的
+ * verified/details 闸门、unknown outcome 只轮询原 command id。decision/payload
+ * 词表与渲染层完全一致（approvals.ts 的封闭词表），通知按钮不新增词表。
+ */
+export async function submitApprovalDecision(
+  client: RingingClient,
+  challenges: ChallengeManager,
+  seed: string,
+  challengeId: string,
+  decision: string,
+  payload: unknown = {},
+): Promise<null> {
+  const stored = challenges.consume(seed, challengeId);
+  if (!stored) {
+    throw new Error(`Invalid or expired challenge: ${challengeId}`);
+  }
+
+  if (stored.detailsUnavailable && (decision === "approve" || decision === "trust" || decision === "submit")) {
+    challenges.markChallengeUnverified(seed, challengeId);
+    throw new Error("approval_details_unavailable");
+  }
+
+  const approvalDecision = decision === "approve" || decision === "trust" || decision === "submit";
+  if (approvalDecision && !stored.verified) {
+    challenges.markChallengeUnverified(seed, challengeId);
+    throw new Error("approval_state_unverified");
+  }
+
+  const command = approvalCommand(stored, decision, payload);
+  try {
+    requireAccepted(await client.command(command, sessionCommandTarget(stored.sessionId)));
+  } catch (error) {
+    const commandId = error != null && typeof error === "object" && "commandId" in error
+      ? String((error as { commandId?: unknown }).commandId ?? "") : "";
+    if (!commandId) throw error;
+    // Never manufacture a second approval command after an unknown outcome.
+    // Poll only the exact id attached to the original submission.
+    const deadline = Date.now() + 30_000;
+    let lastError: unknown = error;
+    while (Date.now() < deadline) {
+      let status: Awaited<ReturnType<RingingClient["commandStatus"]>> | null = null;
+      try {
+        status = await client.commandStatus(commandId);
+      } catch (pollError) {
+        lastError = pollError;
+      }
+      if (status?.state === "succeeded") return null;
+      if (status?.state === "rejected" || status?.state === "failed") {
+        throw new Error(`approval_command_${status.state}:${status.error_code ?? "unknown"}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+    throw new Error(`approval_command_outcome_unknown:${commandId}:${lastError instanceof Error ? lastError.message : String(lastError)}`);
+  }
+  return null;
+}
+
 async function handleCommand(
   cmd: string,
   args: Record<string, any>,
@@ -331,12 +450,14 @@ async function handleCommand(
           title: entry.title ?? null,
           cwd: entry.cwd ?? null,
           updated_at: entry.updated_at,
+          created_at: entry.created_at,
           turn_count: entry.turn_count,
           status,
           busy: sessionIsBusy(status),
           archived: entry.archived,
           workspace_id: entry.workspace_id,
           tool_mode: entry.tool_mode ?? null,
+          handoff_from_session_id: entry.handoff_from_session_id ?? null,
         };
       });
     }
@@ -350,48 +471,12 @@ async function handleCommand(
 
     case "pending_approvals": {
       const seed = requireId(args.seed, "session_id");
-      try {
-        const view = await client.approvals(seed);
-        if (view.kind !== "admin") throw new Error("Electron host requires admin approvals, not device challenges");
-        const bootstrap = await client.approvalsSnapshot(seed);
-        const state = bootstrap.state;
-        const pending = flattenAdminApprovals(view.pending);
-        const activeInteractions = state.interactions.filter((item) => item.resolution == null);
-        const kindFor = (kind: ApprovalView["kind"]) => kind === "tool_permission" ? "permission" : kind;
-        const matchesSnapshot = pending.length === activeInteractions.length && pending.every((approval) => {
-          const interaction = activeInteractions.find((item) => item.kind === kindFor(approval.kind)
-            && (approval.kind === "tool_permission" ? item.call_id === approval.internalId : item.interaction_id === approval.internalId));
-          if (!interaction) return false;
-          approval.snapshotId = interaction.interaction_id;
-          return true;
-        });
-        const views = challenges.issueViews(seed, pending);
-        if (!matchesSnapshot) {
-          for (const approval of views) challenges.markChallengeUnverified(seed, approval.challenge_id);
-        }
-        return views.map((approval, index) => {
-          const source = pending[index];
-          const matches = source != null && activeInteractions.some((item) => item.kind === kindFor(source.kind)
-            && item.interaction_id === source.snapshotId
-            && (source.kind !== "tool_permission" || item.call_id === source.internalId));
-          if (matches && matchesSnapshot) {
-            challenges.confirmChallenge(seed, approval.challenge_id);
-            approval.verified = true;
-          } else {
-            challenges.markChallengeUnverified(seed, approval.challenge_id);
-            approval.verified = false;
-          }
-          return { ...approval, verified: matches && matchesSnapshot };
-        });
-      } catch (error) {
-        console.warn(`[approvals] Failed to read pending interactions for ${seed}:`, error);
-        BrowserWindow.getAllWindows().forEach(window => {
-          if (!window.isDestroyed()) {
-            window.webContents.send("qaqh:event:conn://error", { message: `Pending interactions unavailable for ${seed}: ${error instanceof Error ? error.message : String(error)}` });
-          }
-        });
-        throw error;
-      }
+      return collectPendingApprovals(client, challenges, seed);
+    }
+
+    case "team_snapshot": {
+      const seed = requireId(args.seed, "session_id");
+      return client.teamSnapshot(seed);
     }
 
     case "invalidate_approvals": {
@@ -407,50 +492,7 @@ async function handleCommand(
       const challengeId = String(args.challengeId || "");
       const decision = String(args.decision || "");
       const payload = args.payload ?? {};
-
-      const stored = challenges.consume(seed, challengeId);
-      if (!stored) {
-        throw new Error(`Invalid or expired challenge: ${challengeId}`);
-      }
-
-      if (stored.detailsUnavailable && (decision === "approve" || decision === "trust" || decision === "submit")) {
-        challenges.markChallengeUnverified(seed, challengeId);
-        throw new Error("approval_details_unavailable");
-      }
-
-      const approvalDecision = decision === "approve" || decision === "trust" || decision === "submit";
-      if (approvalDecision && !stored.verified) {
-        challenges.markChallengeUnverified(seed, challengeId);
-        throw new Error("approval_state_unverified");
-      }
-
-      const command = approvalCommand(stored, decision, payload);
-      try {
-        requireAccepted(await client.command(command, sessionCommandTarget(stored.sessionId)));
-      } catch (error) {
-        const commandId = error != null && typeof error === "object" && "commandId" in error
-          ? String((error as { commandId?: unknown }).commandId ?? "") : "";
-        if (!commandId) throw error;
-        // Never manufacture a second approval command after an unknown outcome.
-        // Poll only the exact id attached to the original submission.
-        const deadline = Date.now() + 30_000;
-        let lastError: unknown = error;
-        while (Date.now() < deadline) {
-          let status: Awaited<ReturnType<RingingClient["commandStatus"]>> | null = null;
-          try {
-            status = await client.commandStatus(commandId);
-          } catch (pollError) {
-            lastError = pollError;
-          }
-          if (status?.state === "succeeded") return null;
-          if (status?.state === "rejected" || status?.state === "failed") {
-            throw new Error(`approval_command_${status.state}:${status.error_code ?? "unknown"}`);
-          }
-          await new Promise(resolve => setTimeout(resolve, 400));
-        }
-        throw new Error(`approval_command_outcome_unknown:${commandId}:${lastError instanceof Error ? lastError.message : String(lastError)}`);
-      }
-      return null;
+      return submitApprovalDecision(client, challenges, seed, challengeId, decision, payload);
     }
 
     case "command": {
@@ -465,6 +507,19 @@ async function handleCommand(
       if (params === null || typeof params !== "object" || Array.isArray(params)) throw new Error("invalid_service_params");
       if (SESSION_SERVICE_METHODS.has(method)) requireId((params as Record<string, unknown>).session_id, "session_id");
       return client.serviceCall(method, params as MainServiceMap[MainServiceMethod]["params"]);
+    }
+
+    /* ── 工作区 git 状态(只读,插件 capability "git-status" 的唯一取数面)──────
+       不传 path 就解析活动会话的工作区:main 持有 activeSeed,daemon 的
+       workspace.get 给出 cwd。插件因此不需要知道会话/工作区注册表。 */
+    case "git_status": {
+      const explicit = typeof args.path === "string" && args.path !== "" ? args.path : null;
+      if (explicit != null) return readGitStatus(explicit);
+      const seed = client.getActiveSeed();
+      if (seed == null) return { kind: "no-workspace" };
+      const cwd = await client.serviceCall("workspace.get", { session_id: seed });
+      if (typeof cwd !== "string" || cwd === "") return { kind: "no-workspace" };
+      return readGitStatus(cwd);
     }
 
     case "exit_app": {
@@ -487,7 +542,6 @@ async function handleCommand(
       const display = `${version}+${shortCommit}${process.env.QAQH_GIT_DIRTY === "1" ? "-dirty" : ""}`;
       return { display, version, commit };
     }
-
     // widget-directive §3/§4：iframe widget 状态快照（userData 单文件 kv）。
     case "widget_state_get_all": {
       return await readWidgetStates();
@@ -598,6 +652,26 @@ async function handleCommand(
       return restartDaemon(client, daemonMgr, { args: ["run"], wantLan: false, force: args.force === true });
     }
 
+    case "voice_status": {
+      return voice.status();
+    }
+
+    case "voice_prepare": {
+      // 进度经 voice://status 事件推送;此处只点火。
+      void voice.prepare().catch((error: unknown) => console.warn("[voice] prepare failed:", error));
+      return null;
+    }
+
+    case "voice_transcribe": {
+      const wav = Buffer.from(String(args.wav), "base64");
+      return voice.transcribe(wav, typeof args.language === "string" ? args.language : "auto");
+    }
+
+    case "voice_synthesize": {
+      const wav = await voice.synthesize(String(args.text ?? ""));
+      return wav.toString("base64");
+    }
+
 
     case "session_bootstrap": {
       const seed = requireId(args.seed, "session_id");
@@ -633,6 +707,52 @@ async function handleCommand(
 
     case "pick_directory": {
       return pickDirectory();
+    }
+
+    /* 强制刷新壳页面:重跑渲染进程加载 → did-finish-load 会再次触发插件图强制重发,
+       等价于"重启壳"的轻量版(会话在 daemon 侧,无感)。 */
+    case "force_refresh": {
+      const win = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+      win?.webContents.reloadIgnoringCache();
+      return win != null;
+    }
+
+    /* ── 前端插件管理(工具页「前端插件」)──────────────────────────────
+       全量管理视图走 IPC(含禁用条目),graph 只发启用面;导入=选 zip/文件夹,
+       落用户根 ~/.qaqh/frontend-plugin,启停删除即时推 graph,无需重启。 */
+    case "frontend_plugins:list": {
+      return listManagedPlugins(pluginsRoot());
+    }
+
+    case "frontend_plugins:set_enabled": {
+      setPluginEnabled(pluginsRoot(), String(args?.id), args?.enabled === true);
+      notifyPluginsChanged();
+      return listManagedPlugins(pluginsRoot());
+    }
+
+    case "frontend_plugins:remove": {
+      removePlugin(String(args?.id));
+      notifyPluginsChanged();
+      return listManagedPlugins(pluginsRoot());
+    }
+
+    case "frontend_plugins:import": {
+      const win = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+      const pick = await dialog.showOpenDialog(win!, {
+        title: "选择插件文件夹或 .zip 包",
+        properties: ["openFile", "openDirectory"],
+        filters: [{ name: "插件包 (zip)", extensions: ["zip"] }],
+      });
+      if (pick.canceled || pick.filePaths.length === 0) return null;
+      const entry = importPlugin(pick.filePaths[0]);
+      notifyPluginsChanged();
+      return entry;
+    }
+
+    case "frontend_plugins:reveal": {
+      const found = listManagedPlugins(pluginsRoot()).find((plugin) => plugin.id === String(args?.id));
+      if (found != null) shell.showItemInFolder(join(found.path, "plugin.json"));
+      return found != null;
     }
 
     case "pick_attachments": {

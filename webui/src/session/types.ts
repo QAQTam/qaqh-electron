@@ -116,23 +116,19 @@ export interface ToolStep {
   /** 原始入参 JSON 串(MUST NOT 改写;展示层解析)。 */
   argsJson?: string;
   argsRef?: string;
+  /** 内核从参数流里认出的目标文件（只有 `apply_patch` 出得来：它的参数里没有
+   * 路径字段，文件只存在于 Codex 补丁文法里，文法唯一事实源是补丁引擎）。
+   *  缺席/空 = 内核没认出来，不代表这次调用不改文件。 */
+  targetFiles?: string[];
+  /** 参数文本已吐完且形状合法。只用于渲染：执行与声明仍分别由后端决定。 */
+  argsComplete?: boolean;
   status: ToolStatus;
   state?: import("../api/contract").ToolCallState;
   execSessionId?: string;
   execSessionState?: import("../api/contract").ExecSessionState;
-  /** Execution transcript, including output received before the tool call returns. */
-  execSession?: import("../api/contract").ExecSessionView;
   output?: ToolOutput;
   outputRef?: string;
   error?: string;
-  /** 运行中输出尾窗(16KB 有界);stdout 与未知流(`stream` 缺失的历史数据)。 */
-  progressTail?: string;
-  /** 运行中 stderr 尾窗(16KB 有界);`tool_output_delta.stream === "stderr"` 才落这里。 */
-  progressStderrTail?: string;
-  /** Raw bounded stream windows let xterm consume exact deltas without unbounded storage. */
-  progressStream?: ToolProgressStream;
-  progressStderrStream?: ToolProgressStream;
-  progressTruncated?: boolean;
   /** Backend metrics. */
   elapsedMs?: number;
   /** v3 structured edit accounting; never presented as a unified diff. */
@@ -167,6 +163,11 @@ export interface InterjectionStep {
   actorName?: string | null;
   text: string;
   contentRef?: string;
+  /**
+   * 子代理终态通知(subagent-team 施工单 §三·1):runtime 陈述,不是子代理
+   * 说的话——渲染成系统通知卡,不进聊天气泡;正文是含子级最终答复的摘要。
+   */
+  subagentTerminal?: { childSessionId: string; parentCallId: string | null; terminal: string } | null;
 }
 
 /** 用户等待区间(授权/AskUser),挂在其发生时正在运行的回合上。 */
@@ -209,6 +210,11 @@ export interface SessionState {
   interactionIds: string[];
   watermark: number;
   compactionSummaries: string[];
+  /**
+   * 会话持久目标(ADR-0015)。wire 侧缺席 = 无 goal,本地归一成 null;
+   * `goal_updated` 整字段替换,链根/当前会话双流按 updated_at_ms 幂等。
+   */
+  goal?: import("../api/contract").GoalView | null;
 }
 
 /**
@@ -264,5 +270,6 @@ export function emptySession(): SessionState {
     interactionIds: [],
     watermark: 0,
     compactionSummaries: [],
+    goal: null,
   };
 }

@@ -15,6 +15,8 @@
 import type { ConfigDto } from "../api/qaqh/ConfigDto";
 import type { ConfigPatch } from "../api/qaqh/ConfigPatch";
 import type { ExecDto } from "../api/qaqh/ExecDto";
+import type { GoalsDto } from "../api/qaqh/GoalsDto";
+import type { GoalsPatch } from "../api/qaqh/GoalsPatch";
 import type { SubagentDto } from "../api/qaqh/SubagentDto";
 import type { SubagentPatch } from "../api/qaqh/SubagentPatch";
 
@@ -29,8 +31,14 @@ export const MASK = "****";
 type Optionalize<T> = { [K in keyof T]?: NonNullable<T[K]> };
 
 export type SubagentPatchWire = Optionalize<SubagentPatch>;
-export type ConfigPatchWire = Optionalize<Omit<ConfigPatch, "subagent">> & {
+/** goals 段:`maxTokenBudget` 是 K3「wire 永不 null」的**有意例外**(null=清除),
+ *  不能吃 Optionalize 的 NonNullable,单独放行。 */
+export type GoalsPatchWire = Optionalize<Omit<GoalsPatch, "maxTokenBudget">> & {
+  maxTokenBudget?: number | null;
+};
+export type ConfigPatchWire = Optionalize<Omit<ConfigPatch, "subagent" | "goals">> & {
   subagent?: SubagentPatchWire;
+  goals?: GoalsPatchWire;
 };
 
 /** 配置协议的合法值；某个模型实际支持哪些档位由模型定义声明。 */
@@ -122,13 +130,20 @@ export function buildExecPatch(
   return { defaultShell: shell };
 }
 
+/** goals 段:任一字段有变化才发;maxTokenBudget 差异含发 null(显式清除上限)。 */
+export function buildGoalsPatch(baseline: GoalsDto, draft: GoalsDto): GoalsPatchWire | null {
+  const raw: Sink = {};
+  changed(raw, "enabled", baseline.enabled, draft.enabled);
+  if (draft.maxTokenBudget !== baseline.maxTokenBudget) raw["maxTokenBudget"] = draft.maxTokenBudget;
+  return Object.keys(raw).length === 0 ? null : (raw as GoalsPatchWire);
+}
+
 /** baseline 与 draft 的差 → Merge Patch;没有差异时得到 `{}`。 */
 export function buildPatch(baseline: ConfigDto, draft: ConfigDto): ConfigPatchWire {
   const raw: Sink = {};
   // 空串 = 清除
   clearable(raw, "tokenizerPath", baseline.tokenizerPath, draft.tokenizerPath);
   changed(raw, "autoCompactThreshold", baseline.autoCompactThreshold, draft.autoCompactThreshold);
-  changed(raw, "complianceEnabled", baseline.complianceEnabled, draft.complianceEnabled);
   changed(raw, "permissionLevel", baseline.permissionLevel, draft.permissionLevel);
   changed(raw, "sessionIdleUnloadSecs", baseline.sessionIdleUnloadSecs, draft.sessionIdleUnloadSecs);
   const exec = buildExecPatch(baseline.exec, draft.exec);
@@ -138,6 +153,8 @@ export function buildPatch(baseline: ConfigDto, draft: ConfigDto): ConfigPatchWi
   }
   const subagent = buildSubagentPatch(baseline.subagent, draft.subagent);
   if (subagent != null) raw["subagent"] = subagent;
+  const goals = buildGoalsPatch(baseline.goals, draft.goals);
+  if (goals != null) raw["goals"] = goals;
   return raw as ConfigPatchWire;
 }
 
@@ -168,6 +185,13 @@ export function validatePatch(patch: ConfigPatchWire): string | null {
     if (sub.maxDepth != null && (sub.maxDepth < 1 || sub.maxDepth > 16 || !Number.isInteger(sub.maxDepth))) {
       return `subagent.maxDepth 仅允许 1..=16，收到 ${sub.maxDepth}`;
     }
+  }
+  // 镜像 qaqh-config-api validate:只拒 0;负数/小数由 serde u64 自带报错。
+  // NaN 必须拦:JSON.stringify(NaN) → null,而这里是**有意例外**——null=清除上限,
+  // 静默把「没填好」变成「清除」比报错更糟。
+  const goals = patch.goals;
+  if (goals?.maxTokenBudget != null && (Number.isNaN(goals.maxTokenBudget) || goals.maxTokenBudget === 0)) {
+    return "goals.maxTokenBudget 必须大于 0（null = 清除上限）";
   }
   return null;
 }

@@ -2,21 +2,23 @@ import { createSignal, For, onCleanup, Show, type Component } from "solid-js";
 import IconKeyRound from "~icons/lucide/key-round";
 import IconMessageSquare from "~icons/lucide/message-square";
 import IconSettings from "~icons/lucide/settings";
+import IconUsers from "~icons/lucide/users";
 import IconWrench from "~icons/lucide/wrench";
 import { clampSidebarWidth, dragSidebarWidth, SIDEBAR_WIDTH_STEP } from "../lib/sidebar-resize";
 import { MessageSidebar } from "./MessageSidebar";
 import { createSelectionPill } from "./selection-pill";
 import type { ApprovalView } from "../lib/transport";
 import type { SidebarSession, SidebarWorkspace } from "../tabs/store";
-import { SETTINGS_NAV, SETTINGS_NAV_GROUPS } from "../settings/navigation";
+import { SETTINGS_NAV, SETTINGS_NAV_GROUPS, TOOLS_NAV } from "../settings/navigation";
 
-export type GlobalSection = "messages" | "tools" | "oauth" | "settings";
+export type GlobalSection = "messages" | "tools" | "team" | "oauth" | "settings";
 
 /** 导航 2×2(spec §6.1):取代 64px 图标 rail,带可见 label,不再依赖 tooltip。
  *  「接入」涵盖后续友商(不都是 OAuth),改词只改这里。 */
 const NAV_ITEMS = [
   { id: "messages", label: "消息", Icon: IconMessageSquare },
   { id: "tools", label: "工具", Icon: IconWrench },
+  { id: "team", label: "团队", Icon: IconUsers },
   { id: "oauth", label: "接入", Icon: IconKeyRound },
   { id: "settings", label: "设置", Icon: IconSettings },
 ] as const;
@@ -30,6 +32,9 @@ export const Sidebar: Component<{
   onNavigate: (section: GlobalSection) => void;
   settingsSection?: string;
   onSettingsSection?: (section: string) => void;
+  /* 工具页分区(App 持 tab 状态,与 settingsSection 同一套路)。 */
+  toolsTab?: string;
+  onToolsTab?: (tab: string) => void;
   /** 汉堡收展(用户侧需求):收起后只剩 48px 图标导航,会话列表隐藏。 */
   collapsed?: boolean;
   /** 阶段5:cols=1 时以抽屉呈现(288 覆盖 Main),App 控制开合。 */
@@ -144,6 +149,18 @@ export const Sidebar: Component<{
     observe: (nav) => [...nav.querySelectorAll(".settings-nav-item, .settings-nav-group")],
   });
 
+  /* 工具分区导航:同一个 pill 驱动器、同一族样式,选择键换成 toolsTab。 */
+  const [toolsNavEl, setToolsNavEl] = createSignal<HTMLElement | undefined>();
+  const [toolsPillEl, setToolsPillEl] = createSignal<HTMLElement | undefined>();
+  createSelectionPill({
+    container: toolsNavEl,
+    pill: toolsPillEl,
+    selection: () => props.toolsTab ?? TOOLS_NAV[0].id,
+    findTarget: (nav, sel) =>
+      nav.querySelector<HTMLElement>(`[data-tool-id="${CSS.escape(sel)}"]`),
+    observe: (nav) => [...nav.querySelectorAll(".settings-nav-item")],
+  });
+
   return (
   <aside
     id="app-sidebar"
@@ -201,6 +218,17 @@ export const Sidebar: Component<{
               data-section-id={item.id} onClick={() => props.onSettingsSection?.(item.id)}>{item.label}</button>
           }</For>
         </>}</For>
+      </nav>
+    </Show>
+    {/* 工具页分区导航:与会话列表/设置导航复用同一栏位,不再往内容区造菜单。 */}
+    <Show when={props.section === "tools" && props.onToolsTab != null}>
+      <nav class="sidebar-settings-nav" aria-label="工具分区" ref={setToolsNavEl}>
+        <span class="settings-nav-pill" aria-hidden="true" ref={setToolsPillEl} />
+        <For each={TOOLS_NAV}>{(item) =>
+          <button type="button" class={`settings-nav-item${(props.toolsTab ?? TOOLS_NAV[0].id) === item.id ? " active" : ""}`}
+            aria-current={(props.toolsTab ?? TOOLS_NAV[0].id) === item.id ? "page" : undefined}
+            data-tool-id={item.id} onClick={() => props.onToolsTab?.(item.id)}>{item.label}</button>
+        }</For>
       </nav>
     </Show>
     {/* 拖拽调宽把手(用户侧需求):dock 展开态才有(App 传 onWidthCommit);

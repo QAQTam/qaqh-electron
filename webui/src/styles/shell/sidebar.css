@@ -210,14 +210,15 @@
   .message-workspace-create:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
   /* 禁用态仍然露出来(而不是消失):「这里能建会话,只是现在不行」比"根本没这个入口"诚实。 */
   .message-workspace-row:hover .message-workspace-create:disabled { opacity: .45; }
-  .message-workspace-sessions { display: grid; gap: 2px; padding: 2px 0 4px 18px; }
+  /* 嵌套缩进 18→8:整行左移、行宽变长,标题能多显示几个字(悬停胶囊/选中条随行左缘,不受影响)。 */
+  .message-workspace-sessions { display: grid; gap: 2px; padding: 2px 0 4px 8px; }
   .message-session-item {
     position: relative;
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 6px;
     /* 拉满行宽:悬停/激活的胶囊右缘对齐,不随标题长短伸缩(长短不一观感的根源);
        超长标题靠 min-width:0 + ellipsis 收敛,宽度恒等。 */
     flex: 1 1 auto;
-    min-width: 0; min-height: 32px; padding: 0 8px;
+    min-width: 0; min-height: 32px; padding: 0 8px 0 6px;
     border: 1px solid transparent; border-radius: var(--r-sm);
     color: var(--muted); text-align: left; font-size: var(--fs-xs);
     transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);

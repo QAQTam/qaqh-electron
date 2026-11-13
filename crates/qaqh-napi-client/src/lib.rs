@@ -406,6 +406,19 @@ impl NativeClient {
             .map_err(client_error)
     }
 
+    /// Team 投影快照（`GET /ringing/v2/sessions/{seed}/team`）。任务板/花名册
+    /// 是读侧投影而非事件流——壳层按需拉取，无推送（collector 已退役）。
+    #[napi]
+    pub async fn team_raw(&self, seed: String) -> Result<Value> {
+        let team = self
+            .client
+            .team_v2(seed.as_str())
+            .await
+            .map_err(client_error)?;
+        serde_json::to_value(team)
+            .map_err(|e| json_error("protocol", format!("team encode: {e}")))
+    }
+
     /// 下载内容并按规范引用校验摘要；`bytes` 原样交给 TS 解码。
     #[napi]
     pub async fn download_content(&self, reference: String) -> Result<Buffer> {

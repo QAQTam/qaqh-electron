@@ -1,0 +1,111 @@
+/* ── 宣传片舞台（promo.html）专属层 ──
+   原则：窗口内部全部消费产品真实 token/组件 CSS（app.css 已引）；
+   本文件只画"片场"：边框(bezel)、字幕、HUD、转场遮罩。1920×1080 固定设计尺寸，
+   渲染器按此尺寸出帧（虚拟时间逐帧 capturePage，不受实屏影响）。 */
+
+html, body { margin: 0; height: 100%; background: #0a0b0d; overflow: hidden; }
+#root { height: 100%; }
+
+.promo-stage {
+  width: 1920px; height: 1080px; position: relative; overflow: hidden;
+  background:
+    radial-gradient(1200px 800px at 30% 20%, #14161b 0%, transparent 60%),
+    radial-gradient(1000px 900px at 80% 90%, #101318 0%, transparent 55%),
+    #0a0b0d;
+  color: #dfe2e8;
+  font-family: system-ui, "Segoe UI", sans-serif;
+}
+.promo-safe { position: absolute; inset: 0; padding: 56px 72px; display: grid; grid-template-rows: 1fr auto; }
+.promo-bezel {
+  position: relative; align-self: center; border-radius: 20px; padding: 10px;
+  background: linear-gradient(160deg, #2b2f37, #171a1f 55%, #23272f);
+  box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 2px 0 rgba(255,255,255,.06) inset;
+}
+.promo-bezel::after { content: ""; position: absolute; inset: 4px; border-radius: 16px; border: 1px solid rgba(255,255,255,.05); pointer-events: none; }
+
+/* 窗口本体：真实产品变量 */
+.promo-window {
+  height: 720px; display: grid; grid-template-rows: 46px 1fr; overflow: hidden;
+  border-radius: 12px; background: var(--surface); color: var(--text);
+  font-size: 15px; zoom: 1.08;
+}
+.promo-titlebar { display: flex; align-items: center; gap: 14px; padding: 0 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.tb-dots { display: inline-flex; gap: 7px; }
+.tb-dots i { width: 11px; height: 11px; border-radius: 50%; background: var(--muted); opacity: .45; }
+.tb-dots i:first-child { background: #ff5f57; opacity: 1; }
+.tb-dots i:nth-child(2) { background: #febc2e; opacity: 1; }
+.tb-dots i:nth-child(3) { background: #28c840; opacity: 1; }
+.tb-title { flex: 1; color: var(--muted); font-size: 13px; }
+.tb-snake { font-size: 17px; }
+.promo-body { display: grid; grid-template-columns: 250px minmax(0, 1fr) 280px; min-height: 0; }
+
+.promo-side { border-right: 1px solid var(--border); background: var(--surface); padding: 14px 10px; display: grid; align-content: start; gap: 6px; }
+.side-head { color: var(--muted); font-size: 12px; padding: 0 8px 6px; letter-spacing: .06em; }
+.side-row { display: flex; align-items: center; gap: 8px; padding: 10px 10px; border-radius: 8px; color: var(--text); font-size: 13.5px; }
+.side-row.active { background: var(--surface-2); }
+.side-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); opacity: .5; }
+.side-row.active .side-dot { background: var(--accent); opacity: 1; }
+.side-row.newborn { animation: promoRowIn .5s var(--ease, cubic-bezier(.2,0,0,1)); }
+.side-row.newborn .side-dot { background: var(--ok); opacity: 1; }
+@keyframes promoRowIn { from { opacity: 0; transform: translateY(-8px); } }
+
+.promo-main { overflow: hidden; background: var(--bg); }
+/* 暖纸=岛接缝覆写（值与 plugins/qaqh-theme-warmpaper/theme.css 同源） */
+.promo-main.warmpaper {
+  --chat-bg: #F7F5EE; --chat-surface: #FDFCF7; --chat-surface-2: #EFECE1;
+  --chat-surface-user: #EDEAE0; --chat-surface-code: #F0EEE4;
+  --chat-text: #21201C; --chat-muted: #76746B; --chat-border: hsl(34 12% 30% / 16%);
+  --chat-code-veil: color-mix(in srgb, var(--chat-text) 6%, transparent);
+  transition: background-color .5s ease;
+}
+
+.promo-thread { padding: 22px 26px; height: 100%; overflow: hidden; display: grid; align-content: start; gap: 14px; }
+.promo-thread .turn-user .bubble { max-width: 560px; }
+.promo-answer { display: grid; gap: 8px; }
+.promo-md { font-size: 15.5px; line-height: 1.65; max-width: 78ch; }
+.promo-md pre { max-height: 150px; overflow: hidden; }
+.step-row.tool { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); width: max-content; }
+.step-row.tool .tool-icon { width: 16px; height: 16px; display: inline-grid; place-items: center; }
+.step-row.tool .tool-icon svg { width: 14px; height: 14px; }
+.step-row.tool .tool-icon.ok { color: var(--ok); }
+.step-row.tool .tool-name { font-weight: 600; }
+.step-row.tool .tool-summary { color: var(--muted); font-size: 13px; }
+
+/* HUD：右栏资源占用（演示数据） */
+.promo-hud { border-left: 1px solid var(--border); background: var(--surface); padding: 16px 14px; display: grid; align-content: start; gap: 12px; transition: box-shadow .4s ease; }
+.promo-hud.pulse { box-shadow: inset 0 0 0 2px var(--accent); }
+.hud-title { color: var(--muted); font-size: 12px; letter-spacing: .08em; }
+.hud-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: grid; gap: 4px; background: var(--surface-2); }
+.hud-card label { color: var(--muted); font-size: 12px; }
+.hud-card strong { font-size: 26px; font-variant-numeric: tabular-nums; color: var(--text); }
+.hud-card strong small { font-size: 13px; color: var(--muted); margin-left: 4px; }
+.hud-spark { width: 100%; height: 58px; color: var(--ok); }
+.hud-foot { color: var(--muted); font-size: 12.5px; }
+
+/* 金色比例字阶板 */
+.promo-phi { height: 100%; padding: 40px 60px; display: grid; align-content: center; gap: 20px; background: var(--bg); color: var(--text); }
+.phi-line { font-family: "Segoe UI", system-ui, sans-serif; }
+.phi-line .fs-xs, .promo-phi .fs-xs { font-size: 13px; color: var(--muted); }
+.promo-phi .fs-sm { font-size: 15px; }
+.promo-phi .fs-md { font-size: 17px; font-weight: 600; }
+.promo-phi .fs-lg { font-size: 22px; font-weight: 700; }
+.phi-chips { display: flex; gap: 10px; flex-wrap: wrap; }
+.phi-chips span { border: 1px solid var(--border-strong); border-radius: 999px; padding: 6px 14px; font-size: 13px; color: var(--muted); }
+
+/* 尾卡 */
+.promo-end { height: 720px; display: grid; place-content: center; gap: 18px; text-align: center; }
+.promo-end-box svg { width: 64px; height: 64px; color: #c9ccd4; }
+.promo-end-brand { font-size: 44px; font-weight: 700; letter-spacing: .02em; }
+.promo-end-sub { font-size: 18px; color: #9aa0ab; }
+
+/* 转场黑幕（静默帧）与字幕 */
+.promo-cover { position: absolute; inset: 0; background: #0a0b0d; z-index: 5; animation: promoIn .18s linear; }
+@keyframes promoIn { from { opacity: 0; } }
+.promo-caption {
+  justify-self: center; margin-top: 34px; z-index: 6;
+  font-size: 40px; font-weight: 650; letter-spacing: .03em; color: #eef0f4;
+  text-shadow: 0 2px 22px rgba(0,0,0,.6);
+  animation: capIn .38s var(--ease, cubic-bezier(.2,0,0,1)) both;
+}
+@keyframes capIn { from { opacity: 0; transform: translateY(14px); } }
+.promo-brand-corner { position: absolute; right: 22px; bottom: 14px; font-size: 13px; color: #5b616c; letter-spacing: .05em; }

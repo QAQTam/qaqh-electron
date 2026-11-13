@@ -219,3 +219,37 @@ test("forceSealTurn closes a stuck turn and recomputes the running count", () =>
   expect(state.turns.stuck).toMatchObject({ status: "aborted", answer: { text: "partial" } });
   expect(state.runningTurns).toBe(0);
 });
+
+test("timeline_truncated prunes the recalled turn and everything hanging off it", () => {
+  const state = emptySession();
+  applySessionEvent(state, { seq: 1, type: "turn_started", turn_id: "t1", input_id: "i1", mode: "normal" });
+  applySessionEvent(state, { seq: 2, type: "message_delta", turn_id: "t1", block_id: "a1", block_kind: "answer", text: "留下的一条" });
+  applySessionEvent(state, { seq: 3, type: "turn_ended", turn_id: "t1", outcome: {
+    kind: "finished", data: { terminal: "completed", usage: null, error: null },
+  } });
+  // 被撤回的回合:工具步、执行会话、未决交互各挂一个,撤回时都得跟着消失——
+  // 留着任何一件,UI 就在指向一条后端已经删掉的历史。
+  applySessionEvent(state, { seq: 4, type: "turn_started", turn_id: "t2", input_id: "i2", mode: "normal" });
+  applySessionEvent(state, { seq: 5, type: "tool_arguments_delta", turn_id: "t2", call_id: "call2", tool_name: "exec_command", text: '{"cmd":"ls"}' });
+  applySessionEvent(state, { seq: 6, type: "exec_session_started", session: {
+    id: "exec2", owner_session_id: "s", origin_turn_id: "t2", origin_call_id: "call2",
+    state: { kind: "running" }, tty: false, command: "ls", started_at_ms: 1,
+    next_offset: 0, output_preview: "", preview_start_offset: 0, output_complete: false,
+    capture_omitted_bytes: 0, stream_dropped_bytes: 0,
+  } });
+  applySessionEvent(state, { seq: 7, type: "interaction_requested", interaction: {
+    interaction_id: "ask2", kind: "ask", request: inline("选一个"), turn_id: "t2",
+  } });
+  const slotKeys = () => state.slots.map((slot) => (slot.kind === "turn" ? slot.key : "gap"));
+  expect(slotKeys()).toEqual(["t1", "t2"]);
+
+  applySessionEvent(state, { seq: 8, type: "timeline_truncated", from_turn_id: "t2", removed_turn_ids: ["t2"] });
+
+  expect(state.turns.t1).toBeDefined();
+  expect(state.turns.t2).toBeUndefined();
+  expect(slotKeys()).toEqual(["t1"]);
+  expect(state.waits).toEqual([]);
+  expect(state.interactionIds).toEqual([]);
+  expect(state.execSessions.exec2).toBeUndefined();
+  expect(state.runningTurns).toBe(0);
+});

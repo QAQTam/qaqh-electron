@@ -1,0 +1,20 @@
+// served vs disk 对质：vite dev 到底在发哪一份 promo.tsx
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+process.chdir(join(root, "webui"));
+const vite = await import(pathToFileURL(join(root, "webui", "node_modules", "vite", "dist", "node", "index.js")).href);
+const server = await vite.createServer({ root: join(root, "webui"), configFile: join(root, "webui", "vite.config.ts"), logLevel: "warn", server: { host: "127.0.0.1", port: 5699, strictPort: true, hmr: false } });
+await server.listen();
+const res = await fetch("http://127.0.0.1:5699/src/promo.tsx");
+const served = await res.text();
+const disk = readFileSync(join(root, "webui", "src", "promo.tsx"), "utf8");
+console.log("served len:", served.length, "status:", res.status);
+console.log("served has 已封存:", served.includes("已封存:"));
+console.log("served has newSession:", served.includes("已在新会话继续"));
+console.log("served has Math.ceil:", served.includes("Math.ceil"));
+console.log("disk has Math.ceil:", disk.includes("Math.ceil"));
+console.log("markers served:", [...served.matchAll(/(handoffPath[^,}]*|已封存[^<]{0,40})/g)].map((m) => m[0]).slice(0, 6));
+await server.close();

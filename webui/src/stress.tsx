@@ -23,6 +23,7 @@ import IconArrowLeft from "~icons/lucide/arrow-left";
 import IconMenu from "~icons/lucide/menu";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import { ToolsPage } from "./app/ToolsPage";
+import { TeamPage } from "./app/TeamPage";
 import { OAuthPage } from "./oauth/OAuthPage";
 import { SettingsView } from "./settings/SettingsView";
 import { simMemorySnapshot } from "./lib/memwatch-sim";
@@ -53,8 +54,8 @@ const previewView = previewParams.get("view");
 const isVisualPreview = previewView === "messages" || previewView === "settings" || previewView === "approval" || previewView === "tools" || previewView === "oauth" || previewView === "startup";
 /** 侧栏待响应卡的预览开关(§6.2):见 `previewSessions` 的注释。 */
 const pendingPreview = previewParams.get("pending") === "1";
-const [currentView, setCurrentView] = createSignal<"messages" | "tools" | "oauth" | "settings">(
-  previewView === "settings" || previewView === "tools" || previewView === "oauth" ? previewView : "messages",
+const [currentView, setCurrentView] = createSignal<"messages" | "tools" | "team" | "oauth" | "settings">(
+  previewView === "settings" || previewView === "tools" || previewView === "team" || previewView === "oauth" ? previewView : "messages",
 );
 /**
  * 阶段B 视觉评审:`view=startup` 把主区换成**真·启动页**(StartupView 渲染共用
@@ -290,7 +291,7 @@ if (isVisualPreview) {
     sandbox: { enabled: true },
     toolAllowlistEnabled: false,
     toolAllowlist: [],
-    complianceEnabled: true,
+    goals: { enabled: true, maxTokenBudget: null },
     subagent: {
       timeoutSecs: 120,
       defaultTools: ["read", "write"],
@@ -497,7 +498,7 @@ function retainedChars(): number {
       total += turn.user.text.length + (turn.answer?.text.length ?? 0);
       for (const step of turn.steps) {
         if ("text" in step) total += step.text.length;
-        if (step.kind === "tool") total += (step.output?.text?.length ?? 0) + (step.progressTail?.length ?? 0);
+        if (step.kind === "tool") total += step.output?.text?.length ?? 0;
       }
     }
     return total;
@@ -1107,30 +1108,31 @@ const scenarios = {
     return { name: "animate", target, acted, ...metrics() };
   },
 
-  /** 高频 v3 tool_output_delta 帧；工具详情展开以便 `.tool-progress` 挂在 DOM 上。 */
+  /** 回归闸:exec 进度帧(`tool_output_delta`)对消息区必须零成本——
+   *  不留尾窗、不 bump renderVersion、DOM 里没有 `.tool-progress` 渲染点。
+   *  正文唯一渲染位在后台执行抽屉。mode/linesPerChunk 保留旧调用面。 */
   async progressStream(mode: "merged" | "direct" = "merged", linesPerChunk = 3): Promise<Record<string, unknown>> {
     const id = mode === "merged" ? "t202" : "t203";
     const blockId = mode === "merged" ? "p202" : "p203";
     // 先造好数据:排除夹具自己的字符串生成开销。
     const chunks = Array.from({ length: 150 }, (_, i) => ansiLog(mulberry32(i), linesPerChunk));
     startTurn(id, `第 ${id.slice(1)} 问：跑个长任务`);
-    seedToolCall(id, blockId, "exec");
+    seedToolCall(id, blockId, "exec_command");
     await frames(4);
-    const progressHead = document.querySelector<HTMLElement>(`[data-slot-key="${CSS.escape(id)}"] .tool-head`);
-    if (progressHead?.getAttribute("aria-expanded") !== "true") progressHead?.click();
-    await frames(6);
     const el = messagesEl();
+    const row = el.querySelector<HTMLElement>(`[data-tool-call-id="${blockId}"]`);
     let progressWrites = 0;
     const watch = new MutationObserver((records) => {
       // characterData 记录的 target 是文本节点,没有 closest —— 先归一到元素。
       const hit = records.some((record) => {
         const raw = record.target as Node;
         const node = raw.nodeType === 1 ? (raw as HTMLElement) : raw.parentElement;
-        return node?.closest(".tool-progress") != null;
+        return node != null && row != null && (node === row || row.contains(node));
       });
       if (hit) progressWrites += 1;
     });
     churnReset();
+    const renderVersionBefore = untrack(() => store.state[0].turns[id]?.renderVersion ?? 0);
     const t0 = performance.now();
     watch.observe(el, { childList: true, subtree: true, characterData: true });
     const cadence = await sampleFrames(150, async () => {
@@ -1141,38 +1143,18 @@ const scenarios = {
     });
     watch.disconnect();
     const elapsedMs = Math.round(performance.now() - t0);
+    const renderVersionAfter = untrack(() => store.state[0].turns[id]?.renderVersion ?? 0);
+    if (renderVersionAfter !== renderVersionBefore) {
+      throw new Error(`tool_output_delta 仍在推动转录重渲染: renderVersion ${renderVersionBefore} → ${renderVersionAfter}`);
+    }
+    if (document.querySelector(".tool-progress") != null) throw new Error("`.tool-progress` 渲染位未退役干净");
     const tailChars = untrack(() => {
       const step = store.state[0].turns[id]?.steps.find((item) => item.id === blockId);
-      return step != null && step.kind === "tool" ? step.progressTail?.length ?? 0 : -1;
+      return step != null && step.kind === "tool" ? step.output?.text?.length ?? 0 : -1;
     });
     finishTool(blockId, JSON.stringify({ output: "done\n", exit_code: 0 }));
     await frames(10);
     const out = { name: `progressStream:${mode}`, mode, linesPerChunk, cadence, elapsedMs, tailChars, fedChunks: chunks.length, progressWrites, churn: { added: churnAdded, removed: churnRemoved }, ...metrics() };
-    report.push(out);
-    return out;
-  },
-
-  /**
-   * 展开工具详情时 `.tool-progress` 走的 ANSI 路径:16KB 尾窗每次更新都要
-   * `hasAnsi` + `parseAnsi` 全量重解析。量它在不同长度下的单帧代价。
-   */
-  async ansiCost(): Promise<Record<string, unknown>> {
-    const ansi = await import("./lib/ansi");
-    const shapes: Array<[string, number]> = [["1KB", 14], ["4KB", 55], ["16KB(尾窗上限)", 220]];
-    const results = shapes.map(([label, lines]) => {
-      const text = ansiLog(mulberry32(77), lines);
-      const per: number[] = [];
-      for (let i = 0; i < 40; i += 1) {
-        const t0 = performance.now();
-        const parsed = ansi.parseAnsi(text);
-        const has = ansi.hasAnsi(text);
-        per.push(Math.round((performance.now() - t0) * 100) / 100);
-        if (parsed.length === 0 && !has) void 0;
-      }
-      const sorted = [...per].sort((a, b) => a - b);
-      return { size: label, chars: text.length, p50Ms: sorted[20], p95Ms: sorted[38], maxMs: sorted[39], over8_3ms: per.filter((ms) => ms > 8.3).length };
-    });
-    const out = { name: "ansiCost", results };
     report.push(out);
     return out;
   },
@@ -1454,7 +1436,7 @@ declare global {
 }
 
 const bootStart = performance.now();
-const navigatePreview = (next: "messages" | "tools" | "oauth" | "settings"): void => {
+const navigatePreview = (next: "messages" | "tools" | "team" | "oauth" | "settings"): void => {
   setCurrentView(next);
   if (next === "settings") void reloadSettings();
   if (next === "messages" && previewView === "settings") void store.loadBootstrap();
@@ -1543,6 +1525,7 @@ render(
             {/* Keep the shared stress metrics target available in this shell-only fixture. */}
             <div id="messages" hidden />
           </Show>
+          <Show when={currentView() === "team"}><TeamPage /></Show>
           <Show when={currentView() === "oauth"}><OAuthPage onOpenSettings={() => navigatePreview("settings")} /></Show>
           <Show when={startupMode()}>
             {/* 真·启动页:hero/配置条/建议卡/共用 Composer 全在组件里,夹具只负责

@@ -174,7 +174,7 @@ export const AboutSection: Component = () => {
     setStamps(streak.unlocked ? [] : streak.stamps);
     if (streak.unlocked) {
       openDevConsole();
-      toast("开发者模式已开启(不落盘,重启即失效)", "info");
+      toast("开发者模式已开启：UI 操作与录屏工具面已暴露给 MCP(不落盘,重启即失效)", "info");
     }
   };
 
@@ -182,13 +182,14 @@ export const AboutSection: Component = () => {
     <Section
       id="section-about"
       title="关于"
-      desc="前端 Electron 壳与后端 daemon 的构建标识;两侧版本可以独立核对。"
+      desc="前端 Electron 壳与后端 daemon 的构建身份;批次指纹与协议层级分层核对。"
     >
       <div class="readonly-grid">
-        <span>前端版本</span>
+        <span>前端批次</span>
         <b
           class="about-version"
           onClick={tapVersion}
+          title="发布批次指纹(版本号+打包仓 commit+dirty)。不是源码逐文件校验,只回答「这批产物是哪次打包切出的」。连点 5 次开调试控制台。"
         >
           {version()}
           <Show when={stamps().length > 0}>
@@ -200,10 +201,20 @@ export const AboutSection: Component = () => {
         </b>
         <span>前端 commit</span>
         <b title={commit()}>{commit() === "—" ? "—" : commit().slice(0, 12)}</b>
-        <span>后端版本</span>
-        <b>{daemonDisplay()}</b>
-        <span>后端协议</span>
-        <b>{daemonProtocol() ?? "—"}</b>
+        {/* 身份分层(2026-11-12 定口径,原「后端版本/后端协议」命名自欺):
+            - 「后端批次」= QAQH_BUILD_ID,由打包入口(qaqh-electron justfile)以**前端仓
+              HEAD** 注入,前后端同指纹=原子配对,供 updater planner 比对——它**不是**后端
+              源码 commit(后端源码 hash 待 daemon discovery 补 source_commit,走 LTS 修改);
+            - 「协议层级」= CONTROL_PROTOCOL_VERSION,Android API level 语义,与 git 解耦;
+              后续统一身份到此,批次串退居开发者模式。 */}
+        <span>后端批次</span>
+        <b title="发布批次指纹:版本号+打包仓 commit 前 8 位。由前端仓 HEAD 注入(electron 是唯一打包入口),表达前后端原子配对;不是后端源码的 commit。">
+          {daemonDisplay()}
+        </b>
+        <span>协议层级</span>
+        <b title="控制协议 level(API level 语义,随破坏性协议变更递增,与构建批次无关)">
+          {daemonProtocol() ?? "—"}
+        </b>
       </div>
       <Show when={desktopHost()?.updates != null}>
         <div class="about-updates">

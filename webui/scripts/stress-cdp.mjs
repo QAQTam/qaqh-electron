@@ -241,7 +241,6 @@ try {
   await step("progressStream:direct", `window.__stress.scenarios.progressStream("direct")`);
   await step("progressStream:merged", `window.__stress.scenarios.progressStream("merged")`);
   await step("progressSmall", `window.__stress.scenarios.progressStream("merged", 1)`);
-  await step("ansiCost", `window.__stress.scenarios.ansiCost()`);
   await step("tableStream", `window.__stress.scenarios.tableStream()`);
   await step("realign", `window.__stress.scenarios.realign().then(r=>({churn:r.churn, before:r.before, after:r.after, m:r.after}))`);
   await step("expand", `window.__stress.scenarios.expand().then(r=>({clickedRows:r.clickedRows, timelines:r.timelines, clickedHeads:r.clickedHeads, scrollDeltaFromExpand:r.scrollDeltaFromExpand, m:r}))`);

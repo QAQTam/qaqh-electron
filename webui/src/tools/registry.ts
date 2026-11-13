@@ -39,6 +39,22 @@ const LABELS: Record<string, string> = {
   todo_write: "更新计划",
   note: "记录",
   subagent: "子代理",
+  spawn_subagent: "派子代理",
+  // goal 模式(ADR-0015,仅根会话声明)。
+  create_goal: "创建目标",
+  update_goal: "更新目标",
+  get_goal: "查看目标",
+  // 子代理任务板/留言板(ADR-0014 本批复活)。
+  task_create: "创建任务",
+  task_claim: "认领任务",
+  task_update: "更新任务",
+  task_close: "关闭任务",
+  task_list: "列出任务",
+  board_channel_create: "创建频道",
+  board_thread_create: "创建话题",
+  board_post: "留言",
+  board_subscribe: "订阅留言",
+  board_list: "查看留言",
   // 控制面工具:任何 tool_mode 都会被后端声明,所以任何档位都可能撞上这一行。
   handoff: STR.handoffTool,
 };
@@ -85,6 +101,10 @@ export function primaryArgFull(argsJson: string | undefined): string {
     }
     if (Array.isArray(args.items) || Array.isArray(args.todos)) {
       return `${(args.items ?? args.todos).length} 项`;
+    }
+    // 任务板/留言板/goal 的主参数。追加在既有键之后,不改变既有工具的命中序。
+    for (const key of ["task_id", "thread_id", "channel_id", "objective", "title", "name", "status", "state", "action"]) {
+      if (typeof args[key] === "string" && args[key]) return args[key];
     }
   }
   return "";

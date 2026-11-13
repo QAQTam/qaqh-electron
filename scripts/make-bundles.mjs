@@ -25,8 +25,8 @@ import { collectBundle } from "./collect-bundle.mjs";
 import { reserveLocalVersion } from "./release-version.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// 后端源目录由 justfile 的 QAQH_BACKEND_DIR 统一导出（冻结期默认 ../qaqh-backend-lts）。
-const backend = resolve(root, process.env.QAQH_BACKEND_DIR ?? "../qaqh-backend-lts");
+// 后端源目录由 justfile 的 QAQH_BACKEND_DIR 统一导出（默认 ../qaqh-backend）。
+const backend = resolve(root, process.env.QAQH_BACKEND_DIR ?? "../qaqh-backend");
 const frontend = resolve(root, "webui");
 const outRoot = resolve(root, ".qaqh-bundles");
 const require = createRequire(import.meta.url);
@@ -57,6 +57,10 @@ function buildIdentity() {
         JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version,
         join(root, ".tmp", "deb-version.json"),
       );
+  // 必须写回 env:just 的 `export QAQH_BUILD_VERSION := env_var_or_default(...,"")`
+  // 会把空串注入子进程,bundle.mjs 的 esbuild define 就会把版本号烤成 `""`,
+  // 主进程 `"" || app.getVersion()` 折叠后永远回读 package.json 的稳定基版(1103)。
+  process.env.QAQH_BUILD_VERSION = version;
   const dirty = process.env.QAQH_GIT_DIRTY === "1";
   const safeCommit = commit.slice(0, 8) + (dirty ? "-dirty" : "");
   // releaseId = 版本 + git 构建元数据：g 前缀沿用 git-describe 惯例，dirty 也上 UI。

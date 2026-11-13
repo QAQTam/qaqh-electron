@@ -24,6 +24,7 @@ import {
 export const transport: TransportBackend = new ElectronTransport();
 
 export { listenHostDiagnostics, openExternalUrl, desktopHostSurface };
+export { CommandRejectedError } from "./electron";
 
 export { RINGING_SCHEMA, RINGING_VERSION, execSessionTarget, globalTarget, sessionTarget, workspaceTarget } from "./backend";
 export type { CommandPrecondition, CommandTarget, RingingCommand, ServiceMethod, ServiceParams, ServiceResult } from "./backend";
