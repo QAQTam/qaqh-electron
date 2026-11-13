@@ -334,6 +334,7 @@ function upsertAssistantBlock(
   blockKind: "reasoning" | "answer" | "tool_call",
   content: ContentValue,
   sealed: boolean,
+  ord?: number,
 ): boolean {
   if (blockKind === "tool_call") return false;
   const turn = ensureTurn(draft, turnId);
@@ -347,12 +348,26 @@ function upsertAssistantBlock(
   if (existing && existing.kind === kind) {
     existing.text = text;
     existing.contentRef = ref;
+    if (ord != null) existing.ord = ord;
     if (sealed) existing.endedAt = now();
   } else {
     const step: Step = kind === "thinking"
-      ? { kind, id: blockId, seq: turn.steps.length, text, contentRef: ref, ...(sealed ? { endedAt: now() } : {}) }
-      : { kind, id: blockId, seq: turn.steps.length, text, contentRef: ref, ...(sealed ? { endedAt: now() } : {}) };
-    turn.steps.push(step);
+      ? { kind, id: blockId, seq: turn.steps.length, ord, text, contentRef: ref, ...(sealed ? { endedAt: now() } : {}) }
+      : { kind, id: blockId, seq: turn.steps.length, ord, text, contentRef: ref, ...(sealed ? { endedAt: now() } : {}) };
+    if (ord != null) {
+      // 按后端权威 ord 插入:在首个「有效 ord 更大」的 assistant 块之前。
+      // 未 seal(无 ord)的流式 assistant 块视为 +∞ 殿后;工具/插话步不动。
+      // 重连丢帧后迟到的 reasoning seal 由此插回 answer 之前,而非追加到末尾。
+      let index = turn.steps.length;
+      for (let i = 0; i < turn.steps.length; i += 1) {
+        const other = turn.steps[i]!;
+        if (other.kind !== "thinking" && other.kind !== "text") continue;
+        if ((other.ord ?? Number.POSITIVE_INFINITY) > ord) { index = i; break; }
+      }
+      turn.steps.splice(index, 0, step);
+    } else {
+      turn.steps.push(step);
+    }
   }
   if (kind === "text") {
     turn.answer = { text, startedAt: turn.workStartedAt };
@@ -505,7 +520,7 @@ function applyTimelineEntry(draft: SessionState, entry: TimelineEntry, tools: Ma
       applyInputEntry(draft, entry.data);
       break;
     case "assistant_block":
-      upsertAssistantBlock(draft, entry.data.turn_id, entry.data.block_id, entry.data.block_kind, entry.data.content, true);
+      upsertAssistantBlock(draft, entry.data.turn_id, entry.data.block_id, entry.data.block_kind, entry.data.content, true, entry.data.ord);
       if (entry.data.block_kind === "answer" && entry.data.usage) {
         const turn = findTurn(draft, entry.data.turn_id);
         if (turn) turn.usage = entry.data.usage;

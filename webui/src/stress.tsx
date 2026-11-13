@@ -205,6 +205,7 @@ function ansiLog(rand: () => number, lines: number): string {
         data: {
           block_id: `answer-${i + 1}`,
           turn_id: turnId,
+          ord: i * 2 + 2,
           block_kind: "answer" as const,
           content: { kind: "inline" as const, data: { text: `Turn ${i + 1} answer` } },
           model: "claude",

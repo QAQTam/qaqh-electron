@@ -50,6 +50,8 @@ export interface ThinkingStep {
   kind: "thinking";
   id: string;
   seq: Seq;
+  /** 后端权威落库序(blocks.ord);按它排序而非到达序。缺席=尚未 seal 的流式块。 */
+  ord?: number;
   startedAt?: number;
   endedAt?: number;
   /** 完整思考文本,始终保留(spec §10.2)。 */
@@ -68,6 +70,8 @@ export interface TextStep {
   kind: "text";
   id: string;
   seq: Seq;
+  /** 后端权威落库序(blocks.ord);按它排序而非到达序。缺席=尚未 seal 的流式块。 */
+  ord?: number;
   startedAt?: number;
   endedAt?: number;
   text: string;
