@@ -17,7 +17,7 @@ import { HANDOFF_TOOL, handoffFactsOfTurn, type HandoffFact } from "./handoff";
 import type { SessionState, Wait } from "./types";
 import { normalizeActivity, type SessionActivity } from "./projection";
 import type {
- ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch 
+ ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch, WidgetContext, JsonValue 
 } from "../api/contract";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 import { registry, refreshRegistry } from "../settings/registry";
@@ -1147,17 +1147,41 @@ export class SessionStore {
 
   // ── 动作 ────────────────────────────────────────────────────────────────────
 
-  async sendMessageWithAttachments(text: string, attachments: SessionContentRef[] = []): Promise<void> {
+  async sendMessageWithAttachments(
+    text: string,
+    attachments: SessionContentRef[] = [],
+    widgetContext?: WidgetContext,
+  ): Promise<void> {
     this.isSending[1](true);
     try {
       await transport.command(
-        { type: "conversation.send_message", text, attachments, input_purpose: "trigger_turn" },
+        {
+          type: "conversation.send_message",
+          text,
+          attachments,
+          input_purpose: "trigger_turn",
+          ...(widgetContext ? { widget_context: widgetContext } : {}),
+        },
         sessionTarget(this.seed),
       );
     } catch (error) {
       this.isSending[1](false);
       throw error;
     }
+  }  // ── widget-directive §4 ── 用户在 widget 上确认 follow-up:prompt 走正常
+  // user-send,最新 modelContent 快照作为 `widget_context` 一等字段进回合
+  // 元数据(不拼用户文本)。
+
+  async sendWidgetFollowUp(
+    prompt: string,
+    widget: { path: string; title?: string },
+    modelContent: unknown,
+  ): Promise<void> {
+    await this.sendMessageWithAttachments(prompt, [], {
+      session_id: this.seed,
+      widget: { path: widget.path, ...(widget.title ? { title: widget.title } : {}) },
+      model_content: (modelContent ?? null) as JsonValue,
+    });
   }
 
   async interruptExecSession(id: string): Promise<void> {

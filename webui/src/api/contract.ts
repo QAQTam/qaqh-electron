@@ -36,6 +36,9 @@ export type { ToolsSettingPatch } from "./qaqh/ToolsSettingPatch";
 export type { TurnOutcome } from "./qaqh/TurnOutcome";
 export type { TurnPhase } from "./qaqh/TurnPhase";
 export type { UsageInfo } from "./qaqh/UsageInfo";
+export type { WidgetContext } from "./qaqh/WidgetContext";
+export type { WidgetRef } from "./qaqh/WidgetRef";
+export type { JsonValue } from "./serde_json/JsonValue";
 
 import type { ConfigDto } from "./qaqh/ConfigDto";
 import type { SessionListEntry } from "./qaqh/SessionListEntry";

@@ -7,7 +7,8 @@ import IconFork from "~icons/lucide/git-fork";
 import IconSiren from "~icons/lucide/siren";
 import { Collapse } from "../ui/Collapse";
 import { Markdown } from "../markdown/Markdown";
-import { AssistantContent } from "../genui/AssistantContent";
+import { AssistantContent } from "./AssistantContent";
+import type { WidgetHostContext } from "../widget/host";
 import { StepRow } from "../tools/StepRow";
 import { TurnDeliverablesCard } from "../diff/TurnDeliverablesCard";
 import { STR, formatWorkDuration } from "../lib/strings";
@@ -332,7 +333,7 @@ const HandoffCard: Component<{ fact: HandoffFact; sessionId: string; sealedAt: n
   );
 };
 
-const SegmentView: Component<{ segment: Accessor<TurnSegment>; turn: Turn; waits: Wait[]; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null; onFollowUp?: (text: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed">; retryContent?: () => void }> = (props) => {
+const SegmentView: Component<{ segment: Accessor<TurnSegment>; turn: Turn; waits: Wait[]; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null; onFollowUp?: (text: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed">; retryContent?: () => void; widgetCtx: WidgetHostContext }> = (props) => {
   const work = createMemo(() => { const segment = props.segment(); return segment.kind === "work" ? segment : null; });
   const text = createMemo(() => { const segment = props.segment(); return segment.kind === "text" ? segment.step : null; });
   const interject = createMemo(() => { const segment = props.segment(); return segment.kind === "interject" ? segment.step : null; });
@@ -350,7 +351,7 @@ const SegmentView: Component<{ segment: Accessor<TurnSegment>; turn: Turn; waits
               : text()!.text}
             revision={text()!.id}
             streaming={props.turn.status === "running" && text()!.endedAt == null}
-            onFollowUp={props.onFollowUp}
+            widgetCtx={props.widgetCtx}
           />
         </div>
       </Match>
@@ -360,6 +361,14 @@ const SegmentView: Component<{ segment: Accessor<TurnSegment>; turn: Turn; waits
 
 export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStore; isLatestTurn?: boolean }> = (props) => {
   const cwd = createMemo(() => sessionCatalog().find((session) => session.session_id === props.store.seed)?.cwd);
+  // widget-directive：正文 marker 的宿主上下文。sendFollowUp 在用户确认后
+  // 把 prompt + 最新 modelContent 快照（widget_context 一等字段）送进
+  // RingingV2 user-send（§4，store.sendWidgetFollowUp）。
+  const widgetCtx: WidgetHostContext = {
+    sessionId: props.store.seed,
+    sendFollowUp: (prompt, widget, modelContent) =>
+      props.store.sendWidgetFollowUp(prompt, widget, modelContent),
+  };
   // 思考摘要的富呈现按**本会话有效**的 provider/model 判定：会话可以把模型
   // 覆写成与全局不同的值，拿全局那一份会把别的会话的模型算到这条回合上。
   const thinkingRich = () =>
@@ -425,7 +434,7 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
           </Show>
         </div></div>
       </Show>
-      <For each={segments()} keyed={(segment) => segment.key}>{(segment) => <SegmentView segment={segment} turn={props.turn} waits={props.waits} thinkingRich={thinkingRich} cwd={cwd()} latestToolStepId={latestToolStepId()} contentStatus={props.store.contentStatus[0]()} retryContent={() => props.store.retryContent()} onFollowUp={(text) => void props.store.sendMessage(text)} />}</For>
+      <For each={segments()} keyed={(segment) => segment.key}>{(segment) => <SegmentView segment={segment} turn={props.turn} waits={props.waits} thinkingRich={thinkingRich} cwd={cwd()} latestToolStepId={latestToolStepId()} contentStatus={props.store.contentStatus[0]()} retryContent={() => props.store.retryContent()} widgetCtx={widgetCtx} onFollowUp={(text) => void props.store.sendMessage(text)} />}</For>
       <Show when={props.turn.status === "aborted" && props.turn.steps.length === 0}><div class="turn-aborted">{STR.interrupted}</div></Show>
       <Show when={props.turn.status === "failed" && props.turn.error != null}>
         <div class={{ "turn-error": true, "turn-error-noteworthy": fatalErrorCode() != null }}>

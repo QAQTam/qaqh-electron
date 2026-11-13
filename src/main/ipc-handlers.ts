@@ -22,6 +22,7 @@ import {
   openExternalUrl,
   uploadAttachment,
 } from "./native-dialogs.js";
+import { putWidgetState, readWidgetStates } from "./widget-states.js";
 import { processGroup } from "./process-metrics.js";
 import { readGpuStatus } from "./gpu-info.js";
 import type { ApprovalView, MainServiceMap, MainServiceMethod } from "./types.js";
@@ -485,6 +486,14 @@ async function handleCommand(
       const shortCommit = commit === "unknown" ? "unknown" : commit.slice(0, 8);
       const display = `${version}+${shortCommit}${process.env.QAQH_GIT_DIRTY === "1" ? "-dirty" : ""}`;
       return { display, version, commit };
+    }
+
+    // widget-directive §3/§4：iframe widget 状态快照（userData 单文件 kv）。
+    case "widget_state_get_all": {
+      return await readWidgetStates();
+    }
+    case "widget_state_put": {
+      return await putWidgetState(String(args.key ?? ""), String(args.value ?? ""));
     }
 
     case "host_memory": {

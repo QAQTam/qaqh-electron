@@ -22,6 +22,7 @@ import { splitBlocks } from "./split";
 import { renderMarkdownHtml } from "./render";
 import { patchMarkdown } from "./patch";
 import { createPaintScheduler } from "./paint";
+import { hydrateWidgetMounts, type WidgetHostContext } from "../widget/host";
 
 /**
  * 单帧同步绘制预算(ms)。120Hz 一帧 8.3ms,留一半给布局与绘制。
@@ -60,7 +61,13 @@ function addCodeBlockHeaders(root: HTMLElement): void {
   }
 }
 
-export const Markdown: Component<{ text: () => string; revision?: string | number; streaming?: boolean }> = (props) => {
+export const Markdown: Component<{
+  text: () => string;
+  revision?: string | number;
+  streaming?: boolean;
+  /** widget-directive：提供后正文 marker 水合成 iframe（assistant 消息专用）。 */
+  widgetCtx?: WidgetHostContext;
+}> = (props) => {
   let host!: HTMLDivElement;
   let tail: HTMLDivElement | undefined;
   let sealedOffset = 0;
@@ -91,6 +98,7 @@ export const Markdown: Component<{ text: () => string; revision?: string | numbe
     node.className = "md-block";
     node.innerHTML = html; // 已净化输出
     addCodeBlockHeaders(node);
+    if (props.widgetCtx) hydrateWidgetMounts(node, props.widgetCtx);
     host.insertBefore(node, tail!);
   };
 
@@ -144,7 +152,10 @@ export const Markdown: Component<{ text: () => string; revision?: string | numbe
         tailHtml = html;
       }
     }
-    if (!isStreaming && tail != null) addCodeBlockHeaders(tail);
+    if (!isStreaming && tail != null) {
+      addCodeBlockHeaders(tail);
+      if (props.widgetCtx) hydrateWidgetMounts(tail, props.widgetCtx);
+    }
     lastCostMs = performance.now() - startedAt;
     earliestAt = performance.now() + (lastCostMs > PAINT_BUDGET_MS ? THROTTLE_MS : 0);
     // 还有没露完的突发就带着新算出的 deadline 再排一帧(每次绘制仍追最新全文)。

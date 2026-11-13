@@ -4,8 +4,12 @@
  */
 import DOMPurify, { type Config } from "dompurify";
 import { marked } from "marked";
+import { useWidgetDirective } from "../widget/directive";
 
 marked.setOptions({ gfm: true, breaks: false, async: false });
+// widget-directive §1：正文 marker 走 token 通道（渲染成挂载点 div），
+// 不进 HTML 通道——DOMPurify 配置无须动，iframe 由 widget/host 在水合阶段生成。
+useWidgetDirective((options) => marked.use(options));
 
 let hooked = false;
 

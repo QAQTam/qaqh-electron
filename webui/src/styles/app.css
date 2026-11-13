@@ -29,14 +29,16 @@
 @import "./components/context-menu.css";
 @import "./components/approval.css";
 @import "./components/gamepad.css";
-@import "./components/genui.css";
+@import "./components/widget.css";
 @import "./components/settings.css";
 @import "./components/controls.css";
 @import "./components/dev-console.css";
 @import "./components/feedback.css";
 @import "./components/deliverables.css";
+@import "./components/exec-drawer.css";
 @import "./components/siwc.css";
 @import "./components/dsaccount.css";
+@import "./components/team.css";
 @import "./components/oauth.css";
 @import "./components/effort.css";
 @import "./components/toolmode.css";

@@ -1,0 +1,103 @@
+/* QAQ-Harness WebUI —— widget-directive 呈现面（marker 挂载点、沙箱框、降级占位、确认浮层） */
+@layer components {
+  .qqh-widget-mount {
+    margin: 0.5rem 0;
+    min-height: 240px;
+    border-radius: 10px;
+    border: 1px dashed var(--border, #d2d6df);
+    background: var(--surface-2, #eaedf1);
+  }
+
+  .qqh-widget-mount:has(> iframe.qqh-widget-frame) {
+    border: none;
+    background: transparent;
+    min-height: 0;
+  }
+
+  /* 对话列宽内的默认宽度；wide 模式吃满正文列宽。 */
+  .qqh-widget-frame {
+    display: block;
+    width: 100%;
+    max-width: 720px;
+    margin: 0.5rem 0;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+  }
+
+  .qqh-widget-mount[data-qqh-mode="wide"] .qqh-widget-frame,
+  .qqh-widget-mount:has(> iframe[data-qqh-mode="wide"]) .qqh-widget-frame {
+    max-width: 100%;
+  }
+
+  iframe.qqh-widget-frame {
+    max-width: 720px;
+  }
+
+  .qqh-widget-fallback {
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border, #d2d6df);
+    background: var(--surface-2, #eaedf1);
+    color: var(--muted, #565d6c);
+    font-size: 0.85rem;
+  }
+
+  /* sendFollowUpMessage 确认浮层（§3：title=弹窗标题）。 */
+  .qqh-widget-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  .qqh-widget-dialog {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    width: min(480px, calc(100vw - 48px));
+    padding: 1rem 1.25rem;
+    border-radius: 12px;
+    border: 1px solid var(--border, #d2d6df);
+    background: var(--surface, #ffffff);
+    color: var(--text, #12151a);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  }
+
+  .qqh-widget-dialog-title {
+    font-weight: 600;
+  }
+
+  .qqh-widget-dialog-body {
+    max-height: 40vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    color: var(--muted, #565d6c);
+    font-size: 0.9rem;
+  }
+
+  .qqh-widget-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .qqh-widget-dialog-actions button {
+    padding: 0.35rem 0.9rem;
+    border-radius: 8px;
+    border: 1px solid var(--border, #d2d6df);
+    background: var(--surface-2, #eaedf1);
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .qqh-widget-dialog-send {
+    border-color: var(--accent, #1e5adb) !important;
+    background: var(--accent, #1e5adb) !important;
+    color: #fff !important;
+  }
+}
