@@ -15,6 +15,7 @@ export function sessionBootstrap(
     tools?: ToolCallView[];
     interactions?: SessionBootstrap["state"]["interactions"];
     title?: string | null;
+    timelineFromOrd?: number | null;
   } = {},
 ): SessionBootstrap {
   return {
@@ -35,6 +36,7 @@ export function sessionBootstrap(
       interactions: options.interactions ?? [],
       subagents: [],
       exec_sessions: [],
+      ...(options.timelineFromOrd != null ? { timeline_from_ord: options.timelineFromOrd } : {}),
     },
   };
 }

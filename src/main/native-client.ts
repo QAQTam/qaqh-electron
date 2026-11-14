@@ -134,7 +134,7 @@ export interface NativeRingingClient {
   submit(target: unknown, command: unknown, options?: NativeSubmitOptions): Promise<NativeSubmitResult>;
   commandStatus(commandId: string): Promise<unknown>;
   serviceCall(method: string, params: unknown): Promise<unknown>;
-  bootstrap(seed: string): Promise<unknown>;
+  bootstrap(seed: string, timelineTail?: number | null): Promise<unknown>;
   approvalsRaw(seed: string): Promise<unknown>;
   teamRaw(seed: string): Promise<unknown>;
   downloadContent(reference: string): Promise<Uint8Array>;

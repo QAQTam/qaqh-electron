@@ -37,6 +37,15 @@ import type {
 
 export type EventSender = (eventName: string, payload: any) => void;
 
+/**
+ * bootstrap 尾窗块数(bootstrap 读口 opt-in,`?timeline_tail=N`):timeline 只
+ * 带 最近 N 块(后端回合边界回退,`state.timeline_from_ord` 标记边界),被截
+ * 历史由渲染层 `session.turn` 按回合取回。daemon 缺参 = 全量快照,旧客户端
+ * (TUI/Android/HarmonyOS)不受影响。事件推送与 IPC 手动重取共用同一读口,
+ * 保证两条路径物化出的窗口一致。
+ */
+const BOOTSTRAP_TIMELINE_TAIL = 600;
+
 export class RingingClient {
   private native: NativeRingingClient | null = null;
   private credentials: DaemonDiscovery | null = null;
@@ -137,7 +146,7 @@ export class RingingClient {
     try {
       const native = this.native;
       if (!native || seed !== this.activeSeed) return;
-      const bootstrap = await native.bootstrap(seed);
+      const bootstrap = await native.bootstrap(seed, BOOTSTRAP_TIMELINE_TAIL);
       if (seed !== this.activeSeed) return;
       this.eventSender("projection://bootstrap", { session_id: seed, bootstrap });
       this.eventSender("conn://liveness", {});
@@ -251,7 +260,7 @@ export class RingingClient {
   /** Canonical flattened session state. */
   async bootstrap(seed: string): Promise<SessionBootstrap> {
     await this.init();
-    return this.native!.bootstrap(seed) as Promise<SessionBootstrap>;
+    return this.native!.bootstrap(seed, BOOTSTRAP_TIMELINE_TAIL) as Promise<SessionBootstrap>;
   }
 
   async readContentText(contentRef: string, signal?: AbortSignal): Promise<string> {

@@ -10,14 +10,14 @@ import { createSignal, createStore } from "solid-js";
 import { transport, desktopHostSurface, execSessionTarget, sessionTarget, type ApprovalView, type StreamHandlers, type ProjectionStatusWire, type TodoItemWire } from "../lib/transport";
 import { now } from "../lib/time";
 import { onConfigChanged } from "../lib/config-events";
-import { applySessionBootstrap, applySessionEvent, contentRefsInPayload, emptySession, forceSealTurn, pendingContentRefs, resolveContentRef } from "./reducer";
+import { applySessionBootstrap, applySessionEvent, contentRefsInPayload, emptySession, forceSealTurn, pendingContentRefs, refillGapSpans, resolveContentRef, sessionTurnFromSnapshot } from "./reducer";
 import { ContentLoader } from "./content-loader";
 import { evictForWindow, fillGapHeights } from "./pagination";
 import { HANDOFF_TOOL, handoffFactsOfTurn, type HandoffSealedView } from "./handoff";
 import type { SessionState, Wait } from "./types";
 import { normalizeActivity, type SessionActivity } from "./projection";
 import type {
- GoalStatus, GoalView, ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, UsageInfo, ToolsSettingPatch, WidgetContext, JsonValue
+  GoalStatus, GoalView, ModelSelection, SessionBootstrap, SessionContentRef, SessionEventFrame, SessionListEntry, SessionSettingsPatch, SessionTurnSnapshot, UsageInfo, ToolsSettingPatch, WidgetContext, JsonValue
 } from "../api/contract";
 import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
 import { registry, refreshRegistry } from "../settings/registry";
@@ -154,6 +154,9 @@ function cacheHitPercent(usage: UsageInfo): number | null {
  */
 const CANCEL_WATCHDOG_MS = 10_000;
 export { CANCEL_WATCHDOG_MS };
+
+/** loadOlder 单次回填的回合数上限;剩余占位随后续上滚手势继续分批取回。 */
+const LOAD_OLDER_BATCH = 10;
 
 export class SessionStore {
   readonly seed: string;
@@ -547,6 +550,14 @@ export class SessionStore {
     if (!this.sawHandoffCall) return;
     for (const turn of Object.values(this.stateGet.turns)) {
       if (handoffFactsOfTurn(turn, this.seed).length > 0) {
+        this.sealedLocallySig[1](true);
+        return;
+      }
+    }
+    // 尾窗截断的会话,封箱回合可能在界外:按回合取回的切片进 originTurns,
+    // 这里补扫同一批事实(尚未封箱时才走到这,封箱后本方法直接早退)。
+    for (const snapshot of Object.values(this.stateGet.originTurns)) {
+      if (handoffFactsOfTurn(sessionTurnFromSnapshot(snapshot), this.seed).length > 0) {
         this.sealedLocallySig[1](true);
         return;
       }
@@ -1305,7 +1316,44 @@ export class SessionStore {
 
   /** 向上翻页：单流由 bootstrap 提供全量快照，无 timeline 分页。 */
   async loadOlder(): Promise<boolean> {
-    return false;
+    if (this.disposed || !this.active) return false;
+    if (this.loadingOlder[0]()) return false;
+    const generation = this.activationGeneration;
+    const target = this.oldestGapSpan();
+    if (target == null) return false;
+    this.loadingOlder[1](true);
+    try {
+      // 单次手势只回填一批:尾窗截断的界外回合可能有几百个,靠 shouldLoadOlder
+      // 随上滚反复触发,而不是一口气拉回全史。
+      const batch = target.spans.slice(0, LOAD_OLDER_BATCH);
+      const fetched: Array<{ turnId: string; snapshot: SessionTurnSnapshot }> = [];
+      for (const span of batch) {
+        if (this.disposed || generation !== this.activationGeneration) return false;
+        const snapshot = await transport.query("session.turn", { session_id: this.seed, turn_id: span.key });
+        if (snapshot) fetched.push({ turnId: span.key, snapshot });
+      }
+      if (fetched.length === 0) return false;
+      this.mutate((draft) => refillGapSpans(draft, target.key, fetched));
+      for (const item of fetched) this.hydrateContent(contentRefsInPayload(item.snapshot));
+      // 回填可能带回界外的封箱事实(fork 会话的交接回合通常在会话头部)。
+      if (fetched.some((item) => item.snapshot.tools.some((tool) => tool.tool_name === HANDOFF_TOOL))) {
+        this.sawHandoffCall = true;
+      }
+      this.refreshSealedFacts();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (generation === this.activationGeneration && !this.disposed) this.loadingOlder[1](false);
+    }
+  }
+
+  /** 最旧的未回填 gap 段(含其回合键序列);无占位 = null。 */
+  private oldestGapSpan(): { key: string; spans: Array<{ key: string; height: number }> } | null {
+    for (const slot of this.stateGet.slots) {
+      if (slot.kind === "gap" && slot.spans.length > 0) return { key: slot.key, spans: slot.spans.map((span) => ({ ...span })) };
+    }
+    return null;
   }
 
   /**

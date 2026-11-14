@@ -391,8 +391,14 @@ impl NativeClient {
 
     /// 会话快照（`SessionBootstrap`，含校验过的契约 revision）。
     #[napi]
-    pub async fn bootstrap(&self, seed: String) -> Result<Value> {
-        let bootstrap = self.client.bootstrap(seed.as_str()).await.map_err(client_error)?;
+    /// 权威快照。`timeline_tail` 为 Some(n) 时只取最近 n 块 timeline(回合边界
+    /// 回退),历史回合由 session.turn 按需取回;None = 全量快照(旧语义)。
+    pub async fn bootstrap(&self, seed: String, timeline_tail: Option<u32>) -> Result<Value> {
+        let bootstrap = self
+            .client
+            .bootstrap(seed.as_str(), timeline_tail)
+            .await
+            .map_err(client_error)?;
         serde_json::to_value(bootstrap)
             .map_err(|e| json_error("protocol", format!("bootstrap encode: {e}")))
     }

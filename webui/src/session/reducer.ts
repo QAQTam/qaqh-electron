@@ -1,6 +1,7 @@
 /** Reduce the Ringing v3 bootstrap and flattened session event stream. */
 import {
   emptySession,
+  type GapSpan,
   type SessionState,
   type Slot,
   type Step,
@@ -235,6 +236,9 @@ export function recomputeDerived(draft: SessionState): void {
   draft.runningTurns = running;
   draft.failedTurns = failed;
   draft.activeTurnKey = activeTurnKey;
+  // 「往上翻还有可取回的历史」= 存在未回填的 gap 段(尾窗截断或窗口淘汰都算)。
+  // 老的「服务端还有下一页」语义已随 turn_index 翻页协议退役,此处重接。
+  draft.hasMore = draft.slots.some((slot) => slot.kind === "gap" && slot.spans.length > 0);
   const open = findOpenReasoning(draft);
   draft.activeReasoningId = open?.id ?? null;
   draft.activeReasoningTurnKey = open?.turnKey ?? null;
@@ -556,6 +560,12 @@ function applyTimelineEntry(draft: SessionState, entry: TimelineEntry, tools: Ma
   }
 }
 
+/** timeline 条目归属的 turn_id;compaction 无回合锚点。 */
+function timelineEntryTurnId(entry: TimelineEntry): string | null {
+  if (entry.kind === "compaction") return null;
+  return entry.data.turn_id ?? null;
+}
+
 /** Materialize the canonical bootstrap without routing through the retired ConversationSnapshot shape. */
 export function applySessionBootstrap(draft: SessionState, bootstrap: RingingBootstrap): SessionState {
   const expanded = new Map(Object.values(draft.turns).map((turn) => [turn.id, turn.expanded]));
@@ -569,7 +579,31 @@ export function applySessionBootstrap(draft: SessionState, bootstrap: RingingBoo
   draft.serverEpoch = bootstrap.server_epoch;
   draft.watermark = bootstrap.state.seq;
 
+  // 尾窗 bootstrap(`state.timeline_from_ord` 非空 = timeline 被裁过):窗口外
+  // 的回合不再物化空壳,而是进 gap 占位——正文由 `session.turn` 按回合取回
+  // (loadOlder)。窗口归属按 timeline 里的 turn_id 判定:边界由后端保证落在
+  // 回合边界,一个回合要么整进窗口要么整在界外。
+  const timelineFromOrd = bootstrap.state.timeline_from_ord ?? null;
+  const windowTurnIds = new Set<string>();
+  for (const entry of bootstrap.state.timeline) {
+    const turnId = timelineEntryTurnId(entry);
+    if (turnId != null) windowTurnIds.add(turnId);
+  }
+  // 占位段总是最旧前缀:遇到第一个窗口回合就把累积的界外键冲刷成 gap 槽,
+  // 保证槽位序与回合序一致(后端 turns 按 seq 升序)。
+  let gapTurnKeys: string[] = [];
+  const flushGap = (): void => {
+    if (gapTurnKeys.length === 0) return;
+    draft.slots.push({ kind: "gap", key: `gap:${gapTurnKeys[0]}`, spans: gapTurnKeys.map((key) => ({ key, height: 0 })) });
+    gapTurnKeys = [];
+  };
+
   for (const item of bootstrap.state.turns) {
+    if (timelineFromOrd != null && !windowTurnIds.has(item.turn_id)) {
+      gapTurnKeys.push(item.turn_id);
+      continue;
+    }
+    flushGap();
     const status = statusFromOutcome(item.outcome);
     const turn: Turn = {
       id: item.turn_id,
@@ -589,6 +623,7 @@ export function applySessionBootstrap(draft: SessionState, bootstrap: RingingBoo
     draft.turns[turn.key] = turn;
     draft.slots.push({ kind: "turn", key: turn.key });
   }
+  flushGap();
   draft.waits = bootstrap.state.interactions.filter((item) => item.resolution == null).map((item) => ({
     interactionId: item.interaction_id,
     turnKey: findTurn(draft, item.turn_id)?.key ?? null,
@@ -601,13 +636,15 @@ export function applySessionBootstrap(draft: SessionState, bootstrap: RingingBoo
   const tools = new Map(bootstrap.state.tools.map((tool) => [tool.call_id, tool]));
   for (const entry of bootstrap.state.timeline) applyTimelineEntry(draft, entry, tools);
   for (const tool of bootstrap.state.tools) {
+    // 尾窗外的工具调用不得经 ensureTurn 幽灵物化回合:它们归属的回合在界外,
+    // 正文等 loadOlder 取回时随回合切片一起落地。
+    if (tool.turn_id != null && timelineFromOrd != null && !windowTurnIds.has(tool.turn_id)) continue;
     if (!Object.values(draft.turns).some((turn) => turn.steps.some((step) => step.kind === "tool" && step.id === tool.call_id))) {
       upsertToolCall(draft, tool);
     }
   }
   draft.totalTurns = bootstrap.state.turns.length;
-  draft.hasMore = false;
-  draft.truncatedBefore = false;
+  draft.truncatedBefore = timelineFromOrd != null;
   draft.oldestIndex = null;
   recomputeDerived(draft);
   return draft;
@@ -643,6 +680,49 @@ export function sessionTurnFromSnapshot(snapshot: SessionTurnSnapshot): Turn {
   }
   recomputeDerived(draft);
   return turn;
+}
+
+/**
+ * loadOlder 回填:把 gap 段中取到的回合切片物化回渲染序,取回失败的键留在
+ * 占位里(下次再试)。回合数据同时进 `originTurns`(执行卡在淘汰后的读面)。
+ * 相邻 gap 段合并,避免同一屏出现两段占位。
+ */
+export function refillGapSpans(
+  draft: SessionState,
+  gapKey: string,
+  fetched: ReadonlyArray<{ turnId: string; snapshot: SessionTurnSnapshot }>,
+): void {
+  const index = draft.slots.findIndex((slot) => slot.kind === "gap" && slot.key === gapKey);
+  if (index < 0) return;
+  const slot = draft.slots[index]!;
+  if (slot.kind !== "gap") return;
+  const byId = new Map(fetched.map((item) => [item.turnId, item.snapshot]));
+  const next: Slot[] = [];
+  const remaining: GapSpan[] = [];
+  for (const span of slot.spans) {
+    const snapshot = byId.get(span.key);
+    if (snapshot == null) {
+      remaining.push(span);
+      continue;
+    }
+    const turn = sessionTurnFromSnapshot(snapshot);
+    draft.turns[turn.key] = turn;
+    draft.originTurns[turn.key] = snapshot;
+    next.push({ kind: "turn", key: turn.key });
+  }
+  if (remaining.length > 0) next.push({ kind: "gap", key: gapKey, spans: remaining });
+  draft.slots.splice(index, 1, ...next);
+  const merged: Slot[] = [];
+  for (const candidate of draft.slots) {
+    const tail = merged[merged.length - 1];
+    if (tail?.kind === "gap" && candidate.kind === "gap") {
+      tail.spans = tail.spans.concat(candidate.spans);
+      continue;
+    }
+    merged.push(candidate);
+  }
+  draft.slots = merged;
+  recomputeDerived(draft);
 }
 
 function appendUtf8Tail(current: string, addition: string, maxBytes: number): string {
