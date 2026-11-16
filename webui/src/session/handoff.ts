@@ -19,6 +19,8 @@ export const HANDOFF_TOOL = "handoff";
 export const HANDOFF_FIELD_DOC = "handoff_doc";
 /** 一句话工作简述字段(后端 `FIELD_SUMMARY`;新会话标题直接用它)。 */
 export const HANDOFF_FIELD_SUMMARY = "work_summary";
+/** 模型声明的自动接续偏好(后端 `FIELD_AUTO_CONTINUE`);缺省 = true(老快照零迁移)。 */
+export const HANDOFF_FIELD_AUTO_CONTINUE = "auto_continue";
 /** 上下文看门狗的 actor id(后端 `session_loop.rs::append_watchdog_input`)。 */
 export const WATCHDOG_ACTOR_ID = "handoff-watchdog";
 
@@ -45,6 +47,23 @@ export type HandoffFact = {
   modifiedFiles: string[];
   contextUsedTokens: number | null;
   contextWindowTokens: number | null;
+  /**
+   * 封箱确认时刻(unix ms,后端 `sealed_at_ms`,T0 权威)。老快照/推断事实缺席时
+   * 为 null,前端退回本地工具步 endedAt——不拿「现在」冒充 T0。
+   */
+  sealedAtMs: number | null;
+  /**
+   * 内核下发的计划开箱时刻(unix ms)= sealed_at_ms + FORK_DELAY_MS。
+   * 倒计时终点与分母的唯一真相源;老快照缺席 = 没有权威窗口,不武装倒计时。
+   * 计划值,不是承诺值(sweep 兜底可能晚于此刻)。
+   */
+  plannedOpenAtMs: number | null;
+  /**
+   * 模型声明的自动接续偏好:false = 本次交接需要人先看一眼,不自动切到 B。
+   * 只影响前端的自动跳转/开箱仪式,**不改变内核 fork**(ADR-0016 §决策 1/3);
+   * 链照常接上,B 由「打开交接会话」接管。缺省 true。
+   */
+  autoContinue: boolean;
   /** 产生这条事实的工具调用 id。 */
   callId: string;
   /**
@@ -174,6 +193,12 @@ export function handoffFactOfToolCall(
   const workSummary = text(args[HANDOFF_FIELD_SUMMARY]) ?? text(payload?.[HANDOFF_FIELD_SUMMARY]) ?? "";
   // 没有正文就不配叫交接:宁可不 fork,也不拿一句人话去喂新会话。
   if (handoffDoc == null) return null;
+  // T0 状态取机器面(sealed_at_ms);偏好 args 优先(模型亲手写的那份结构化),
+  // 机器面兜底。非布尔值/缺省一律 true——字段缺省 ≠ 模型声明不自动接续。
+  const sealedAtMs = count(payload?.sealed_at_ms);
+  const plannedOpenAtMs = count(payload?.planned_open_at_ms);
+  const autoRaw = args[HANDOFF_FIELD_AUTO_CONTINUE] ?? payload?.auto_continue;
+  const autoContinue = typeof autoRaw === "boolean" ? autoRaw : true;
   const fromSessionId = text(payload?.from_session_id) ?? context.sessionId;
   const turnId = text(payload?.turn_id) ?? context.turnId ?? "";
   if (fromSessionId === "" || turnId === "") return null;
@@ -189,6 +214,9 @@ export function handoffFactOfToolCall(
       : [],
     contextUsedTokens: count(payload?.context_used_tokens),
     contextWindowTokens: count(payload?.context_window_tokens),
+    sealedAtMs,
+    plannedOpenAtMs,
+    autoContinue,
     callId: step.id,
     // 事实来自推断而非机器面:入口照给,但出处标出来,别让人以为读到了封箱标记。
     inferred,

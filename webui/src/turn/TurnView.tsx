@@ -253,8 +253,7 @@ const InterjectRow: Component<{ step: InterjectionStep; contentStatus: Record<st
 
 /** 挂载时刻距封箱在此窗口内才播「刚封箱」动画:历史重放(重开/滚动重挂)不播。 */
 const FRESH_SEAL_WINDOW_MS = 10_000;
-/** 卡片上的阅读窗倒计时:**纯展示**(ADR-016 §决策 3),窗口长度与内核 FORK_DELAY_MS 同值。 */
-const AUTO_CONTINUE_MS = 10_000;
+/** 卡片上的阅读窗倒计时:**纯展示**(ADR-016 §决策 3),终点/分母全取后端下发的 planned_open_at_ms。 */
 
 /**
  * 回合尾部的交接卡 —— ADR-016 §决策 6 的投影壳。
@@ -271,23 +270,35 @@ const AUTO_CONTINUE_MS = 10_000;
 export const HandoffCard: Component<{ fact: HandoffFact; sealedAt: number | null; isLatest: boolean; successor: () => string | null }> = (props) => {
   const [docOpen, setDocOpen] = createSignal(false);
   const [eager, setEager] = createSignal(false);
-  // 「刚封箱」在挂载那一刻定格(读一次,不进响应式):daemon 与前端同机,封箱
-  // 时间戳可以直接比对;之后翻回这条历史不重播动画。
-  const fresh = props.sealedAt != null && Date.now() - props.sealedAt < FRESH_SEAL_WINDOW_MS;
+  // T0 权威 = 后端机器面 sealed_at_ms;老快照/推断事实才退回本地工具步 endedAt。
+  // daemon 与前端同机,unix ms 可直接比对。
+  const sealAtMs = props.fact.sealedAtMs ?? props.sealedAt;
+  // 内核下发的计划开箱时刻:倒计时终点 + 窗口长度的唯一真相源。
+  // 老快照/推断事实缺席时不武装倒计时,不拿本地 10_000 冒充(宪法 4:砍兼容层)。
+  const plannedOpenAtMs = props.fact.plannedOpenAtMs;
+  const windowMs = plannedOpenAtMs != null && sealAtMs != null
+    ? Math.max(1, plannedOpenAtMs - sealAtMs)
+    : null;
+  // 「刚封箱」在挂载那一刻定格(读一次,不进响应式);之后翻回历史不重播动画。
+  const fresh = sealAtMs != null && Date.now() - sealAtMs < FRESH_SEAL_WINDOW_MS;
   // 封箱仪式只在 fresh 挂载播一次(纸入盒→封→落位);历史重放直接看终态卡。
   const [ritual, setRitual] = createSignal(fresh);
   // 飞箱起点:卡头槽位的真实矩形,WAAPI 层不猜坐标。
   let iconSlot: HTMLSpanElement | undefined;
   // 「取消自动」=「不拽我」(ADR-016 §决策 6):内核照常 fork,只是前端不自动
-  // 跳转。主进程 toast 的 cancel 与卡上按钮都落这个标记;必须是**普通变量**,
-  // 本仓 Solid 在 root 外写信号不会同步可读,而迟到的主进程消息跑在 Solid 之外。
-  let stay = false;
+  // 跳转。模型声明 auto_continue:false 就是把这个标记的初值设为「不拽我」——
+  // 同一个人可打断的偏好,不新增任何命令/事件。必须是**普通变量**:本仓 Solid
+  // 在 root 外写信号不会同步可读,而迟到的主进程消息跑在 Solid 之外。
+  let stay = !props.fact.autoContinue;
   // 倒计时从决策者降级为展示(§决策 3):从封箱时刻实算后端 T+10s 阅读窗的
   // 剩余时间,重挂不再回满 10s;到点只停表,不自做任何事。
-  const totalSeconds = AUTO_CONTINUE_MS / 1000;
-  const armed = (fresh || props.isLatest) && props.successor() == null;
+  const totalSeconds = windowMs != null ? windowMs / 1000 : 0;
+  const armed = windowMs != null && (fresh || props.isLatest) && props.successor() == null;
+  // 没有权威 T0 就不武装倒计时:不拿「现在」冒充封箱时刻显示假的 10s。
+  const remainingAt = (): number | null =>
+    plannedOpenAtMs == null ? null : Math.max(0, Math.ceil((plannedOpenAtMs - Date.now()) / 1000));
   const [remaining, setRemaining] = createSignal<number | null>(
-    armed ? Math.max(0, Math.ceil(((props.sealedAt ?? Date.now()) + AUTO_CONTINUE_MS - Date.now()) / 1000)) : null,
+    armed ? remainingAt() : null,
   );
   let countdownTimer: ReturnType<typeof setInterval> | null = null;
   const stopCountdown = (): void => {
@@ -315,6 +326,20 @@ export const HandoffCard: Component<{ fact: HandoffFact; sealedAt: number | null
     return `${Math.round((used / window) * 100)}%（${used} / ${window} tokens）`;
   };
   if (armed) {
+    // 1s tick 真正驱动剩余时间(原实现只在挂载时算一次,数字与进度条全程定格)。
+    // 到 0 只清 tick、保留 remaining=0 的「等待内核」态——不自做任何事,
+    // 真正切 B 只由 HandoffSealed 的 successor 跃迁驱动(内核单时刻可能晚于
+    // 计划值:sweep 兜底,故 planned 只是展示窗口,不是承诺)。
+    if (plannedOpenAtMs != null) {
+      countdownTimer = setInterval(() => {
+        const left = remainingAt();
+        setRemaining(left);
+        if (left === 0 && countdownTimer != null) {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+        }
+      }, 1000);
+    }
     // 主进程 toast 的收口:[立即继续] 落 eager 标记,[取消自动] 落「不拽我」。
     // 内核 fork 与后继出现和这两个标记无关;标记只决定前端跳不跳。
     registerHandoffRemote({
@@ -356,6 +381,10 @@ export const HandoffCard: Component<{ fact: HandoffFact; sealedAt: number | null
       <Show when={props.fact.workSummary !== ""}>
         <p class="handoff-summary"><span class="handoff-summary-label">{STR.handoffWorkSummary}：</span>{props.fact.workSummary}</p>
       </Show>
+      {/* 模型声明本次交接不自动接续:链照常接上,只是不自动把人拽过去。 */}
+      <Show when={!props.fact.autoContinue}>
+        <p class="handoff-meta">{STR.handoffPausedNote}</p>
+      </Show>
       <p class="handoff-meta">
         <IconFork aria-hidden="true" />
         {STR.handoffModifiedFiles(props.fact.modifiedFiles.length)}
@@ -369,7 +398,7 @@ export const HandoffCard: Component<{ fact: HandoffFact; sealedAt: number | null
           <div class="handoff-countdown-track" aria-hidden="true">
             <div class="handoff-countdown-bar" style={{ width: `${(Math.max(0, remaining() ?? 0) / totalSeconds) * 100}%` }} />
           </div>
-          <span class="handoff-countdown-label">{eager() ? STR.handoffEagerNote : STR.handoffCountdown(remaining() ?? 0)}</span>
+          <span class="handoff-countdown-label">{remaining() === 0 ? STR.handoffWaitingKernel : eager() ? STR.handoffEagerNote : STR.handoffCountdown(remaining() ?? 0)}</span>
           <button type="button" class="handoff-countdown-cancel" onClick={cancelAuto}>{STR.handoffCountdownCancel}</button>
         </div>
       </Show>

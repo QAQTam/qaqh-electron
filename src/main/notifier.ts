@@ -50,7 +50,9 @@ const EXEC_NOTIFY_MIN_MS = 30_000;
 const ANSWER_SNIPPET_MAX = 160;
 const ERROR_TOAST_THROTTLE_MS = 60_000;
 const MAX_TOAST_ACTIONS = 3;
-/** 封箱阅读窗长度(纯展示):与内核 FORK_DELAY_MS / renderer AUTO_CONTINUE_MS 同值,到点只收卡。 */
+/** toast 卡最长存活(UI 本地宽限,非内核窗口真相源):GIF 11s 素材播完留 1s 再收卡。
+ *  内核阅读窗长度由后端 FORK_DELAY_MS 单一真相源经 planned_open_at_ms 下发,
+ *  renderer 倒计时消费它;这里不与之对齐,避免把动画素材长度绑到调度窗口上。 */
 const SEAL_WINDOW_MS = 10_000;
 
 const isWin = process.platform === "win32";
@@ -341,7 +343,7 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       }
       cards.push(toast({
         title: `已封箱交接 · ${title}`,
-        body: `${summary}；10s 后由内核自动继续交接，可点「取消自动」`,
+        body: `${summary}；交接窗口结束后由内核自动继续，可点「取消自动」`,
         timeoutType: "never",
         buttons: [
           { text: "立即继续", onClick: () => { dismissSeal(key); deps.sendToRenderer("notify://handoff", { action: "continue", key }); } },

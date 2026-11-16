@@ -288,6 +288,10 @@ export const STR = {
   handoffCountdown: (seconds: number) => `${seconds}s 后自动继续交接`,
   handoffCountdownCancel: "取消自动",
   handoffEagerNote: "已登记:内核交接完成后立即跳转",
+  // 计划窗口已走完但 HandoffSealed 还没到(sweep 兜底可能晚于 T+10):只展示等待,
+  // 不自己开箱、不发命令。
+  handoffWaitingKernel: "阅读窗已结束,正在等内核完成交接…",
+  handoffPausedNote: "模型声明本次交接不自动接续:链照常接上,由你手动打开新会话继续",
   forkBadge: "fork",
   forkBadgeTitle: "【此对话为 fork 交接对话】",
   forkFrom: (title: string) => `交接自「${title}」`,

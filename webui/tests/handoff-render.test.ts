@@ -31,7 +31,21 @@ const REPORT = {
   context_used_tokens: 960,
   context_window_tokens: 1000,
 };
-const SEALED = `已封箱交接。本会话到此为止。\n\n\`\`\`json\n${JSON.stringify(REPORT)}\n\`\`\``;
+/** 老快照(ADR-0016 之前)的机器面:不带 T0 / 计划开箱时刻。 */
+function legacySealedText(): string {
+  return `已封箱交接。本会话到此为止。\n\n\`\`\`json\n${JSON.stringify(REPORT)}\n\`\`\``;
+}
+/** 机器面时间戳按本回合封箱时刻动态生成:静态常量会让倒计时断言 flaky。 */
+function sealedText(sealedAtMs: number): string {
+  const report = {
+    ...REPORT,
+    sealed_at_ms: sealedAtMs,
+    planned_open_at_ms: sealedAtMs + 10_000,
+    auto_continue: true,
+    handoff_state: "scheduled",
+  };
+  return `已封箱交接。本会话到此为止。\n\n\`\`\`json\n${JSON.stringify(report)}\n\`\`\``;
+}
 const WATCHDOG_TEXT = "[系统] 上下文占用 96%（960 / 1000 tokens）。本轮必须调用 handoff 写交接文档";
 
 function makeTurn(options: { withUserPrompt: boolean; sealed: boolean; endedAt?: number }): Turn {
@@ -48,6 +62,7 @@ function makeTurn(options: { withUserPrompt: boolean; sealed: boolean; endedAt?:
     },
   ];
   if (options.sealed) {
+    const sealedAtMs = options.endedAt ?? Date.now();
     steps.push({
       kind: "tool",
       id: "call_handoff",
@@ -56,7 +71,7 @@ function makeTurn(options: { withUserPrompt: boolean; sealed: boolean; endedAt?:
       status: "finished",
       state: { kind: "finished", outcome: { kind: "completed" } },
       argsJson: JSON.stringify({ handoff_doc: REPORT.handoff_doc, work_summary: REPORT.work_summary }),
-      output: { text: SEALED },
+      output: { text: sealedText(sealedAtMs) },
       ...(options.endedAt != null ? { endedAt: options.endedAt } : {}),
     });
   }
@@ -129,7 +144,11 @@ test("同回合只有插话时不造空的用戶气泡", async () => {
 });
 
 test("封箱的交接把常驻入口挂在回合尾部，且本地镜像路径不上屏", async () => {
-  mount(makeTurn({ withUserPrompt: true, sealed: true }));
+  const turn = makeTurn({ withUserPrompt: true, sealed: true });
+  // 历史重放(老快照):机器面没有 T0 状态字段,不挂「刚封箱」动画、不武装倒计时。
+  const step = turn.steps[1];
+  if (step?.kind === "tool") step.output = { text: legacySealedText() };
+  mount(turn);
   await flush();
 
   const card = root.querySelector(".handoff-card");
