@@ -479,6 +479,11 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
     return null;
   });
   const segments = createMemo(() => {
+    // 本回合每个事件都会 bump renderVersion。Solid 2.0 的 store 写入在 flush 时
+    // 换 backing,turnSegments 早先捕获的 step 属于旧 backing,后续 tool_finished
+    // 改不到它们;订阅 renderVersion 才能在工具终态/状态/参数增量到达时立即重投影
+    // 当前 backing,而不是等下一条 message 新建 step 才顺带刷新。
+    props.turn.renderVersion;
     const steps = props.turn.steps;
     steps.length;
     const terminal = props.turn.status !== "running";
