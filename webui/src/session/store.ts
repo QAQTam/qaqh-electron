@@ -158,6 +158,11 @@ export { CANCEL_WATCHDOG_MS };
 /** loadOlder 单次回填的回合数上限;剩余占位随后续上滚手势继续分批取回。 */
 const LOAD_OLDER_BATCH = 10;
 
+/** 最近一次成功的 todo.list 投影(按会话 seed):关闭标签重开时即时回放,
+ *  免得右栏在首个 RPC 往返窗口里「收回→再展开」。几十行小对象驻内存成本可忽略,
+ *  stale 数据由 todosSyncPending 的「同步中」徽标声明,刷新落地后原地替换。 */
+const todoCache = new Map<string, TodoItemWire[]>();
+
 export class SessionStore {
   readonly seed: string;
   readonly state: [SessionState, (fn: (draft: SessionState) => void) => void];
@@ -273,6 +278,12 @@ export class SessionStore {
 
   constructor(seed: string) {
     this.seed = seed;
+    // 即时回放上次见过的待办列表(若有):右栏在首个 todo.list 落地前不必收起。
+    const seededTodos = todoCache.get(seed);
+    if (seededTodos != null) {
+      this.todos[1](seededTodos);
+      this.todosSyncPending[1](true);
+    }
     // `name`:归因(attribution/diagnostics)里这条 store 的节点标成 `session.<key>`,
     // 否则热路径上的 memo 只能靠调用栈认。
     this.state = createStore<SessionState>(emptySession(), { name: "session" });
@@ -357,17 +368,16 @@ export class SessionStore {
     this.mutate((draft) => Object.assign(draft, emptySession()));
   }
 
-  /** 卸载重状态:转录、审批/待办全量列表。轻量信号(title 等)保留。 */
+  /** 卸载重状态:转录、审批交互列表。轻量信号与**待办列表**保留。 */
   private unloadForBackground(): void {
     this.releaseBuffers();
     this.clearCancelWatchdog();
     this.loadingOlder[1](false);
     this.waitFrom = null;
     this.pending[1]([]);
-    this.todos[1]([]);
-    this.todosSyncPending[1](false);
-    // Keep the bounded visible window in the session store. Reactivation installs
-    // a new authoritative bootstrap over it, so the old text remains readable.
+    // 待办列表不再清空(切换抖动修复):列表只有几十行小对象,清空的唯一效果是
+    // 重新激活后 RPC 往返窗口里右栏「收回→再展开」。保留旧列表作为 stale 视图,
+    // todosSyncPending 已由 deactivate 置位(面板头显示「同步中」),刷新落地后原地替换。
   }
 
   /** 卸载时丢弃引用缓存与排队任务，旧异步响应不得恢复后台转录。 */
@@ -398,6 +408,8 @@ export class SessionStore {
     this.clearCancelWatchdog();
     this.closeHost();
     this.unloadForBackground();
+    // 标签已关:缓存条目一并退场(重开会话会走 todo.list 重新落地)。
+    todoCache.delete(this.seed);
   }
 
   retry(): void {
@@ -925,6 +937,7 @@ export class SessionStore {
         if (this.disposed || activation !== this.activationGeneration || this.todoRefreshPending) continue;
         if (!Array.isArray(result?.items)) throw new Error("todo.list response is missing items");
         writeStable(this.todos, result.items as TodoItemWire[]);
+        todoCache.set(this.seed, result.items as TodoItemWire[]);
         this.todosSyncPending[1](false);
         this.todoFailures = 0;
         if (this.todoRetryTimer != null) clearTimeout(this.todoRetryTimer);

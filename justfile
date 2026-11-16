@@ -1,6 +1,5 @@
 # Electron is the canonical desktop host and the only supported packaging entry point.
-# `just` exports source identity and optional explicit version overrides.
-# build-all reserves a daily deb revision before exporting it to every build stage.
+# `just` exports the fixed version from package.json and the source identity.
 # Do not add packaging entry points to package.json.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 # Windows 上由 pwsh 7 执行 recipe 与 backtick，无需 Git Bash。
@@ -10,9 +9,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
 release_version := `node -p "require('./package.json').version"`
-release_date := `node -p "require('./package.json').version.split('.')[2].split('-')[0]"`
-build_date := env_var_or_default("QAQH_BUILD_DATE", "")
-build_version := env_var_or_default("QAQH_BUILD_VERSION", "")
+build_version := env_var_or_default("QAQH_BUILD_VERSION", release_version)
 # 后端主仓（main）：打包/契约导出/check 一律走 ../qaqh-backend；
 # 改验证另一份后端时用 QAQH_BACKEND_DIR 覆盖（相对仓根或绝对路径）。
 backend_dir := env_var_or_default("QAQH_BACKEND_DIR", "../qaqh-backend")
@@ -21,7 +18,6 @@ build_short := `git rev-parse --short=8 HEAD`
 # 跨 shell 写法：pwsh/bash 下等价，避免依赖 bash 的 if/printf。
 build_dirty := `node -p "require('child_process').execSync('git status --porcelain').length ? 1 : 0"`
 
-export QAQH_BUILD_DATE := build_date
 export QAQH_BUILD_VERSION := build_version
 export QAQH_GIT_COMMIT := build_commit
 export QAQH_GIT_DIRTY := build_dirty
@@ -31,10 +27,9 @@ export QAQH_BACKEND_DIR := backend_dir
 default:
     @just --list
 
-# 打印本次构建将注入的版本、日期、提交与脏状态。
+# 打印本次构建将注入的版本与提交信息。
 info:
-    @echo 'version  {{if build_version == "" { "automatic for deb/all; " + release_version + " otherwise" } else { build_version }}}'
-    @echo 'date     {{if build_date == "" { "derived from build version" } else { build_date }}}'
+    @echo 'version  {{build_version}}'
     @echo 'commit   {{build_commit}}'
     @echo 'short    {{build_short}}'
     @echo 'dirty    {{build_dirty}}'
@@ -47,8 +42,8 @@ build target="all" *options:
 nsis *options:
     @node scripts/build-all.mjs nsis {{options}}
 
-# 前端-only 滚动打包：版本号由 .tmp/deb-version.json 账本自动分配（北京日期+当天修订），
-# 不重编后端、不走 sdk-check；--wizard 出带安装目录选择的安装包。
+# 前端-only 滚动打包：版本固定取 package.json，不重编后端、不走 sdk-check；
+# --wizard 出带安装目录选择的安装包。
 # 打包前自动强制重建 main bundle + renderer（新鲜度守卫，不会打旧 dist）。
 frontend-rolling *options:
     @node scripts/package-frontend.mjs {{options}}

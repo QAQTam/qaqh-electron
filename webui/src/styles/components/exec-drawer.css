@@ -14,7 +14,7 @@
 }
 
 .exec-drawer-panel {
-  width: min(92vw, 860px);
+  width: min(92vw, 910px);
   height: 100%;
   background: var(--bg);
   border-left: 1px solid var(--border-strong);
@@ -300,6 +300,8 @@
   min-height: 0;
   overflow-y: auto;
   padding: 12px 16px;
+  /* 终端盒高度随输出增长,矮窗口下滚动条出现/消失会引起横向回弹;预留槽位锁宽。 */
+  scrollbar-gutter: stable;
 }
 
 .exec-drawer-skeleton {

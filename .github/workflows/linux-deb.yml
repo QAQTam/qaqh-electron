@@ -9,7 +9,7 @@ on:
 permissions:
   contents: write
 
-# Version allocation and publication share one critical section, including reruns.
+# Fixed version from package.json; publication is serialized with one critical section.
 concurrency:
   group: linux-deb-release
   cancel-in-progress: false
@@ -71,18 +71,18 @@ jobs:
         with:
           tool: just
 
-      - name: Reserve a new daily Debian revision
+      - name: Read fixed release version
         id: version
         working-directory: qaqh-electron
         run: |
-          gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[].tag_name' > "$RUNNER_TEMP/allocated-tags"
-          version=$(node scripts/release-version.mjs "$RUNNER_TEMP/allocated-tags")
+          version=$(node -p "require('./package.json').version")
           tag="v$version"
           printf 'version=%s\ntag=%s\n' "$version" "$tag" >> "$GITHUB_OUTPUT"
           printf 'QAQH_BUILD_VERSION=%s\n' "$version" >> "$GITHUB_ENV"
-          printf 'QAQH_BUILD_DATE=%s\n' "$(printf '%s' "$version" | cut -d. -f3 | cut -d- -f1)" >> "$GITHUB_ENV"
-          gh release create "$tag" --draft --target "$GITHUB_SHA" --title "QAQ-Harness $version" \
-            --notes "Version reserved by Actions run $GITHUB_RUN_ID. Build not yet published."
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "QAQ-Harness $version" \
+              --notes "Release built from $GITHUB_SHA. Build not yet published."
+          fi
 
       - name: Free build disk space
         run: |

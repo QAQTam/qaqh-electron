@@ -59,6 +59,8 @@ export function createSelectionPill(opts: {
   let pillAnim: Animation | null = null;
   let pillAnimTargetY = 0;
   let pillAnimTargetBtn: HTMLElement | null = null;
+  /** 在飞动画是否为退场(收缩离场):强制完成时终结到隐藏态,而不是旧摆位。 */
+  let pillAnimExiting = false;
   let placedContainer: HTMLElement | null = null;
   let resizeObs: ResizeObserver | null = null;
   /** pill 当前逻辑上的宿主项:classify 的 "from",与强制完成的落点回填。 */
@@ -68,6 +70,11 @@ export function createSelectionPill(opts: {
 
   const centerOf = (btn: HTMLElement): number =>
     btn.offsetTop + (btn.offsetHeight - SELECTION_PILL_H) / 2;
+  /** 动画可播性:容器在渲染树 + 未开"减弱动态" + 未进低配;不可播一律快照落位/直隐。 */
+  const playable = (pill: HTMLElement, lowSpec: boolean): boolean =>
+    pill.offsetParent != null &&
+    !window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
+    !lowSpec;
   /** 按当下 DOM 重新解析目标(RO 回调 / onfinish 里用,不依赖 effect 那一轮的键)。 */
   const targetNow = (nav: HTMLElement): HTMLElement | null => {
     const sel = opts.selection();
@@ -124,29 +131,74 @@ export function createSelectionPill(opts: {
       lastSelection = sel;
       const btn = sel == null ? null : opts.findTarget(nav, sel);
       if (btn == null) {
-        // 无选中(空列表/分组收起把活动项卸载了):隐藏;下次出现走首摆快照。
+        // 无选中:焦点交棒离场。摆位动画在飞时直接终结(退场起点应是稳定在场态);
+        // 静止在场时播锚顶收缩(WinUI non-same-level 旧枚段),播完隐藏。
         if (pillAnim != null) {
+          pillAnim.onfinish = null;
           pillAnim.cancel();
           pillAnim = null;
+          pillAnimExiting = false;
+          pillY = null;
+          pillBtn = null;
+          pill.style.opacity = "0";
+          return;
+        }
+        if (pillY != null && playable(pill, lowSpec)) {
+          const fromY = pillY;
+          // 逻辑上此刻已离场(pillY/pillBtn 即刻清空),动画只是视觉余韵;
+          // RO 有 pillAnim 守卫,期间布局变化不会抢跑。
+          pillY = null;
+          pillBtn = null;
+          const exit = pill.animate(
+            [
+              { transform: `translateY(${fromY}px) scaleY(1)`, offset: 0 },
+              { transform: `translateY(${fromY}px) scaleY(0)`, offset: 1 },
+            ],
+            { duration: SELECTION_PILL_MS, easing: "linear", fill: "forwards" },
+          );
+          pillAnim = exit;
+          pillAnimExiting = true;
+          exit.onfinish = () => {
+            if (pillAnim !== exit) return;
+            pillAnim = null;
+            pillAnimExiting = false;
+            pill.style.opacity = "0";
+            exit.cancel();
+          };
+          return;
         }
         pillY = null;
+        pillBtn = null;
         pill.style.opacity = "0";
         return;
       }
       const targetY = centerOf(btn);
 
       if (pillAnim != null) {
-        if (pillAnimTargetY === targetY) return; // 同目标:WinUI 保留第一段动画
-        if (!selChanged) return; // 纯布局变化:不打断,onfinish 自会取新落点
-        // 异目标:强制完成(WinUI "force it to complete")——先把 inline 样式
-        // 钉到旧终点再 cancel fill,避免闪回基态。
-        const stale = pillAnim;
-        pillAnim = null;
-        stale.onfinish = null;
-        pillY = pillAnimTargetY;
-        if (pillAnimTargetBtn != null) pillBtn = pillAnimTargetBtn;
-        pill.style.transform = `translateY(${pillY}px)`;
-        stale.cancel();
+        if (pillAnimExiting) {
+          // 退场在飞又被召回:终结为隐藏态,随后从 null 走进场生长。
+          pillAnim.onfinish = null;
+          pillAnim.cancel();
+          pillAnim = null;
+          pillAnimExiting = false;
+          pillY = null;
+          pillBtn = null;
+          pill.style.opacity = "0";
+        } else {
+          if (pillAnimTargetY === targetY) return; // 同目标:WinUI 保留第一段动画
+          if (!selChanged) return; // 纯布局变化:不打断,onfinish 自会取新落点
+          // 异目标:强制完成(WinUI "force it to complete")——先把 inline 样式
+          // 钉到旧终点再 cancel fill,避免闪回基态。进场动画的终点含 opacity,
+          // 钉位时必须一并补上,否则 cancel 后 pill 留在 inline 的隐藏态。
+          const stale = pillAnim;
+          pillAnim = null;
+          stale.onfinish = null;
+          pillY = pillAnimTargetY;
+          if (pillAnimTargetBtn != null) pillBtn = pillAnimTargetBtn;
+          pill.style.transform = `translateY(${pillY}px)`;
+          pill.style.opacity = "1";
+          stale.cancel();
+        }
       }
 
       // 键没变的重跑(轮询重排/折叠)是布局失效:静默对位,不播动画。
@@ -155,16 +207,45 @@ export function createSelectionPill(opts: {
         return;
       }
 
-      const canPlay =
-        pill.offsetParent != null &&
-        !window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
-        !lowSpec;
+      if (!playable(pill, lowSpec)) {
+        place(pill, btn, targetY);
+        return;
+      }
+      if (pillY == null) {
+        // 进场(WinUI non-same-level 新枚段):在目标槽位锚顶生长,同步淡入。
+        // 冷启动首摆与交棒召回共用这一段;低配/减弱动态已在上面快照落位。
+        const enter = pill.animate(
+          [
+            { transform: `translateY(${targetY}px) scaleY(0)`, opacity: 0, offset: 0 },
+            { transform: `translateY(${targetY}px) scaleY(1)`, opacity: 1, offset: 1 },
+          ],
+          { duration: SELECTION_PILL_MS, easing: "linear", fill: "forwards" },
+        );
+        pillAnim = enter;
+        pillAnimExiting = false;
+        pillAnimTargetY = targetY;
+        pillAnimTargetBtn = btn;
+        enter.onfinish = () => {
+          if (pillAnim !== enter) return;
+          pillAnim = null;
+          // 落定前按当下 DOM 重取目标:动画期间布局变了(折叠/重排/删除)也能自愈。
+          const cur = targetNow(nav);
+          if (cur == null) {
+            pillY = null;
+            pill.style.opacity = "0";
+          } else {
+            place(pill, cur, centerOf(cur));
+          }
+          enter.cancel();
+        };
+        return;
+      }
       const fromBtn = pillBtn;
       const swap =
         fromBtn != null && pillY != null && opts.classify?.(fromBtn, btn) === "swap";
-      // 同位(含同行跨列——那是 swap 的活,见下)或不可播:快照落位。
+      // 同位(含同行跨列——那是 swap 的活,见下):快照落位。
       const leftChanged = swap && fromBtn != null && fromBtn.offsetLeft !== btn.offsetLeft;
-      if (pillY == null || !canPlay || (pillY === targetY && !leftChanged)) {
+      if (pillY === targetY && !leftChanged) {
         place(pill, btn, targetY);
         return;
       }

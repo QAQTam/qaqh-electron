@@ -67,21 +67,19 @@ just dir                  # unpacked app, no installer archive
 just appimage             # AppImage only
 just deb                  # deb only
 just tarball              # tar.gz only
-just info                 # print the version/date/commit that will be injected
+just info                 # print the version and source identity that will be injected
 just check                # Electron/renderer/SDK typecheck and tests
 ```
 
-`just` resolves the source commit and optional version overrides. Before compilation,
-`deb`/`all` reserve a daily `3.0.YYYYMMDD-N` revision in Asia/Shanghai; other targets
-use the manifest version. The resolved identity is exported to Node, Cargo and
-electron-builder. The actual Debian Version is checked after packaging. CI reserves
-globally unique release numbers; local builds keep their own ignored ledger.
-See [release versioning and the planned signed APT repository](docs/deb-release-and-apt.md).
+`just` resolves the source commit and exports the fixed version from `package.json`
+(4.0.0). The resolved identity is exported to Node, Cargo and electron-builder. The
+actual Debian Version is checked after packaging. CI publishes to the fixed tag
+`v4.0.0`. See [release versioning and the planned signed APT repository](docs/deb-release-and-apt.md).
 
-For an explicit build override, keep the date consistent with the full version:
+For an explicit build override:
 
 ```bash
-QAQH_BUILD_DATE=20261031 QAQH_BUILD_VERSION=2.1.20261031-1 just build
+QAQH_BUILD_VERSION=4.0.0 just build
 ```
 
 The packaging script rejects unsupported host architectures rather than silently cross-compiling. It validates the packaged ASAR content and daemon resources before replacing `release/`. A successful package check is not a GUI smoke test; start the packaged app on each target distribution before publishing.

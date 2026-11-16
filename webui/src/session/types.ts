@@ -34,6 +34,12 @@ export interface Turn {
   phase?: import("../api/contract").TurnPhase;
   workStartedAt?: number;
   /**
+   * provider 请求正在重试(`provider_retrying` 帧,仅展示、不落库)。按契约只
+   * 发生在首字节之前,所以任何 message_delta/tool_arguments_delta 到达即清除;
+   * 回合终态同样清除。为 null 等价于无重试在飞。
+   */
+  retrying?: { attempt: number; maxAttempts: number; delaySecs: number; error: string } | null;
+  /**
    * 失败回合的后端事实。`code` 是现成 `TurnError.code`（如 `context_overflow`、
    * `handoff_missing`）：只用于把「需要人看一眼的失败」和一般失败分开呈现，
    * 正文永远直显后端 `message`，前端不编文案、更不静默重试。
@@ -126,6 +132,10 @@ export interface ToolStep {
   targetFiles?: string[];
   /** 参数文本已吐完且形状合法。只用于渲染：执行与声明仍分别由后端决定。 */
   argsComplete?: boolean;
+  /** 编辑中实时行数估算(`tool_arguments_delta` 累计值,内核随参数流数出);
+   *  终态真实 diff 另见 `codeDelta`(权威,优先)。缺席=该调用没有行概念。 */
+  linesAdded?: number;
+  linesRemoved?: number;
   status: ToolStatus;
   state?: import("../api/contract").ToolCallState;
   execSessionId?: string;

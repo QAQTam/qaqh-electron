@@ -29,6 +29,7 @@ import {
 } from "../lib/visual";
 import { desktopHost } from "../lib/desktop-host";
 import { applyTheme, applyThemePreset, storedTheme, themePreset, THEME_PRESET_OPTIONS, type ThemePreset } from "../lib/theme";
+import { applyTerminalScheme, TERMINAL_SCHEME_OPTIONS, terminalScheme, type TerminalSchemeId } from "../lib/terminal-theme";
 import { setSyntaxPackSelection, setThemePackSelection, syntaxPackSelection, syntaxThemes, themePackSelection, themePacks } from "../plugins/loader";
 import {
   FONT_PRESETS,
@@ -212,6 +213,15 @@ const LocalSettings: Component<{
             />
           </Field>
         </Show>
+        {/* 模拟终端(命令执行抽屉/工具输出)配色:方案值抄自 Windows Terminal 内置配色。 */}
+        <Field label="终端配色" hint="命令执行抽屉与工具输出的模拟终端配色；经典方案抄自 Windows Terminal 内置色板（Campbell / Tango 等），仅保存在本机。">
+          <Select
+            value={terminalScheme()}
+            onChange={(value) => applyTerminalScheme(value as TerminalSchemeId)}
+            options={TERMINAL_SCHEME_OPTIONS}
+            ariaLabel="终端配色"
+          />
+        </Field>
         <Field label={STR.settingsTheme}>
           <Select
             value={themeChoice()}
@@ -468,7 +478,7 @@ export const SettingsView: Component<{
                     </div>
                     <Show when={currentTier() == null}>
                       <p class="field-hint">
-                        读到的档位 {config().permissionLevel} 不在 1..=3 内——后端会拒绝保存,请先选一个合法档位。
+                        读到的档位 {config().permissionLevel} 不在 1..=4 内——后端会拒绝保存,请先选一个合法档位。
                       </p>
                     </Show>
                     <Show when={bypassPending()}>

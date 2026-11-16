@@ -14,31 +14,18 @@ bundled daemon, so client and daemon share one contract revision by construction
 Each release includes a deb, SHA256SUMS and the three source commit IDs in
 build-provenance.json.
 
-## Version allocation
+## Version
 
 The package name remains `qaqh-electron`, architecture `amd64`. Its actual Debian
-Version is `3.0.YYYYMMDD-N`, with the date taken in Asia/Shanghai:
+Version is the fixed manifest version (`4.0.0`), with no date or revision suffix.
 
-```
-3.0.20261105-1 < 3.0.20261105-2 < 3.0.20261105-10 < 3.0.20261106-1
-```
+CI serializes release jobs with a single concurrency group and publishes to the
+fixed tag `v4.0.0`; a draft release is created only when that tag does not exist.
+Do not replace a published version's assets.
 
-CI serializes release jobs, scans releases including reserved drafts, and reserves
-the next number as a draft before building. Failed builds consume their revision;
-reruns allocate a new one. Do not delete reserved drafts or replace a published
-version's assets. GitHub concurrency can supersede an older pending run; it does
-not interrupt the active release.
-
-Local builds use `.tmp/deb-version.json` as their allocation ledger. They increment
-on the same date and start at 1 on the next date. The source manifest is a minimum
-version. An explicit `QAQH_BUILD_VERSION` overrides local allocation; its date is
-derived unless QAQH_BUILD_DATE is supplied. Local numbers are not globally
-coordinated with CI: distribute official packages only through CI. After testing a
-locally newer build, the next official version must exceed it for APT to upgrade.
-
-electron-builder normally maps semver `-N` to Debian `~N`. The build supplies the
-raw Debian version to FPM and checks `dpkg-deb --field ... Version` before accepting
-an artifact. A same-version rebuild is not an APT update, regardless of file hash.
+The build supplies the raw Debian version to FPM and checks
+`dpkg-deb --field ... Version` before accepting an artifact. A same-version rebuild
+is not an APT update, regardless of file hash.
 
 ## Selected distribution: signed binary APT repository on GitHub Pages
 
@@ -50,7 +37,7 @@ builders; our existing prebuilt Electron deb fits a binary APT repository direct
 The repository needs this structure (generated with aptly or reprepro):
 
 ```
-pool/main/q/qaqh-electron/qaqh-electron_3.0.YYYYMMDD-N_amd64.deb
+pool/main/q/qaqh-electron/qaqh-electron_4.0.0_amd64.deb
 dists/stable/main/binary-amd64/Packages.gz
 dists/stable/Release
 dists/stable/InRelease

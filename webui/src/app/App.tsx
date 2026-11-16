@@ -125,8 +125,9 @@ const shotSupported = screenshotSupported({
   userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
 });
 
-/** 「设置」刻意不在这个信号里：它是浮层页（见 `settings/store`）。 */
-const [section, setSection] = createSignal<Exclude<GlobalSection, "settings">>("messages");
+/** 「设置」刻意不在这个信号里：它是浮层页（见 `settings/store`）。
+ *  冷启动默认落主页(产品决策 2026-11-14):首屏让给品牌与卖点,会话从侧栏/主页恢复。 */
+const [section, setSection] = createSignal<Exclude<GlobalSection, "settings">>("home");
 
 /* 侧栏收展(汉堡):记忆到 localStorage,与 MessageSidebar 的工作区分组折叠键分开。 */
 const SIDEBAR_COLLAPSED_KEY = "qaqh.app-sidebar.collapsed";
@@ -538,7 +539,7 @@ const App: Component = () => {
         openQuitDialog();
         return;
       }
-      // 浮层开着时快捷键归浮层:Ctrl+T/W/Tab/1-9 不该在遮罩背后建会话、切标签。
+      // 浮层开着时快捷键归浮层:Ctrl+W/Tab/1-9 不该在遮罩背后建会话、切标签。
       if (settingsOpen()) {
         const modKey = event.ctrlKey || event.metaKey;
         if (event.key === "Escape") {
@@ -565,11 +566,8 @@ const App: Component = () => {
         return;
       }
       if (!mod) return;
-      if (event.key === "t" || event.key === "T") {
-        event.preventDefault();
-        setSection("messages");
-        createSession();
-      } else if (event.key === "w" || event.key === "W") {
+      // Ctrl+T「新对话」是 TUI 的键位,2026-11-14 从桌面壳移除;新对话入口 = 主页输入框。
+      if (event.key === "w" || event.key === "W") {
         event.preventDefault();
         setSection("messages");
         const id = activeId();
@@ -916,19 +914,20 @@ const App: Component = () => {
           >
             <IconMenu />
           </button>
-          <Show when={settingsOpen() || section() !== "messages"}>
+          {/* 主页是根页,不出现「返回」;返回目标永远是消息页。 */}
+          <Show when={settingsOpen() || (section() !== "messages" && section() !== "home")}>
             <button type="button" class="titlebar-back" aria-label="返回消息" title="返回消息" onClick={() => navigateSection("messages")}>
               <IconArrowLeft />
             </button>
           </Show>
-          <Show when={!isDesktop}><div class="titlebar-brand">QAQH</div></Show>
+          <Show when={!isDesktop}><div class="titlebar-brand">{STR.productName}</div></Show>
         </div>
         <div class="topbar-center">
           <Show
             when={section() === "messages" && !settingsOpen() && !isStartup() && activeTab() != null}
             fallback={
               <div class="titlebar-session-title">
-                {settingsOpen() ? "设置" : section() === "tools" ? "工具" : section() === "team" ? STR.teamTitle : section() === "oauth" ? "接入" : "新会话"}
+                {settingsOpen() ? "设置" : section() === "home" ? STR.productName : section() === "tools" ? "工具" : section() === "team" ? STR.teamTitle : section() === "oauth" ? "接入" : "新会话"}
               </div>
             }
           >
@@ -1020,7 +1019,8 @@ const App: Component = () => {
         width={sidebarWidth()}
         onWidthCommit={commitSidebarWidth}
         sessions={sessionCatalog()}
-        activeSeed={isStartup() ? null : (activeTab()?.seed ?? null)}
+        /* 主页 = 焦点离开列表:激活指示器交棒给顶部导航,列表行与 pill 一并退出。 */
+        activeSeed={section() === "home" || isStartup() ? null : (activeTab()?.seed ?? null)}
         activePending={() => activeTab()?.store.pending[0]() ?? []}
         onSelect={(seed) => { setSidebarDrawerOpen(false); setSection("messages"); void openSession(seed); }}
         /* 两颗「+」都走 `createSession`:头部那颗保持当前粘性目标,工作区行那颗顺手
@@ -1078,12 +1078,20 @@ const App: Component = () => {
               </span>
             </div>
           </Show>
-          <Show when={section() === "messages"}>
+          {/* 首页与消息页共用这一块 JSX,输入面始终只有一份;但**内容选择**必须感知
+              section:外层 when 在 messages↔home 间恒真,Show 不重渲染子树——内层若只看
+              activeTab,有活动会话时点「主页」主区会纹丝不动(BUG-2026-11-14)。 */}
+          <Show when={section() === "messages" || section() === "home"}>
             <Show
-              when={!isStartup() && activeTab() != null}
+              when={section() === "messages" && !isStartup() && activeTab() != null}
               fallback={
                 <div class="session-column">
                   <StartupView
+                    /* 主页发送首条消息:预检一通过就切到消息页,不等 create/open 落地;
+                       会话页的正文切换由既有判定(!isStartup && activeTab)接手,
+                       失败留在启动页,草稿保留,改完重试。 */
+                    onSubmitted={() => setSection("messages")}
+                    onOpenSession={(seed) => { setSection("messages"); void openSession(seed); }}
                     onScreenshot={shotSupported ? () => void screenshot() : undefined}
                     onManageProfiles={openProfilesSettings}
                   />

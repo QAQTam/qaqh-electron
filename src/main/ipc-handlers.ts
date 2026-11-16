@@ -84,7 +84,7 @@ const RINGING_COMMAND_TYPES: ReadonlySet<RingingCommand["type"]> = new Set([
   "session.rename", "session.archive", "session.unarchive", "session.delete", "session.shutdown",
   "agent.reload_config", "conversation.send_message", "conversation.cancel", "conversation.truncate", "interaction.ask.respond",
   "goal.set", "goal.get", "goal.clear",
-  "interaction.ask.dismiss", "driver.claim", "driver.release", "tool.permission.respond",
+  "interaction.ask.dismiss", "tool.permission.respond",
   "provider.list", "provider.presets.list", "provider.upsert", "provider.delete",
   "provider.model.upsert", "provider.model.delete",
   "model.selection.set_default", "config.save", "config.set_permission_level", "workspace.set",
@@ -533,14 +533,10 @@ async function handleCommand(
     }
 
     case "app_version": {
-      // `just` injects the pack-date version at bundle time. The source
-      // package.json keeps a stable date base, and app.getVersion() is only a
-      // fallback for an ad-hoc dev bundle built without just.
+      // 版本固定取 package.json(4.0.0)，不再拼接 git 提交/日期。
       const version = process.env.QAQH_BUILD_VERSION || app.getVersion();
       const commit = process.env.QAQH_GIT_COMMIT || "unknown";
-      const shortCommit = commit === "unknown" ? "unknown" : commit.slice(0, 8);
-      const display = `${version}+${shortCommit}${process.env.QAQH_GIT_DIRTY === "1" ? "-dirty" : ""}`;
-      return { display, version, commit };
+      return { display: version, version, commit };
     }
     // widget-directive §3/§4：iframe widget 状态快照（userData 单文件 kv）。
     case "widget_state_get_all": {

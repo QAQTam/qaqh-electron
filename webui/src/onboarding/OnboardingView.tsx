@@ -98,7 +98,7 @@ export const OnboardingView: Component<{ onOpenSettings?: () => void }> = (props
       <div class="onboarding-panel">
         <header class="onboarding-head">
           <div>
-            <h1 id="onboarding-title">开始使用 QAQ-Harness</h1>
+            <h1 id="onboarding-title">开始使用 Overcoder</h1>
             <p>添加服务商和模型，之后可在会话中选择。</p>
           </div>
           <button type="button" class="ghost-mini" onClick={dismissOnboarding}>

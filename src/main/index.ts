@@ -543,7 +543,9 @@ function createMainWindow(): BrowserWindow {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    title: "QAQ-Harness",
+    // 窗口标题走产品品牌(与 webui/index.html 的 <title> 一致,防加载间隙闪跳);
+    // 技术身份(appId/托盘/通知归属)仍是 QAQ-Harness,见 electron-builder.yml。
+    title: "Overcoder",
     show: false,
     // Win11 22H2+ 原生 Mica:窗口背景必须透出去,DWM 才能画 systembackdrop。
     // 不支持的系统(Win10 / 22H2-)材质是 no-op,渲染层 syncNativeBackdrop 拿到
@@ -659,6 +661,55 @@ function createMainWindow(): BrowserWindow {
     if (url === shell || url.startsWith(`${shell}#`)) return;
     event.preventDefault();
     if (/^https?:/i.test(url)) void openExternalUrl(url).catch(() => {});
+  });
+
+  // window.open(target=_blank) 走 did-create-window 通道,不经过 will-navigate:
+  // 不设 setWindowOpenHandler 时 Electron 默认放行,会开出一个继承壳会话的裸子窗口
+  // (siwc/dsaccount 组件在 onOpenLink 缺省时就是这样兜底的)。统一收口:http(s)
+  // 交系统浏览器(与 will-navigate 同口径),其余一律 deny——壳不派生任何新窗口。
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) void openExternalUrl(url).catch(() => {});
+    return { action: "deny" };
+  });
+
+  // Renderer 兜底(WCO 的设计边界是「关窗不依赖 renderer 存活」,这里把「界面回血」
+  // 也接上):渲染进程崩溃后 reload 即重连——会话状态在 daemon 侧,renderer 只是
+  // 投影。30s 窗口内第 4 次起视为稳态崩溃,停手防 reload 打转。
+  let crashCount = 0;
+  let crashWindowStart = 0;
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    if (details.reason === "clean-exit" || allowWindowClose) return;
+    if (mainWindow == null || mainWindow.isDestroyed()) return;
+    const now = Date.now();
+    if (now - crashWindowStart > 30_000) { crashWindowStart = now; crashCount = 0; }
+    crashCount += 1;
+    if (crashCount > 3) {
+      console.error(`[app] renderer crashed repeatedly (${details.reason}); auto-reload suspended`);
+      return;
+    }
+    console.warn(`[app] renderer gone (${details.reason}, exit ${details.exitCode}); reloading`);
+    mainWindow.webContents.reload();
+  });
+
+  // unresponsive 常见于长同步任务的瞬时假死,之后 responsive 事件会解除——见死就
+  // reload 会杀掉在飞的流式回合。先挂宽限定时器,期内恢复即撤;真卡满 15s 才回血。
+  let unresponsiveTimer: NodeJS.Timeout | null = null;
+  mainWindow.webContents.on("unresponsive", () => {
+    if (allowWindowClose || mainWindow == null || mainWindow.isDestroyed() || unresponsiveTimer != null) return;
+    console.warn("[app] renderer unresponsive; recovering in 15s unless it becomes responsive");
+    unresponsiveTimer = setTimeout(() => {
+      unresponsiveTimer = null;
+      if (allowWindowClose || mainWindow == null || mainWindow.isDestroyed()) return;
+      console.warn("[app] renderer still unresponsive; reloading");
+      mainWindow.webContents.reload();
+    }, 15_000);
+  });
+  mainWindow.webContents.on("responsive", () => {
+    if (unresponsiveTimer != null) {
+      clearTimeout(unresponsiveTimer);
+      unresponsiveTimer = null;
+      console.info("[app] renderer responsive again; recovery cancelled");
+    }
   });
 
   mainWindow.on("closed", () => {

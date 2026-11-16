@@ -13,8 +13,7 @@
  *   node scripts/make-bundles.mjs [--skip-frontend] [--skip-backend] [--skip-install]
  *
  * 产物: .qaqh-bundles/<releaseId>/bundles/<kind>-<buildId>.zip (+ bundle-root 目录)
- * 构建身份沿用 just 注入的 QAQH_BUILD_VERSION / QAQH_GIT_COMMIT；版本缺失时从
- * .tmp/deb-version.json 日账本自动分配（与 just build / frontend-rolling 同一序列）。
+ * 构建身份沿用 just 注入的 QAQH_BUILD_VERSION；缺省回落到 package.json 的固定版本。
  */
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
@@ -22,7 +21,6 @@ import { basename, join, resolve, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { collectBundle } from "./collect-bundle.mjs";
-import { reserveLocalVersion } from "./release-version.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 后端源目录由 justfile 的 QAQH_BACKEND_DIR 统一导出（默认 ../qaqh-backend）。
@@ -48,25 +46,14 @@ function run(command, args, cwd = root, capture = false) {
 }
 
 function buildIdentity() {
-  const commit = process.env.QAQH_GIT_COMMIT?.trim()
-    || spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
-  // 本地热更构建与 just build / frontend-rolling 共用同一日账本（major.minor.YYYYMMDD-revision，
-  // 北京时间；失败的构建照常消耗编号）。CI/just 已注入 QAQH_BUILD_VERSION 时尊重其预留值。
+  // 版本固定写在 package.json；CI/just 已注入 QAQH_BUILD_VERSION 时尊重其覆盖值。
   const version = process.env.QAQH_BUILD_VERSION?.trim()
-    || reserveLocalVersion(
-        JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version,
-        join(root, ".tmp", "deb-version.json"),
-      );
-  // 必须写回 env:just 的 `export QAQH_BUILD_VERSION := env_var_or_default(...,"")`
-  // 会把空串注入子进程,bundle.mjs 的 esbuild define 就会把版本号烤成 `""`,
-  // 主进程 `"" || app.getVersion()` 折叠后永远回读 package.json 的稳定基版(1103)。
+    || JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+  // 必须写回 env:just 的 `export QAQH_BUILD_VERSION` 会把固定版本注入子进程，
+  // bundle.mjs 的 esbuild define 据此把版本号烤进主进程。
   process.env.QAQH_BUILD_VERSION = version;
-  const dirty = process.env.QAQH_GIT_DIRTY === "1";
-  const safeCommit = commit.slice(0, 8) + (dirty ? "-dirty" : "");
-  // releaseId = 版本 + git 构建元数据：g 前缀沿用 git-describe 惯例，dirty 也上 UI。
-  // buildId 必须与 releaseId 同粒度：planner 只比 current==build_id（不比版本号），
-  // 指纹漏掉账本修订号会让同 commit 的重复构建永远判「无变化」→ 热更失灵。
-  return { version, commit, releaseId: `${version}+g${safeCommit}`, buildId: `${version}+g${safeCommit}` };
+  // releaseId / buildId 同粒度，均用固定版本号，不再拼接 git 哈希。
+  return { version, releaseId: version, buildId: version };
 }
 
 function stagingPath(kind) {

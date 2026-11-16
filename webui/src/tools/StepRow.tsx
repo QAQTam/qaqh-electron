@@ -98,9 +98,13 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
   // exec 展开区只剩工具级 error 一种事实；其余工具的展开语义不变。
   const open = () => hasDetails() && (override() ?? step().status === "failed");
   const stats = createMemo(() => {
+    // 终态 code_delta 是真实 diff(权威,优先);编辑中只有内核随参数流数出的
+    // 累计估算 linesAdded/linesRemoved 可用,逐帧实时更新。
     const delta = step().codeDelta;
-    if (delta == null || (delta.lines_added === 0 && delta.lines_removed === 0)) return null;
-    return { add: delta.lines_added, del: delta.lines_removed };
+    const add = delta?.lines_added ?? step().linesAdded;
+    const del = delta?.lines_removed ?? step().linesRemoved;
+    if (add == null || del == null || (add === 0 && del === 0)) return null;
+    return { add, del };
   });
   return (
     <Switch fallback={<div data-tool-call-id={step().id} class={{ "step-row": true, tool: true, [`st-${step().status}`]: true, "is-latest": isLatest() }}>

@@ -146,7 +146,6 @@ html.theme-liquid-glass[data-theme="dark"] .message-sidebar {
 :root[data-theme-preset="liquid-glass"] .message-session-item,
 html.theme-liquid-glass .message-session-item {
   border-radius: 10px;
-  min-height: 34px;
 }
 
 :root[data-theme-preset="liquid-glass"] .message-session-item.active,

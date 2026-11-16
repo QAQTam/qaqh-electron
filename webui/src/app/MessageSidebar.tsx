@@ -1,9 +1,9 @@
-import { createMemo, createSignal, For, Show, type Component } from "solid-js";
+import { createMemo, createSignal, For, onSettled, Show, type Component } from "solid-js";
 import IconChevronDown from "~icons/lucide/chevron-down";
 import IconFolder from "~icons/lucide/folder";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import IconPlus from "~icons/lucide/plus";
-import { STR } from "../lib/strings";
+import { STR, truncateDisplayColumns } from "../lib/strings";
 import type { ApprovalView } from "../lib/transport";
 import { sessionCatalog, sessionDot, workspaceCatalog, type SidebarSession, type SidebarWorkspace } from "../tabs/store";
 import { parentSessionOf } from "../session/handoff-journal";
@@ -22,6 +22,8 @@ const sessionBelongsToWorkspace = (session: SidebarSession, workspace: SidebarWo
 };
 
 const WORKSPACE_COLLAPSED_KEY = "qaqh.sidebar.collapsed";
+/** 滚动停止多久后恢复待响应卡的模糊与无限动画(滚动期降级,见 onGroupsScroll)。 */
+const SCROLL_SETTLE_MS = 160;
 
 function readStoredCollapsed(): Set<string> {
   try {
@@ -33,6 +35,12 @@ function readStoredCollapsed(): Set<string> {
 
 const sessionName = (session: SidebarSession): string =>
   session.title?.trim() || `会话 ${session.session_id.slice(0, 8)}`;
+
+/** 会话标题展示上限(显示列宽):20 列 ≈ 10 个汉字/20 个英文字符,超出补「…」。
+ *  只截**显示**;悬停 tooltip、右键菜单、重命名草稿一律取完整标题(sessionName)。 */
+const TITLE_MAX_COLUMNS = 20;
+const displayTitle = (session: SidebarSession): string =>
+  truncateDisplayColumns(sessionName(session), TITLE_MAX_COLUMNS);
 
 /**
  * fork 血缘徽标文案;不是 fork 对话返回 null。
@@ -149,6 +157,31 @@ export const MessageSidebar: Component<{
     findTarget: (el) => el.querySelector<HTMLElement>('.message-session-item[aria-current="page"]'),
     observe: (el) => [el.querySelector(".message-sidebar-list") ?? el],
     invalidation: groups,
+  });
+
+  // 滚动期降级(2026-11 GPU/CPU 修复):待响应卡是滚动容器里的 backdrop-filter 层,
+  // 滚动的每一帧都要重新采样模糊(120Hz 即每秒 120 次高斯模糊/卡),跑马灯/呼吸
+  // 光晕也在 120fps 持续合成——快速滚动时 GPU/CPU 双高。滚动开始挂 is-scrolling
+  // (CSS 摘 blur、暂停无限动画),停稳 SCROLL_SETTLE_MS 后恢复。监听 passive、
+  // 只在状态翻转时碰 classList,主线程代价可忽略;纯表面变化不动布局,pill 的
+  // RO 观察不到尺寸变化。
+  onSettled(() => {
+    const el = groupsEl();
+    if (el == null) return;
+    let settleTimer: number | undefined;
+    const onScroll = (): void => {
+      if (settleTimer === undefined) el.classList.add("is-scrolling");
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(() => {
+        settleTimer = undefined;
+        el.classList.remove("is-scrolling");
+      }, SCROLL_SETTLE_MS);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+    };
   });
 
   return (
@@ -284,7 +317,7 @@ export const MessageSidebar: Component<{
                             onClick={() => props.onSelect(session().session_id)}
                             title={session().title || session().cwd || session().session_id}
                           >
-                            <span class="message-session-title">{sessionName(session())}</span>
+                            <span class="message-session-title">{displayTitle(session())}</span>
                             <Show when={session().tool_mode != null && session().tool_mode !== "standard"}>
                               <span class="message-session-toolmode" title={`工具模式：${session().tool_mode}`}>{session().tool_mode}</span>
                             </Show>

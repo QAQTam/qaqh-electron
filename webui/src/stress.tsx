@@ -54,7 +54,7 @@ const previewView = previewParams.get("view");
 const isVisualPreview = previewView === "messages" || previewView === "settings" || previewView === "approval" || previewView === "tools" || previewView === "oauth" || previewView === "startup";
 /** 侧栏待响应卡的预览开关(§6.2):见 `previewSessions` 的注释。 */
 const pendingPreview = previewParams.get("pending") === "1";
-const [currentView, setCurrentView] = createSignal<"messages" | "tools" | "team" | "oauth" | "settings">(
+const [currentView, setCurrentView] = createSignal<"home" | "messages" | "tools" | "team" | "oauth" | "settings">(
   previewView === "settings" || previewView === "tools" || previewView === "team" || previewView === "oauth" ? previewView : "messages",
 );
 /**
@@ -231,7 +231,6 @@ function ansiLog(rand: () => number, lines: number): string {
       tools: [],
       interactions: [],
       subagents: [],
-      driver: null,
       exec_sessions: [],
     },
   };
@@ -1429,7 +1428,7 @@ declare global {
 }
 
 const bootStart = performance.now();
-const navigatePreview = (next: "messages" | "tools" | "team" | "oauth" | "settings"): void => {
+const navigatePreview = (next: "home" | "messages" | "tools" | "team" | "oauth" | "settings"): void => {
   setCurrentView(next);
   if (next === "settings") void reloadSettings();
   if (next === "messages" && previewView === "settings") void store.loadBootstrap();

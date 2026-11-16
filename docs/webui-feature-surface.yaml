@@ -1,0 +1,280 @@
+# =====================================================================
+# QAQ-Harness WebUI 功能面导出(对照实现用)
+# ---------------------------------------------------------------------
+# 用途:给其它前端团队对照实现。按 area → feature → contract 组织,
+#      where 字段是本仓实现锚点(阅读过的源文件),可作为逐条验收清单。
+# 读法:contract 是"必须成立的行为";invariant 是"改动任何实现都不得
+#      违反的纪律";perf 是"性能纪律",违反它们的典型症状就是卡顿/CPU
+#      打满——"质量高"的本体就是这些纪律,不是玄学。
+# 范围:截至 2026-11(4.0.0)本会话核实过的功能面;未核实项不列。
+# =====================================================================
+meta:
+  product: QAQ-Harness 桌面壳(Electron 45 + SolidJS 2 rc,渲染层 webui/)
+  audience: 对照实现的前端团队
+  language: 中文注释/中文文案,代码标识符英文
+  stack:
+    ui: solid-js 2.0.0-rc + @solidjs/web(不用 React)
+    终端: "@xterm/xterm 6(只读回放,非交互 PTY)"
+    选中指示器: "@formkit/auto-animate + 自研 selection-pill 驱动器"
+    高亮: shiki 3 / anser
+    构建: vite 8 + unplugin-icons(lucide)
+
+areas:
+
+  shell-layout:
+    title: 布局与壳
+    features:
+      - id: app-grid
+        contract: "#app 为三列 grid(侧栏/主列/右栏),右栏宽度恒为真实列宽,不覆盖正文"
+        where: webui/src/app/App.tsx, webui/src/styles/shell/layout.css
+      - id: cols-breakpoint
+        contract: "appCols 按 #app 宽度分档:cols-3(≥1280,右栏 dock)/cols-2/cols-1;cols<3 时侧栏与右栏转覆盖层抽屉"
+        where: webui/src/app/App.tsx(appCols), styles/shell/sidebar.css(.drawer)
+      - id: sidebar-resize
+        contract: "拖拽调宽**不碰布局**:拖拽期只有一根 fixed 幽灵线跟手(逐帧仅写 transform),pointerup 才提交真实宽度;html.sidebar-resizing 期间禁全部过渡防橡皮筋"
+        where: webui/src/app/Sidebar.tsx(onResizePointer*), lib/sidebar-resize.ts
+        perf: 宽度写入每帧都会把继承型自定义属性的整棵子树标脏——绝不在拖拽热路径写布局属性
+      - id: titlebar
+        contract: "WCO 窗口控制按钮配色跟随主题;Win11 22H2+ 启用原生 Mica(has-mica class),旧系统回退实底"
+        where: webui/src/lib/theme.ts(syncNativeBackdrop/syncTitlebarOverlay)
+      - id: minimize-hygiene
+        contract: "窗口最小化即清渲染缓存并触发 GC;主窗口 backgroundThrottling: true(后台挂起定时器与 CSS 动画)"
+        where: src/main/index.ts(minimize handler, backgroundThrottling)
+
+  session-tabs:
+    title: 会话标签与生命周期
+    features:
+      - id: one-tab-one-session
+        contract: "一个标签 = 一个会话;关闭标签 = 退订宿主事件,不取消运行中的回合(后端常驻)"
+        where: webui/src/tabs/store.ts
+      - id: activation
+        contract: "activateTab 是唯一激活收口:同步写 activationTargetId(防 View Transition 异步回调竞态),退订其余 store,activate 内 attach + bootstrap + todo/approval/profile 刷新"
+        where: webui/src/tabs/store.ts(activateTab), webui/src/session/store.ts(activate)
+      - id: memory-discipline
+        contract: |
+          非活动标签卸载 DOM、保留 store 数据;
+          retainRecentBackground 只保留当前 + 最近 2 个后台标签,其余 evictView
+          (释放转录缓冲与内容缓存,轻量信号保留);
+          **待办列表不清空**——保留为 stale 视图 + todosSyncPending 徽标,
+          避免 RPC 往返窗口里右栏「收回再展开」。
+        where: webui/src/session/store.ts(deactivate/evictView/unloadForBackground), tabs/store.ts(retainRecentBackground)
+        perf: 后台内存纪律与前台零闪现的平衡点:重状态卸、轻状态留
+      - id: activation-race
+        contract: "快速连点标签:后来的激活取代在飞激活(activationTargetId 比对),迟到的旧回调不得写入任何视觉信号或订阅"
+        where: webui/src/tabs/store.ts(activationTargetId 注释块)
+
+  sidebar-session-list:
+    title: 侧栏会话列表
+    features:
+      - id: workspace-grouping
+        contract: "按工作区分组(order 升序,次级 title 字典序),组内 updated_at 降序 + session_id 决胜(杜绝轮询时随机顺序抖动);空工作区也列出(组头「+」是新建入口)"
+        where: webui/src/app/MessageSidebar.tsx(groups memo)
+      - id: catalog-keyed
+        contract: "For 以 session_id 为键(不按引用):15s 轮询换目录对象不得卸载重建整棵列表(否则悬停/焦点/入场动画被打断)"
+        where: webui/src/app/MessageSidebar.tsx(<For keyed>)
+      - id: session-dot
+        contract: |
+          六态点:蓝=工作中(光晕)/蓝闪=等你回应/灰=取消中/绿=完成/红=失败/灰实=已取消。
+          蓝/等待/取消中直读后端 SessionRunStatus;绿红灰只在本壳生命周期内**目击过**
+          running→idle 迁移时,用一次性 bootstrap 探针读末回合 outcome 才点亮
+          (宁可缺点,不可猜错)。用户到达该会话(activateTab)即消隐绿点(已读语义);
+          红/灰保留至新一轮 running。
+        where: webui/src/tabs/store.ts(SessionDotKind/observeSessionStatuses), webui/src/app/MessageSidebar.tsx
+      - id: pending-card
+        contract: |
+          会话行「待响应」卡:后端 waiting_user 驱动,整行覆盖 + 跑马灯 + 呼吸光晕。
+          相位机 in→hold→out;**常驻挂载**(状态离开待人时父级不卸载组件,
+          否则 slide-out 没机会播);卡体 aria-hidden,可读名挂按钮 aria-label。
+        where: webui/src/app/SessionPendingCard.tsx, styles/shell/sidebar.css(.session-pending)
+      - id: title-truncation
+        contract: |
+          标题展示按**显示列宽**截断:20 列 ≈ 10 个汉字/20 个英文字符,超出补「…」。
+          CJK/全角/emoji 计 2 列。只截显示层——悬停 tooltip(原生 title)、右键菜单、
+          删除确认、重命名草稿一律取完整标题(重命名草稿用截断值会改坏长标题)。
+          窄栏下 CSS ellipsis 兜底。
+        where: webui/src/lib/strings.ts(truncateDisplayColumns), webui/src/app/MessageSidebar.tsx(displayTitle)
+      - id: scroll-degradation
+        contract: |
+          滚动期降级:滚动容器挂 is-scrolling(passive 监听,状态翻转才碰 classList,
+          停稳 160ms 摘除)。期间摘掉待响应卡 backdrop-filter、暂停跑马灯/呼吸
+          (animation-play-state,冻结相位恢复无跳变)。
+          blur 层在滚动容器里每帧都要重新采样模糊,120Hz 即每卡每秒 120 次高斯模糊。
+        where: webui/src/app/MessageSidebar.tsx(onSettled), styles/shell/sidebar.css(.is-scrolling)
+        perf: 这是「滚动 GPU/CPU 双高」的主力修复;纯表面变化不动布局
+      - id: selection-pill
+        contract: "WinUI 式共享选中指示器(单 pill 由驱动器定位):offsetLeft/offsetTop 测量 + RO 观察内容高度 + invalidation 兜底;同列滑动/跨列交换分类"
+        where: webui/src/app/selection-pill.ts, MessageSidebar.tsx/Sidebar.tsx 的 createSelectionPill
+      - id: collapse-persistence
+        contract: "工作区分组折叠态存 localStorage(qaqh.sidebar.collapsed);侧栏收起(48px 图标列)由 App 持久化"
+
+  timeline-turns:
+    title: 时间线与回合
+    features:
+      - id: timeline-pagination
+        contract: "长转录分页:loadOlder 单批 10 回合,剩余占位随上滚手势分批取回;contentLoader 管理 content_ref 的加载/失败/重试状态"
+        where: webui/src/session/{pagination,content-loader,store}.ts
+      - id: turn-projection
+        contract: "会话状态 = reducer 单源(applySessionEvent/applySessionBootstrap);事件帧带 seq 去重;断线后由 projection 事件与 bootstrap 重建"
+        where: webui/src/session/reducer.ts
+      - id: exec-session-drawer
+        contract: |
+          后台执行抽屉(右侧滑入):动画落地前只挂 Skeleton,落地后点亮 xterm;
+          单实例终端(keyed by execId,切换即重建);Esc 关闭;运行中可中断/终止/复制。
+          面板宽度 min(92vw, 910px)。
+        where: webui/src/exec/ExecSessionDrawer.tsx, styles/components/exec-drawer.css
+      - id: read-only-terminal
+        contract: |
+          终端 = 80×24 固定解析器(与后端 PTY 同尺寸,UI 裁剪不改解析器);
+          视觉裁剪:高度 = 实际行数×行高+padding(1~24 行),更早输出进 1000 行 scrollback;
+          stderr 以 ANSI 红条分隔行注入;
+          **帧级合并**:write 回调只排队 rAF,一帧最多一次 scrollToBottom+量高;
+          **收缩迟滞**:增高立即生效、变矮延迟 250ms 复核(进度条 \r 抹行是瞬态,
+          活跃输出期间高度单调不减)。
+        where: webui/src/tools/ReadOnlyTerminal.tsx
+        perf: cargo/dotnet 快编译每秒上百个小块,无合并时每帧几十次强制布局
+      - id: terminal-colors
+        contract: |
+          终端配色方案(设置→外观→终端配色):follow(继承应用)或经典方案
+          (Campbell/Campbell Powershell/Tango Dark/Vintage/One Half Dark/Solarized Dark,
+          色值抄自 Windows Terminal defaults.json,WT purple→xterm magenta);
+          方案接管时宿主容器底色同步刷新(否则 padding 露底色);偏好存 localStorage。
+        where: webui/src/lib/terminal-theme.ts
+      - id: copy-plain-text
+        contract: |
+          抽屉「复制」输出纯文本:剥 OSC→CSI→ESC 序列(顺序重要);
+          独立 \r 按覆写语义处理(进度条最后一次重绘为准);\b 退格、bell 丢弃、
+          CRLF 归一、尾部修剪。已知边界:光标定位型多行重绘按线性文本排列。
+        where: webui/src/lib/terminal-text.ts, exec/ExecSessionDrawer.tsx(handleCopy)
+      - id: tool-rows
+        contract: "工具行只做语义呈现(徽章/文件路径/diff/待办卡),exec 正文只在抽屉渲染;所有 hover 只改表面不改布局(动作钮常占位、悬停显形)"
+
+  composer:
+    title: 输入区
+    features:
+      - id: drafts
+        contract: "草稿按会话存 localStorage;打字管线只做 O(1) Map 记账,落盘走 500ms 尾沿合并,pagehide/beforeunload 冲刷(每键全量序列化是 O(n²) 打字成本)"
+        where: webui/src/tabs/store.ts(DRAFT_PERSIST_DELAY_MS), setDraftOf
+      - id: preflight
+        contract: "启动页预检态(模型/强度/工具模式/附件)是「下一条会话的输入」三件套,模块级信号 + localStorage;新建会话的目标工作区 cwd 粘性保持"
+        where: webui/src/composer/startup-preflight.ts, tabs/store.ts(startupPreflight/newSessionCwd)
+      - id: send-block
+        contract: "乐观发送(isSending 即刻置 true 消除时差空窗);封箱会话置灰;权限/模型前置校验产出 SendBlockReason"
+        where: webui/src/composer/Composer.tsx, session/store.ts
+
+  approvals:
+    title: 审批与交互
+    features:
+      - id: approval-stack
+        contract: "审批卡单源 approvals RPC + 实时事件快轨(activePending 直供侧栏卡);ask 用 ASK v1 语法解析,严格格式错误可重试"
+        where: webui/src/approval/{ApprovalCards,ask-state}.tsx/ts
+      - id: permission-tiers
+        contract: "权限档位 1..4,越档需 bypass 文本确认(输入 3);档位是 daemon 配置,保存后立即生效"
+        where: webui/src/settings/SettingsView.tsx(section-permission), settings/patch.ts
+
+  settings:
+    title: 设置页
+    features:
+      - id: section-split
+        contract: |
+          切换式单页(点谁渲染谁,无 scroll-spy)。三类分区:
+          registry 型(providers/pairing,直写 profiles.toml,即时生效不走草稿)
+          / local 型(host/appearance/about,不读 daemon 配置,后端宕机也可用)
+          / daemon 草稿型(其余,写差异 patch,未保存计数与放弃确认)。
+        where: webui/src/settings/SettingsView.tsx(REGISTRY_SECTIONS/LOCAL_SECTIONS), settings/registry.ts
+      - id: appearance
+        contract: |
+          外观分区全是**本地偏好**(localStorage,不写 daemon):
+          界面主题(跟随系统/亮/暗)、风格预设(default/lite/liquid-glass/zen-console)、
+          消息主题包与语法主题(插件)、终端配色、标签材质、渲染性能模式(auto/low/quality)、
+          字号缩放与四槽字体(--font-ui/--font-prose/--font-code/--font-terminal)。
+        where: webui/src/settings/SettingsView.tsx(LocalSettings), lib/{theme,terminal-theme,typography,visual}.ts
+      - id: perf-mode
+        contract: |
+          渲染性能模式:low/低配 auto 下 — 关全部 backdrop-filter(精准选择器,
+          不用通配符)、停无限循环动画、抽屉过渡压到 0.1s;auto 同时禁壳 GPU 加速
+          (省内存),Quality 恢复;更改需重启壳(待重启提示条)。
+        where: webui/src/styles/performance.css, lib/visual.ts
+      - id: secrets
+        contract: "密钥读回恒为掩码 ****:输入框「留空=不改」,后端无删除接口,UI 不假装能删"
+        where: webui/src/settings/SettingsView.tsx 头注
+
+  theming:
+    title: 主题系统
+    features:
+      - id: resolved-theme
+        contract: "config.theme(\"\"=跟随系统)→ documentElement[data-theme];首帧由 prefers-color-scheme 兜底;亮暗切换带 220ms 过渡(reduced-motion 跳过)"
+        where: webui/src/lib/theme.ts
+      - id: preset-switch
+        contract: "风格预设切换清空全部 theme-* class 再挂新预设(零残留);预设为纯 CSS(data-theme-preset + theme-<name>)"
+        where: webui/src/lib/theme.ts(applyThemePreset), styles/themes/*.css
+      - id: token-discipline
+        contract: "颜色/字体/间距一律走 CSS 自定义属性(--qqh-* 兼容 host bridge;组件层只用语义 token),主题换肤不写死色值"
+        where: webui/src/styles/tokens/*.css
+
+  widget-embedding:
+    title: 沙盒小部件
+    features:
+      - id: widget-sandbox
+        contract: "可视化小部件 = 单 HTML 片段挂沙盒 iframe:无网络(fetch/XHR 全禁)、状态经 qqh.setWidgetState 快照(16KiB 上限)、交互经 sendFollowUpMessage 回流对话"
+        where: webui/src/widget/{WidgetMount,bridge,host}.tsx/ts
+
+  plugins:
+    title: 插件
+    features:
+      - id: plugin-loader
+        contract: "plugins/ 目录热装载:主题包(rev-bust <link> 热挂)、语法主题(light/dark 双份 shiki)、前端功能插件(独立 entry);不重构建、rev 变更即生效"
+        where: webui/src/plugins/loader.ts, plugins/
+
+  invariants:
+    title: 全局不变量(任何实现都要守)
+    rules:
+      - "响应式列表一律 keyed For(以稳定 id 为键),轮询换对象不得整树重建"
+      - "悬停/选中只改表面(色/透明度),不改布局(宽度/位移)——否则列表左右抖"
+      - "禁 width/height 过渡做开合动画:每帧全应用重排;抽屉用 transform,列宽用瞬时切换+内容微动效"
+      - "滚动/拖拽热路径禁止读写布局几何(getBoundingClientRect/getComputedStyle 与写样式交替 = 强制同步布局乒乓)"
+      - "写后读分离:RO 回调用入参 contentRect,不再自读 clientWidth"
+      - "阈值判定加迟滞带(如窄栏 720 进/744 出),防边界抖动成 collapse/expand 循环"
+      - "backdrop-filter 只允许出现在抽屉/浮层/待响应卡,且必须被性能模式豁免"
+      - "无限循环动画必须有豁免路径:prefers-reduced-motion + 性能模式 + (视口门控为后续项)"
+      - "所有含 aria-current/aria-expanded/inert/aria-hidden 的交互件不依赖纯视觉;跑马灯等装饰一律 aria-hidden"
+      - "localStorage 偏好全是「本机界面偏好」,不进 daemon 配置;写失败静默降级(隐私模式)"
+      - "轮询/重试必须带退避与代际校验(activationGeneration/revision),过期响应不得落地"
+      - "动画-渲染错峰:进场动画期间只挂骨架,落地后点亮重组件"
+
+persistence-keys:
+  - key: qaqh.theme
+    what: 界面主题(""=跟随系统/light/dark)
+    where: webui/src/lib/theme.ts
+  - key: qaqh.theme-preset
+    what: 风格预设(default/lite/liquid-glass/zen-console)
+    where: webui/src/lib/theme.ts
+  - key: qaqh.terminal-scheme
+    what: 终端配色方案 id
+    where: webui/src/lib/terminal-theme.ts
+  - key: qaqh.sidebar.collapsed
+    what: 侧栏工作区分组折叠态(JSON 数组)
+    where: webui/src/app/MessageSidebar.tsx
+  - key: qaqh.draft.<seed>
+    what: 各会话输入草稿(500ms 尾沿落盘)
+    where: webui/src/tabs/store.ts
+  - key: qaqh.session.title.<seed>
+    what: 本地重命名覆盖(后端标题到达即清除)
+    where: webui/src/tabs/store.ts
+  - key: qaqh.workspace.cwd
+    what: 新建会话的粘性目标工作区
+    where: webui/src/tabs/store.ts
+  - key: "<startup-preflight 内部键>"
+    what: 启动页预检草稿(模型/强度/工具模式)
+    where: webui/src/composer/startup-preflight.ts
+
+anchors:
+  壳入口: webui/src/app/App.tsx
+  标签与路由: webui/src/tabs/store.ts
+  会话状态机: webui/src/session/store.ts + reducer.ts
+  侧栏: webui/src/app/{Sidebar,MessageSidebar,SessionPendingCard,selection-pill}.tsx/ts
+  右栏(待办): webui/src/workspace/WorkspacePanel.tsx
+  执行抽屉与终端: webui/src/exec/ExecSessionDrawer.tsx + webui/src/tools/ReadOnlyTerminal.tsx
+  设置: webui/src/settings/SettingsView.tsx
+  主题/配色: webui/src/lib/{theme,terminal-theme,terminal-text,typography,visual}.ts
+  样式分层: webui/src/styles/{tokens,base,shell,components,themes,performance}.css
+  Electron 壳: src/main/index.ts(节流/电源阻断/IPC), src/main/browser-host/

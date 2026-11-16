@@ -51,25 +51,19 @@ test("removed shell packaging cannot be selected", () => {
 
 test("just-provided build identity is complete, consistent and injected into the package", () => {
   const env = {
-    QAQH_BUILD_VERSION: "2.1.20261031-1",
-    QAQH_BUILD_DATE: "20261031",
+    QAQH_BUILD_VERSION: "4.0.0",
     QAQH_GIT_COMMIT: "9f3610d6b6263f7abf690bfdd477c95658a0b85c",
     QAQH_GIT_DIRTY: "0",
   };
   assert.deepEqual(parseBuildIdentity(env), {
-    version: "2.1.20261031-1",
-    date: "20261031",
+    version: "4.0.0",
     commit: "9f3610d6b6263f7abf690bfdd477c95658a0b85c",
     dirty: false,
   });
-  assert.equal(expectedPackageVersion("2.0.0", env), "2.1.20261031-1");
-  assert.equal(expectedPackageVersion("2.0.0", {}), "2.0.0");
-  assert.equal(parseBuildIdentity({ ...env, QAQH_BUILD_DATE: "" }).date, "20261031");
-  assert.equal(parseBuildIdentity({ ...env, QAQH_BUILD_VERSION: "2.0.20261031" }).version, "2.0.20261031");
-  assert.equal(parseBuildIdentity({ ...env, QAQH_BUILD_VERSION: "2.11.20261031-1", QAQH_BUILD_DATE: "" }).date, "20261031");
-  assert.throws(() => expectedPackageVersion("2.0.0", { ...env, QAQH_BUILD_VERSION: "2.1.20261031-bad" }), /Invalid/);
-  assert.throws(() => parseBuildIdentity({ ...env, QAQH_BUILD_VERSION: "" }), /just build/);
-  assert.throws(() => parseBuildIdentity({ ...env, QAQH_BUILD_DATE: "20261029" }), /disagree/);
+  assert.equal(expectedPackageVersion("4.0.0", env), "4.0.0");
+  assert.equal(expectedPackageVersion("4.0.0", {}), "4.0.0");
+  assert.throws(() => expectedPackageVersion("4.0.0", { ...env, QAQH_BUILD_VERSION: "4.0.0-bad" }), /Invalid/);
+  assert.throws(() => parseBuildIdentity({ ...env, QAQH_BUILD_VERSION: "" }), /major\.minor\.patch/);
   assert.throws(() => parseBuildIdentity({ ...env, QAQH_GIT_COMMIT: "" }), /QAQH_GIT_COMMIT/);
 });
 

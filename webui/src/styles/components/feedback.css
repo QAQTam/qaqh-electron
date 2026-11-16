@@ -105,9 +105,9 @@
     position: fixed; inset: 0; z-index: 120;
     display: grid; place-items: center;
     padding: 24px;
-    background: color-mix(in srgb, var(--bg) 46%, transparent);
-    -webkit-backdrop-filter: blur(2px);
-    backdrop-filter: blur(2px);
+    background: color-mix(in srgb, var(--bg) 58%, transparent);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
     transition: opacity var(--dur) var(--ease);
   }
   .quit-dialog {
@@ -206,6 +206,12 @@
     font-size: var(--fs-sm);
     color: var(--muted);
   }
+  /* 技术支持 credit:品牌是皮,底座署名一行带过,不抢 hero。 */
+  .startup-credit {
+    font-size: 11px;
+    color: var(--muted);
+    opacity: .8;
+  }
   .startup-config-bar {
     display: flex;
     flex-wrap: wrap;
@@ -226,6 +232,66 @@
     background: var(--surface-2);
     border-color: var(--border-strong);
   }
+  /* 主页「最近的工作」:工作量前 3(turn_count 排序),与建议卡同族视觉;
+     图标底色用中性面,不与主色建议卡抢注意力。3 张卡只排 1/3 列,
+     不排 2 列(2+1 必然留孤儿,同建议卡的排法纪律)。 */
+  .home-recent {
+    display: grid;
+    gap: 8px;
+    width: min(var(--content-width), 100%);
+    margin-bottom: 24px;
+  }
+  .home-recent-head {
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: .04em;
+    text-align: left;
+  }
+  .home-recent-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  @container workspace (min-width: 760px) {
+    .home-recent-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  .home-recent-card {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    padding: 13px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    text-align: left;
+    cursor: pointer;
+    transition: all var(--dur-fast) var(--ease);
+  }
+  .home-recent-card:hover {
+    border-color: var(--accent);
+    background: var(--surface-2);
+    box-shadow: var(--shadow-soft);
+    transform: translateY(-1px);
+  }
+  .home-recent-icon {
+    display: grid;
+    place-items: center;
+    width: 30px; height: 30px;
+    border-radius: 9px;
+    color: var(--muted);
+    background: var(--surface-2);
+  }
+  .home-recent-icon svg { width: 16px; height: 16px; }
+  .home-recent-body { display: grid; gap: 3px; min-width: 0; }
+  .home-recent-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    color: var(--text);
+    font-size: var(--fs-sm);
+  }
+  .home-recent-meta { font-size: var(--fs-xs); color: var(--muted); }
+
   /* 四张卡片的列数跟着**可用内容宽度**(容器 workspace,不是窗口)走:1 → 2 → 4。
      不排 3 列:4 张卡排 3 列必然留一张孤儿行,那正是这版之前的样子。 */
   .startup-suggestions {

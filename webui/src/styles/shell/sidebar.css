@@ -138,7 +138,10 @@
   .message-create svg { width: 16px; height: 16px; }
   .message-create:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
   .message-create:disabled { opacity: .5; }
-  .message-sidebar-groups { min-height: 0; overflow: auto; padding: 2px 8px 12px; overscroll-behavior: contain; /* 选中指示器 pill 的包含块(绝对定位 + offsetTop/offsetLeft 测量基准)。 */ position: relative; }
+  /* 左 2px + .message-workspace-sessions 左 8px = 会话按钮/pill 落在 10px,
+     与 .sidebar-nav(padding-left:10px)、.topbar-left 的 10px 左基线共线——
+     上下两枚选中指示器因此对齐。右 8px 留给滚动条,故左右刻意不等宽。 */
+  .message-sidebar-groups { min-height: 0; overflow: auto; padding: 2px 8px 12px 2px; overscroll-behavior: contain; /* 选中指示器 pill 的包含块(绝对定位 + offsetTop/offsetLeft 测量基准)。 */ position: relative; }
   /* 会话列表内容包裹层:选中指示器的 RO 观察目标(高度随增删/折叠/字体变化)。 */
   .message-sidebar-list { min-width: 0; }
   /* 会话行 = 主体按钮 + 「…」动作钮。动作钮常占位、悬停/聚焦/展开时才显形,
@@ -211,14 +214,20 @@
   /* 禁用态仍然露出来(而不是消失):「这里能建会话,只是现在不行」比"根本没这个入口"诚实。 */
   .message-workspace-row:hover .message-workspace-create:disabled { opacity: .45; }
   /* 嵌套缩进 18→8:整行左移、行宽变长,标题能多显示几个字(悬停胶囊/选中条随行左缘,不受影响)。 */
-  .message-workspace-sessions { display: grid; gap: 2px; padding: 2px 0 4px 8px; }
+  /* 行间净间距全部交给 .message-session-item 的垂直内边距(各 3px),这里不再
+     叠一层 gap:否则 6px 要拆成 padding+gap 两个旋钮,字体缩放后还对不上。 */
+  .message-workspace-sessions { display: grid; gap: 0; padding: 2px 0 4px 8px; }
   .message-session-item {
     position: relative;
     display: flex; align-items: center; gap: 6px;
     /* 拉满行宽:悬停/激活的胶囊右缘对齐,不随标题长短伸缩(长短不一观感的根源);
        超长标题靠 min-width:0 + ellipsis 收敛,宽度恒等。 */
     flex: 1 1 auto;
-    min-width: 0; min-height: 32px; padding: 0 8px 0 6px;
+    /* 高度 = 文字行盒 + 上下各 3px(2px padding + 1px transparent border),
+       不再用 min-height:32px 居中挤留白:那样 34px 按钮配 20px 文字,相邻两行
+       字之间空出 14px(消息一多扫读就散)。padding 显式定义后净间距恒为 6px,
+       且与字号/--font-scale 无关。 */
+    min-width: 0; padding: 2px 8px 2px 6px;
     border: 1px solid transparent; border-radius: var(--r-sm);
     color: var(--muted); text-align: left; font-size: var(--fs-xs);
     transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
@@ -360,6 +369,20 @@
   @keyframes session-pending-marquee {
     from { transform: translateX(0); }
     to { transform: translateX(calc(-1 * var(--mq-travel, 50%))); }
+  }
+
+  /* ── 滚动期降级(MessageSidebar 挂 is-scrolling)────────────────────────
+     blur(10px) 卡片在滚动容器里每帧都要重新采样模糊背景,120Hz 下每卡每秒
+     120 次高斯模糊;跑马灯/呼吸光晕在 120fps 持续合成。快速滚动 GPU/CPU 双高
+     的主力就是它们。滚动期间摘 blur、暂停无限动画(冻结当前相位,恢复无跳变),
+     停稳后由组件侧摘 class 复原。纯表面变化,不动布局。 */
+  .message-sidebar-groups.is-scrolling .session-pending-body {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .message-sidebar-groups.is-scrolling .session-pending-track,
+  .message-sidebar-groups.is-scrolling .session-pending-body::before {
+    animation-play-state: paused;
   }
 
   /* slide-in:从卡片盒右缘外侧滑到位。位移 102% 让 scale(.94) 的圆角也完全

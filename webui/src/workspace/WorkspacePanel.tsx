@@ -91,7 +91,11 @@ export const WorkspacePanel: Component<{ store: SessionStore;
     // 注意:setter 无返回值,箭头体绝不能是表达式(会被当成 cleanup)。
     const apply = (hostWidth: number): void => {
       const sidebarWidth = sidebar?.getBoundingClientRect().width ?? 288;
-      setNarrow(hostWidth - sidebarWidth < NARROW_RAIL_MAX);
+      const width = hostWidth - sidebarWidth;
+      // 迟滞带 24px:窗口缩放/拖动扫过阈值时,narrow 不能「进也翻、出也翻」——
+      // 单阈值在边界附近会反复 collapse/expand,右栏与正文每帧互相重排。
+      // 进窄栏 < 720;已在窄栏时须 > 744 才退出。
+      setNarrow((prev) => (prev ? width < NARROW_RAIL_MAX + 24 : width < NARROW_RAIL_MAX));
     };
     // RO 回调在布局后运行:host 宽用入参 contentRect,不再自读 clientWidth
     // (拖宽卡顿根因之一:回调里读几何触发强制同步布局乒乓)。

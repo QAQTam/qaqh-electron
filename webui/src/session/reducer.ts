@@ -350,7 +350,9 @@ function upsertAssistantBlock(
   if (blockKind === "answer" && text.length === 0 && ref == null) return false;
   const existing = turn.steps.find((step) => step.id === blockId);
   if (existing && existing.kind === kind) {
-    existing.text = text;
+    // sealed 权威块把正文存成 content-ref 时没有 inline 文本:别把已经流式露出的
+    // 累计全文清空成「正文加载中…」,只挂引用,等 hydrate 用权威正文整块替换。
+    if (ref == null) existing.text = text;
     existing.contentRef = ref;
     if (ord != null) existing.ord = ord;
     if (sealed) existing.endedAt = now();
@@ -763,7 +765,7 @@ function turnForEvent(draft: SessionState, turnId: string): Turn {
 
 /** Reduce one flattened v3 event directly into the UI view model. */
 export function applySessionEvent(draft: SessionState, event: SessionEventFrame): SessionState {
-  const streaming = event.type === "message_delta" || event.type === "tool_arguments_delta" || event.type === "tool_output_delta" || event.type === "exec_session_output_delta";
+  const streaming = event.type === "message_delta" || event.type === "tool_arguments_delta" || event.type === "tool_output_delta" || event.type === "exec_session_output_delta" || event.type === "provider_retrying";
   let structureChanged = false;
   switch (event.type) {
     case "activity_changed":
@@ -787,6 +789,7 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
       const status = statusFromOutcome(event.outcome);
       turn.status = status.status;
       delete turn.phase;
+      turn.retrying = null;
       turn.error = status.error;
       turn.usage = status.usage;
       if (turn.answer == null) {
@@ -798,13 +801,16 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
     }
     case "tool_arguments_delta": {
       const turn = turnForEvent(draft, event.turn_id);
+      turn.retrying = null;
       const step = turn.steps.find((item) => item.kind === "tool" && item.id === event.call_id);
-      // 内核数出来的目标文件与「参数吐完」标志:都是累计替换语义,与 text 同帧,
+      // 内核数出来的目标文件、实时行数与「参数吐完」标志:都是累计替换语义,与 text 同帧,
       // 所以丢帧自愈、重帧幂等 —— 缺席就是缺席,不许补成空数组以外的含义。
       const preview = {
         argsJson: event.text,
         targetFiles: event.target_files ?? undefined,
         argsComplete: event.args_complete === true,
+        linesAdded: event.lines_added ?? undefined,
+        linesRemoved: event.lines_removed ?? undefined,
       };
       if (step?.kind === "tool") { step.name = event.tool_name; Object.assign(step, preview); }
       else {
@@ -903,7 +909,17 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
       break;
     }
     case "message_delta": {
+      const turn = turnForEvent(draft, event.turn_id);
+      turn.retrying = null;
       structureChanged = upsertAssistantBlock(draft, event.turn_id, event.block_id, event.block_kind, { kind: "inline", data: { text: event.text } }, false);
+      break;
+    }
+    case "provider_retrying": {
+      // 重试只在首字节前发生(契约口径):亮出"第 n/m 次重试",首个真实进度帧
+      // (message_delta/tool_arguments_delta)或终态到达即清除。
+      const turn = turnForEvent(draft, event.turn_id);
+      turn.retrying = { attempt: event.attempt, maxAttempts: event.max_attempts, delaySecs: event.delay_secs, error: event.error };
+      turn.renderVersion = (turn.renderVersion ?? 0) + 1;
       break;
     }
     case "interaction_requested": {
@@ -918,11 +934,10 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
       break;
     case "subagent_updated":
     case "session_meta_changed":
-    case "driver_changed":
       break;
     case "goal_updated": {
       // 链根与当前会话两条流会送同一事件:按 updated_at_ms 单调幂等,滞后的
-      // 倒灌不覆盖;null 即清空,整字段替换(driver_changed 同律,契约口径)。
+      // 倒灌不覆盖;null 即清空,整字段替换(契约口径)。
       const goal = event.goal;
       if (goal == null) draft.goal = null;
       else if (draft.goal?.goal_id !== goal.goal_id || goal.updated_at_ms >= draft.goal.updated_at_ms) {

@@ -27,7 +27,7 @@ function mockHost(deliverBootstrap = true) {
   return { handlers: () => handlers, attach };
 }
 
-test("deactivation drops transient lists and reactivation installs a fresh flat bootstrap", async () => {
+test("deactivation drops approvals, keeps todos as stale view, and reactivation installs a fresh flat bootstrap", async () => {
   const { attach } = mockHost();
   const store = new SessionStore("unload-session");
   await store.activate();
@@ -42,7 +42,8 @@ test("deactivation drops transient lists and reactivation installs a fresh flat 
   expect(store.state[0].slots.length).toBe(1);
   expect(store.state[0].totalTurns).toBe(1);
   expect(store.pending[0]()).toEqual([]);
-  expect(store.todos[0]()).toEqual([]);
+  // 待办列表保留为 stale 视图(右栏收回再展开的抖动修复):重激活后刷新原地替换。
+  expect(store.todos[0]()).toEqual([{ id: "todo" }]);
 
   await store.activate();
   expect(attach).toHaveBeenCalledTimes(2);

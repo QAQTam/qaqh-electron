@@ -68,10 +68,12 @@
     display: flex; flex-direction: column;
     overflow: hidden;
     background: var(--surface);
-    transition: width var(--dur-layout) var(--ease);
+    /* 宽度收拢不再动画(切换抖动/CPU 修复):width 过渡的每一帧都强迫全应用
+       重排(正文时间线陪跑),低配壳上连续切换会话+缩放窗口时 CPU 打满。
+       开合改为瞬时宽度,观感由 body 的透明度/位移微动效承接(合成为主)。 */
   }
   /* 收起=完全收回(用户口径 2026-11-11):零宽、去边框,不留窄栏占位;
-     开合入口在顶栏任务钮(rail-trigger)。宽度沿 surface 既有 transition 收拢。 */
+     开合入口在顶栏任务钮(rail-trigger)。宽度瞬时收拢(见 surface 的注释)。 */
   .workspace-panel.collapsed { border-left-width: 0; }
   .workspace-panel.collapsed .workspace-panel-surface { width: 0; }
   html.desktop .workspace-panel-surface {

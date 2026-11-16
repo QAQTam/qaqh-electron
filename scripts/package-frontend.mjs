@@ -1,13 +1,11 @@
 /**
  * 前端-only 滚动打包：版本号自己跑，不重编后端、不走 sdk-check。
  *
- * 版本沿用 scripts/release-version.mjs 的本地账本：北京日期 + 当天递增修订号
- * （3.0.20261109-1 → -2 → 次日 3.0.20261110-1），与 deb/all 共用同一份账本，
- * 所以同一次本地构建不会撞号。package.json 里的版本只是「最低基线」，不用手改。
+ * 版本固定取 package.json(4.0.0)，不再按日期分配修订号。
  *
  * 用法（或直接 `just frontend-rolling`）：
  *   node scripts/package-frontend.mjs [--wizard]
- *   QAQH_BUILD_VERSION=3.0.20261109-9 node scripts/package-frontend.mjs   # 显式覆盖
+ *   QAQH_BUILD_VERSION=4.0.0 node scripts/package-frontend.mjs   # 显式覆盖
  *
  * 产物：release/rolling/<version>/
  *   QAQ-Harness-<version>-win-x64-setup.exe (+ blockmap / latest.yml)
@@ -19,7 +17,6 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync } fro
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { reserveLocalVersion } from "./release-version.mjs";
 
 const require = createRequire(import.meta.url);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,10 +35,8 @@ const { assertInputs } = require("./packaging.cjs");
 assertInputs(root, "win32");
 
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-// CI/复现可显式注入；本地默认自动分配（失败也会消耗该修订号，符合滚动发布语义）。
-const version = process.env.QAQH_BUILD_VERSION?.trim()
-  || reserveLocalVersion(manifest.version, join(root, ".tmp/deb-version.json"));
-const date = version.split(".")[2]?.split("-")[0] ?? "";
+// CI/复现可显式注入；缺省用 package.json 的固定版本。
+const version = process.env.QAQH_BUILD_VERSION?.trim() || manifest.version;
 const git = (...argv) => spawnSync("git", argv, { cwd: root, encoding: "utf8" }).stdout.trim();
 const commit = git("rev-parse", "HEAD") || "unknown";
 const dirty = git("status", "--porcelain").length > 0 ? "1" : "0";
@@ -55,7 +50,6 @@ mkdirSync(out, { recursive: true });
 const env = {
   ...process.env,
   QAQH_BUILD_VERSION: version,
-  QAQH_BUILD_DATE: date,
   QAQH_GIT_COMMIT: commit,
   QAQH_GIT_DIRTY: dirty,
   QAQH_BUILD_ID: commit,

@@ -84,6 +84,8 @@ describe("buildPatch", () => {
   test("bypass confirmation is required only when changing to permission level 3", () => {
     expect(needsBypassConfirm(buildPatch(dto(), dto({ permissionLevel: 3 })))).toBe(true);
     expect(needsBypassConfirm(buildPatch(dto(), dto({ permissionLevel: 1 })))).toBe(false);
+    // 4 = sandbox-run:自动放行但强制隔离,不是显式危险 bypass。
+    expect(needsBypassConfirm(buildPatch(dto(), dto({ permissionLevel: 4 })))).toBe(false);
   });
 });
 
@@ -95,9 +97,9 @@ describe("validatePatch", () => {
     expect(validatePatch({ autoCompactThreshold: Number.NaN })).toContain("autoCompactThreshold");
   });
 
-  test("permission levels are limited to the current three-tier model", () => {
-    for (const level of [1, 2, 3]) expect(validatePatch({ permissionLevel: level })).toBeNull();
-    expect(validatePatch({ permissionLevel: 4 })).toContain("permissionLevel");
+  test("permission levels mirror the backend 1..=4 contract", () => {
+    for (const level of [1, 2, 3, 4]) expect(validatePatch({ permissionLevel: level })).toBeNull();
+    expect(validatePatch({ permissionLevel: 5 })).toContain("permissionLevel");
   });
 
   test("goals budget rejects 0 and NaN but allows positive values and null", () => {

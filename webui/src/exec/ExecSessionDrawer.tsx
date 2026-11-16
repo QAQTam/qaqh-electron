@@ -23,6 +23,7 @@ import { execPanelStore } from "./panel-store";
 import { activeTab } from "../tabs/store";
 import { execSessionContent } from "../tools/presentation";
 import { formatWorkDuration } from "../lib/strings";
+import { terminalPlainText } from "../lib/terminal-text";
 import { now } from "../lib/time";
 import type { ExecSessionView } from "../api/contract";
 import type { ReadOnlyTerminalProps } from "../tools/ReadOnlyTerminal";
@@ -157,7 +158,8 @@ export const ExecSessionDrawer: Component = () => {
   const handleCopy = () => {
     const text = activeContent()?.text ?? "";
     if (!text) return;
-    void navigator.clipboard.writeText(text).then(() => {
+    // 原始捕获流带 ANSI/控制码(\r 重绘、SGR 颜色),剪贴板只要「用户看到的画面」。
+    void navigator.clipboard.writeText(terminalPlainText(text)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     });
@@ -240,7 +242,7 @@ export const ExecSessionDrawer: Component = () => {
                       </div>
                       <div class="exec-drawer-banner-actions">
                         <Show when={activeContent()?.text}>
-                          <button type="button" class="exec-drawer-action-btn" title="复制当前输出" onClick={handleCopy}>
+                          <button type="button" class="exec-drawer-action-btn" title="复制当前输出为纯文本（剥离 ANSI 控制码）" onClick={handleCopy}>
                             <IconCopy />
                             <span>{copied() ? "已复制" : "复制"}</span>
                           </button>

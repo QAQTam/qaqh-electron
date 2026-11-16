@@ -23,7 +23,8 @@
   @media (max-width: 720px) {
     /* 窄窗(spec §4.6):列态已由 #app 实宽的 cols-N class 接管(阶段5),
        这里只保留与列无关的小屏修正;抽屉化走 .drawer 规则。 */
-    .sidebar-nav { padding: 8px 8px 6px; }
+    /* 左基线保持 10px:窄窗下顶部 pill 仍与会话列表的选中指示器共线。 */
+    .sidebar-nav { padding: 8px 10px 6px; }
     .sidebar-nav-item span { font-size: 10px; }
     .connection-notice { right: 12px; bottom: calc(172px + env(safe-area-inset-bottom, 0px)); }
     .session-tabs-region { justify-content: center; padding: 2px 8px; }

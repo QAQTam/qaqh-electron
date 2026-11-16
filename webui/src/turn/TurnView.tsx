@@ -162,7 +162,15 @@ const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thin
     const text = duration == null ? "" : formatWorkDuration(duration);
     if (props.turn.status === "failed") return STR.failedWorked(text);
     if (props.turn.status === "aborted") return STR.interruptedWorked(text);
-    return props.group.closed ? STR.worked(text) : "正在工作";
+    // 工具全部结束(workSegmentEnd 按实时 step.status/endedAt 算出)即视为「已工作」:
+    // 不再等模型下一条 message 把 group.closed 置真才刷新。折叠仍按回复边界。
+    if (props.group.closed || end != null) return STR.worked(text);
+    // 运行中:provider 重试在飞时如实亮出(契约口径:重试只发生在首字节前,
+    // 本标签就是用户此刻唯一能看到的进度),否则维持通用的「正在工作」。
+    const retrying = props.turn.retrying;
+    return retrying
+      ? `正在重试 ${retrying.attempt}/${retrying.maxAttempts}（${retrying.delaySecs}s 后，${retrying.error}）`
+      : "正在工作";
   };
   return (
     <div class="work-group" data-work-key={props.group.key}>

@@ -3,6 +3,15 @@
  * 同一动作全程同名（用户点「停止」，状态显示「已中断」）。
  */
 export const STR = {
+  /** 品牌收口(2026-11-14 改名):英文主名无空格无叹号,进 hero 主标题与 TopBar;
+   *  中文副品牌只进文案。安装身份(appId/安装路径/localStorage 前缀)刻意不动。 */
+  productName: "Overcoder",
+  productTagline: "胡闹编程",
+  /** 技术identity露出面:品牌是皮,底座仍是 QAQ-Harness(关于/托盘/更新器不改)。 */
+  poweredBy: "由 QAQ-Harness 提供技术支持",
+  homeHeroSubtitle: "接着上次的活，或者开一局新的",
+  homeRecentTitle: "最近的工作",
+  homeRecentMeta: (turns: number) => `${turns} 回合`,
   newTab: "新对话",
   running: "运行中",
   idle: "空闲",
@@ -376,4 +385,38 @@ export function formatOffset(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
   const seconds = Math.floor((ms % 60_000) / 1_000);
   return `+${minutes}m${seconds.toString().padStart(2, "0")}s`;
+}
+
+/**
+ * 展示列宽截断(会话列表标题等):CJK/全角/emoji 计 2 列、其它计 1 列,超出补「…」。
+ * 与 CSS ellipsis 的差异:这是**确定性字数上限**(20 列 ≈ 10 个汉字/20 个英文字符),
+ * 不随容器宽度伸缩;窄栏下 CSS ellipsis 仍作兜底。完整文本由调用方另行提供
+ * (原生 title 悬停/菜单/重命名草稿都应取全名,不要用截断值)。
+ */
+export function truncateDisplayColumns(text: string, maxColumns: number): string {
+  if (maxColumns <= 0) return "";
+  let columns = 0;
+  let result = "";
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    // 变体选择符/零宽连接符:emoji 组合的胶水,自身不占宽格。
+    if (code === 0x200d || code === 0xfe0f) continue;
+    const wide =
+      (code >= 0x1100 && code <= 0x115f) || // Hangul Jamo
+      (code >= 0x2e80 && code <= 0xa4cf) || // CJK 部首/符号/音标/汉字区
+      (code >= 0xac00 && code <= 0xd7a3) || // 谚文音节
+      (code >= 0xf900 && code <= 0xfaff) || // CJK 兼容表意
+      (code >= 0xfe30 && code <= 0xfe4f) || // CJK 兼容形式
+      (code >= 0xff00 && code <= 0xff60) || // 全角标点/片假名
+      (code >= 0xffe0 && code <= 0xffe6) || // 全角形式
+      (code >= 0x2600 && code <= 0x27bf) || // 杂项符号/丁耙(✅✔⚠ 等 emoji 常客)
+      (code >= 0x2b00 && code <= 0x2bff) || // ⭐ 等符号箭头
+      code >= 0x1f000 ||                    // 补充符号与 emoji 区(代理对)
+      code >= 0x20000;                      // CJK 扩展 B+
+    const width = wide ? 2 : 1;
+    if (columns + width > maxColumns) return `${result}…`;
+    columns += width;
+    result += ch;
+  }
+  return text;
 }

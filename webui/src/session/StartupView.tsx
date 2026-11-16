@@ -24,6 +24,7 @@ import IconGitBranch from "~icons/lucide/git-branch";
 import IconBug from "~icons/lucide/bug";
 import IconGauge from "~icons/lucide/gauge";
 import IconFlask from "~icons/lucide/flask-conical";
+import IconMessageSquare from "~icons/lucide/message-square";
 import { transport } from "../lib/transport";
 import { STR } from "../lib/strings";
 import { tailName } from "../composer/identity";
@@ -47,6 +48,7 @@ import {
   focusToken,
   newSessionCwd,
   removeStartupAttachment,
+  sessionCatalog,
   setNewSessionCwd,
   setStartupPreflight,
   stageStartupAttachments,
@@ -54,6 +56,7 @@ import {
   startupPreflight,
   submitStartupSession,
   workspaceCatalog,
+  type SidebarSession,
 } from "../tabs/store";
 import { toast } from "../ui/toast";
 
@@ -88,6 +91,13 @@ export const StartupView: Component<{
   /** 应用内截图（⌘⇧S 同一份实现）；缺省 = 宿主不提供，按钮不出现。 */
   onScreenshot?: () => void;
   onManageProfiles?: () => void;
+  /** 点「最近的工作」卡:宿主统一切消息页 + openSession(与侧栏选中同一路径);
+   *  缺省(夹具页)则整块不渲染——与 MessageSidebar.onCreateIn 同一模式。 */
+  onOpenSession?: (seed: string) => void;
+  /** 首条消息已受理(预检通过、即将异步建会话):壳层立刻切到消息页。
+   *  session.create + openSession 是异步链,主区要等会话落地才换 SessionView;
+   *  section 不先过去,主页会一直停在品牌页。缺省(夹具页)不导航。 */
+  onSubmitted?: () => void;
 }> = (props) => {
   const [draftText, setDraftText] = createSignal("");
   const [openMenu, setOpenMenu] = createSignal<"workspace" | "profile" | null>(null);
@@ -127,6 +137,13 @@ export const StartupView: Component<{
   /** 当前「生效中」的那一对:预检钉住它,或跟随存档时是存档默认(单选点用)。 */
   const effectiveSelection = (): ModelSelection | null =>
     preflightSelection() ?? registry()?.defaultSelection ?? null;
+
+  /** 最近的工作:按回合数(工作量代理)取前三,updated_at 决胜;归档与零回合不入。 */
+  const recentSessions = (): SidebarSession[] =>
+    sessionCatalog()
+      .filter((item) => !item.archived && (item.turn_count ?? 0) > 0)
+      .sort((a, b) => (b.turn_count ?? 0) - (a.turn_count ?? 0) || (b.updated_at ?? 0) - (a.updated_at ?? 0))
+      .slice(0, 3);
 
   const handlePickAttachments = async (): Promise<void> => {
     try {
@@ -169,6 +186,8 @@ export const StartupView: Component<{
     // 未选 = 不发 model_selection,后端回落存档默认;存档默认也没有才由创建失败
     // 报「请先在电脑端设置默认服务商和模型」——那才是该出声的时刻。
     const args = preflightCreateArgs(preflight);
+    // 点发送就切页:建会话在后台走,侧栏/顶栏先给出「已受理」的即时反馈。
+    props.onSubmitted?.();
     const ok = await submitStartupSession({
       cwd: newSessionCwd(),
       modelSelection: args.modelSelection,
@@ -185,8 +204,11 @@ export const StartupView: Component<{
   return (
     <div class="startup-container">
       <div class="startup-hero">
-        {/* §8.7:产品名已在 TopBar,启动页不再用 28px 产品名当主标题;composer 才是主角。 */}
-        <p class="startup-subtitle">配置新会话环境，在发送首条消息时原子化创建</p>
+        {/* §8.7 旧规已废:桌面 TopBar 左格只有汉堡,品牌零露出——主标题回归首页,
+            全 UI 品牌只从 STR.productName 出。composer 仍是主角。 */}
+        <p class="startup-title">{STR.productName}</p>
+        <p class="startup-subtitle">{STR.productTagline} · {STR.homeHeroSubtitle}</p>
+        <p class="startup-credit">{STR.poweredBy}</p>
       </div>
 
       <div class="startup-config-bar">
@@ -270,6 +292,32 @@ export const StartupView: Component<{
           </Show>
         </div>
       </div>
+
+      {/* 最近的工作:点卡 = 切消息页并打开会话(路径与侧栏选中一致)。
+          冷启动不再自动进会话后,这里是首屏的恢复入口。 */}
+      <Show when={props.onOpenSession != null && recentSessions().length > 0}>
+        <div class="home-recent">
+          <div class="home-recent-head">{STR.homeRecentTitle}</div>
+          <div class="home-recent-cards">
+            <For each={recentSessions()}>
+              {(session) => (
+                <button
+                  type="button"
+                  class="home-recent-card"
+                  onClick={() => props.onOpenSession?.(session.session_id)}
+                  title={session.cwd ?? undefined}
+                >
+                  <span class="home-recent-icon" aria-hidden="true"><IconMessageSquare /></span>
+                  <span class="home-recent-body">
+                    <span class="home-recent-title">{session.title?.trim() || `会话 ${session.session_id.slice(0, 8)}`}</span>
+                    <span class="home-recent-meta">{STR.homeRecentMeta(session.turn_count ?? 0)}</span>
+                  </span>
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
 
       {/* 快捷建议卡片 */}
       <div class="startup-suggestions">

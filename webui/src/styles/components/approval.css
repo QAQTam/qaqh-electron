@@ -1,15 +1,15 @@
 /* QAQ-Harness WebUI —— 授权请求与 AskUser 审批卡片 (Approval & Permissions) */
 
 @layer components {
-  /* 授权/AskUser 对话框(§11):置于视口中央,消息保留为上下文但降低视觉权重。 */
+  /* 授权/AskUser 对话框(§11):置于视口中央;遮罩加深+糊化,消息区退为不可读色块,保证卡片分离感。 */
   #approval-slot {
     position: fixed; inset: 0; z-index: 80;
     display: grid; place-items: center;
     padding: 24px;
     overflow: auto; overscroll-behavior: contain;
-    background: color-mix(in srgb, var(--bg) 30%, transparent);
-    -webkit-backdrop-filter: blur(.6px);
-    backdrop-filter: blur(.6px);
+    background: color-mix(in srgb, var(--bg) 58%, transparent);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
     transition: opacity var(--dur) var(--ease);
   }
   .approval-wrap {
@@ -35,9 +35,9 @@
     border-radius: var(--r-lg);
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
-    box-shadow: var(--shadow-soft);
+    box-shadow: var(--shadow-panel);
   }
-  .card.perm.high { border-color: var(--err); box-shadow: inset 3px 0 0 var(--err), var(--shadow-soft); }
+  .card.perm.high { border-color: var(--err); box-shadow: inset 3px 0 0 var(--err), var(--shadow-panel); }
   /* ask 比另两张卡多一条问题轨,轨道占自己的 auto 行,可滚的仍是卡身。 */
   .card.ask { grid-template-rows: auto auto minmax(0, 1fr) auto; }
   .card-head {

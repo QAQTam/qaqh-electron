@@ -20,38 +20,29 @@ function parseArgs(args) {
 }
 
 /**
- * build-all reserves a local Debian version (or accepts CI's reserved version)
+ * build-all uses the fixed version from package.json (or an explicit override)
  * before exporting one identity to every Node, Cargo and packaging stage.
  * @param {NodeJS.ProcessEnv} env
  */
 function parseBuildIdentity(env = process.env) {
   const version = String(env.QAQH_BUILD_VERSION ?? "").trim();
-  const date = String(env.QAQH_BUILD_DATE ?? "").trim();
   const commit = String(env.QAQH_GIT_COMMIT ?? "").trim();
   const dirty = String(env.QAQH_GIT_DIRTY ?? "") === "1";
-  const match = /^\d+\.\d+\.(\d{8})(?:-\d+)?$/.exec(version);
-  if (!match) {
-    throw new Error("QAQH_BUILD_VERSION must be major.minor.YYYYMMDD[-revision]; run `just build`.");
-  }
-  if (date !== "" && !/^\d{8}$/.test(date)) {
-    throw new Error(`QAQH_BUILD_DATE must be YYYYMMDD; got ${date}.`);
-  }
-  if (date !== "" && date !== match[1]) {
-    throw new Error("QAQH_BUILD_VERSION (" + version + ") and QAQH_BUILD_DATE (" +
-      date + ") disagree; run `just build`.");
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error("QAQH_BUILD_VERSION must be major.minor.patch; run `just build`.");
   }
   if (commit === "") throw new Error("QAQH_GIT_COMMIT is missing; run `just build`.");
-  return { version, date: date || match[1], commit, dirty };
+  return { version, commit, dirty };
 }
 
 /**
  * electron-builder writes the injected version into the packaged package.json.
  * afterPack therefore compares against the injected value, not the source
- * manifest, since explicit build overrides may carry a different revision.
+ * manifest, since CI may inject an explicit override.
  */
 function expectedPackageVersion(sourceVersion, env = process.env) {
   const injected = String(env.QAQH_BUILD_VERSION ?? "").trim();
-  if (injected !== "" && !/^\d+\.\d+\.\d{8}(?:-\d+)?$/.test(injected)) {
+  if (injected !== "" && !/^\d+\.\d+\.\d+$/.test(injected)) {
     throw new Error(`Invalid injected package version: ${injected}.`);
   }
   return injected || sourceVersion;

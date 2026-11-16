@@ -1,6 +1,6 @@
 import { createSignal, For, onCleanup, Show, type Component } from "solid-js";
 import IconKeyRound from "~icons/lucide/key-round";
-import IconMessageSquare from "~icons/lucide/message-square";
+import IconHouse from "~icons/lucide/house";
 import IconSettings from "~icons/lucide/settings";
 import IconUsers from "~icons/lucide/users";
 import IconWrench from "~icons/lucide/wrench";
@@ -11,12 +11,12 @@ import type { ApprovalView } from "../lib/transport";
 import type { SidebarSession, SidebarWorkspace } from "../tabs/store";
 import { SETTINGS_NAV, SETTINGS_NAV_GROUPS, TOOLS_NAV } from "../settings/navigation";
 
-export type GlobalSection = "messages" | "tools" | "team" | "oauth" | "settings";
+export type GlobalSection = "home" | "messages" | "tools" | "team" | "oauth" | "settings";
 
 /** 导航 2×2(spec §6.1):取代 64px 图标 rail,带可见 label,不再依赖 tooltip。
  *  「接入」涵盖后续友商(不都是 OAuth),改词只改这里。 */
 const NAV_ITEMS = [
-  { id: "messages", label: "消息", Icon: IconMessageSquare },
+  { id: "home", label: "主页", Icon: IconHouse },
   { id: "tools", label: "工具", Icon: IconWrench },
   { id: "team", label: "团队", Icon: IconUsers },
   { id: "oauth", label: "接入", Icon: IconKeyRound },
@@ -25,7 +25,8 @@ const NAV_ITEMS = [
 
 /**
  * 壳侧栏(spec §6.1,阶段 3):Nav 2×2 + 会话列表同占一列 288px。
- * 非消息页只显示 Nav,会话列表隐藏(§4.5);<720px 的抽屉化是阶段 5。
+ * 首页与消息页同显会话列表(冷启动落主页后,恢复入口必须常驻);
+ * 其余页只显示 Nav,会话列表隐藏(§4.5);<720px 的抽屉化是阶段 5。
  */
 export const Sidebar: Component<{
   section: GlobalSection;
@@ -192,7 +193,7 @@ export const Sidebar: Component<{
       </For>
     </nav>
     {/* 会话列表只在消息页挂载;props 全部可选透传,stress 夹具与产线共用一份。 */}
-    <Show when={props.section === "messages" && props.onSelect != null}>
+    <Show when={(props.section === "messages" || props.section === "home") && props.onSelect != null}>
       <MessageSidebar
         sessions={props.sessions}
         workspaces={props.workspaces}

@@ -57,7 +57,7 @@ export const THEME_OPTIONS = [
 ] as const;
 
 export type PermissionTier = {
-  level: 1 | 2 | 3;
+  level: 1 | 2 | 3 | 4;
   /** 名取自 crates/qaqh-policy/src/lib.rs:131-133。 */
   name: string;
   desc: string;
@@ -66,9 +66,10 @@ export type PermissionTier = {
 };
 
 /**
- * 三档制(2026-10-03 起,取代旧 L1–L4)。落盘键 `permission_tier` 严格 1..=3,
- * 旧四档值在 load 时迁移、认不出的 fail-closed 收敛到 1(qaqh-config/src/config.rs:908-940),
- * 所以读上来的 permissionLevel 必然落在 1..=3,UI 不需要处理 legacy 数字。
+ * 四档制,值域 1..=4:后端 `ConfigPatch::validate` 校验 1..=4(生成契约
+ * api/qaqh/ConfigPatch.ts 的字段注释,BUG-2026-09-13-15 起),4 = sandbox-run:
+ * 沙箱强制隔离运行、常规命令自动放行——自动放行但强制隔离,不是显式危险
+ * bypass,保存不打字确认(needsBypassConfirm 仍只认 3)。
  */
 export const PERMISSION_TIERS: readonly PermissionTier[] = [
   { level: 1, name: "read-only", desc: "只读:写入与 exec 均需授权", dangerous: false },
@@ -78,6 +79,12 @@ export const PERMISSION_TIERS: readonly PermissionTier[] = [
     name: "skip-permissions",
     desc: "普通工具全部自动放行——显式危险 bypass",
     dangerous: true,
+  },
+  {
+    level: 4,
+    name: "sandbox-run",
+    desc: "沙箱强制隔离运行;常规命令自动放行",
+    dangerous: false,
   },
 ];
 
@@ -152,8 +159,8 @@ export function validatePatch(patch: ConfigPatchWire): string | null {
     return `autoCompactThreshold 必须在 [0, 1] 区间（0=关闭自动压缩），收到 ${threshold}`;
   }
   const level = patch.permissionLevel;
-  if (level != null && ![1, 2, 3].includes(level)) {
-    return `permissionLevel 仅允许 1..=3（1=read-only, 2=workspace-write, 3=skip-permissions），收到 ${level}`;
+  if (level != null && ![1, 2, 3, 4].includes(level)) {
+    return `permissionLevel 仅允许 1..=4（1=read-only, 2=workspace-write, 3=skip-permissions, 4=sandbox-run），收到 ${level}`;
   }
   // 镜像 qaqh-config-api validate:只拒 0;负数/小数由 serde u64 自带报错。
   // NaN 必须拦:JSON.stringify(NaN) → null,而这里是**有意例外**——null=清除上限,

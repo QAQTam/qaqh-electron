@@ -467,6 +467,13 @@ export async function activateTab(tab: Tab): Promise<void> {
   if (lastActivatedSeed && lastActivatedSeed !== tab.seed) retainRecentBackground(lastActivatedSeed, tab.seed);
   recentBackgroundSeeds = recentBackgroundSeeds.filter((seed) => seed !== tab.seed);
   lastActivatedSeed = tab.seed;
+  // 用户到达该会话(点侧栏行/点标签都汇入 activateTab):「完工」绿点就此消隐——
+  // 它是通知,看过了就该走。红/灰终态点保留(错误不该无声消失);新一轮 running
+  // 出现时 observeSessionStatuses 会清掉全部终态点。
+  if (dotTerminals.get(tab.seed) === "done") {
+    dotTerminals.delete(tab.seed);
+    bumpDotVersion((v) => v + 1);
+  }
   // 只包同步的「内容换血」视觉信号写入;attach/RPC 留在外面,别把旧快照冻屏。
   // 其余 store 的退订同样留在外面:VT 回调排到下一帧,节流下旧回调可能迟到,
   // 在回调里 deactivate 会拆掉刚激活 store 的订阅(见 openStartup 内注释)。
@@ -790,7 +797,8 @@ export async function deleteSession(seed: string): Promise<void> {
   }
 }
 
-/** 启动:选一个非归档会话(优先运行中)作为第一个标签。 */
+/** 启动:只装载会话目录并落主页——冷启动不再自动 attach 会话(产品决策 2026-11-14,
+ *  首屏让给主页卖点);恢复入口 = 主页「最近的工作」卡与侧栏列表。 */
 export async function boot(): Promise<void> {
   let list: SidebarSession[];
   try {
@@ -806,12 +814,7 @@ export async function boot(): Promise<void> {
     return;
   }
   applySessionList(list);
-  const live = list.find((item) => !item.archived && item.busy) ?? list.find((item) => !item.archived) ?? list[0];
-  if (live?.session_id == null) {
-    setBootError(null);
-    openStartup();
-    return;
-  }
-  await openSession(String(live.session_id));
+  setBootError(null);
+  openStartup();
 }
 
