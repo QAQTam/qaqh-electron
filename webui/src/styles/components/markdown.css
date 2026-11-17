@@ -45,6 +45,18 @@
   .diff-word.add { background: var(--diff-add-word); }
   .diff-word.del { background: var(--diff-del-word); }
 
+  /* 自动换行档(diff-wrap,开关在审查抽屉头部):固定 21px 行盒让位于
+     "21px × 视觉行数"——grid 内容列 1fr + pre-wrap 任意断行,续行从内容列
+     左缘起(行号/符号 gutter 不动);window 宽 100% 接管容器,横向滚动消失。
+     omit/hunkhead 保持单行省略号,不参与折行。行盒高度由 VirtualRows 实测回写。 */
+  .diff-scroll.diff-wrap .diff-rows-window { width: 100%; }
+  .diff-scroll.diff-wrap .diff-row:not(.omit):not(.hunkhead) {
+    grid-template-columns: 44px 44px 18px minmax(0, 1fr);
+    height: auto;
+    white-space: normal;
+  }
+  .diff-scroll.diff-wrap .diff-content { white-space: pre-wrap; word-break: break-all; }
+
   /* Markdown(§7.5) */
   .md-host { font-family: var(--font-prose); font-size: var(--md-body-size); line-height: var(--md-body-leading); font-weight: 400; overflow-wrap: anywhere; }
   .md-host .md-block, .md-host .md-tail > :first-child { margin-top: 0; }

@@ -42,20 +42,14 @@ export function describeMode(mode: PowerBlockerMode, active: boolean): string {
   return "阻止休眠（允许熄屏）";
 }
 
+import { prefGet, prefSet } from "./prefs";
 export function storedPowerMode(): PowerBlockerMode {
-  try {
-    return normalizeMode(localStorage.getItem(STORAGE_KEY));
-  } catch {
-    return "off";
-  }
+  return normalizeMode(prefGet(STORAGE_KEY));
 }
 
 function savePowerMode(mode: PowerBlockerMode): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, mode);
-  } catch {
-    // 存不下不影响本次生效;下次启动回到 off。
-  }
+  // 落盘失败只影响下次启动回到 off;本次生效与主进程状态都不受影响。
+  prefSet(STORAGE_KEY, mode);
 }
 
 /**

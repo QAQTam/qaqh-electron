@@ -181,24 +181,17 @@ export function terminalThemeFor(id: TerminalSchemeId): ITheme | null {
 }
 
 const SCHEME_STORAGE_KEY = "qaqh.terminal-scheme";
+import { prefGet, prefSet } from "./prefs";
 
 export function storedTerminalScheme(): TerminalSchemeId {
-  try {
-    return normalizeTerminalScheme(localStorage.getItem(SCHEME_STORAGE_KEY));
-  } catch {
-    return "follow";
-  }
+  return normalizeTerminalScheme(prefGet(SCHEME_STORAGE_KEY));
 }
 
 const [currentScheme, setCurrentScheme] = createSignal<TerminalSchemeId>(storedTerminalScheme());
 
 export function applyTerminalScheme(id: TerminalSchemeId): void {
   const normalized = normalizeTerminalScheme(id);
-  try {
-    localStorage.setItem(SCHEME_STORAGE_KEY, normalized);
-  } catch {
-    // 存不下不影响本次应用。
-  }
+  prefSet(SCHEME_STORAGE_KEY, normalized);
   setCurrentScheme(normalized);
 }
 

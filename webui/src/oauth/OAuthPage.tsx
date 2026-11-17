@@ -78,23 +78,17 @@ const ACCOUNT_PROVIDERS: readonly AccountEntry[] = [
   { id: "account", name: "DeepSeek 账号", kind: "account", credential: "deepseek_account" },
 ];
 
-/** 首次成功启用套餐后的欢迎卡只出现一次，看过的标记留在本机。 */
-const FIRST_RUN_KEY = "siwc.firstRunSeen";
+/** 首次成功启用套餐后的欢迎卡只出现一次，看过的标记留在壳层偏好。 */
+import { prefGet, prefSet } from "../lib/prefs";
+const FIRST_RUN_KEY = "qaqh.siwc.firstRunSeen";
 
 function firstRunSeen(): boolean {
-  try {
-    return window.localStorage.getItem(FIRST_RUN_KEY) === "1";
-  } catch {
-    return true;
-  }
+  // 读不到 = 按已看过处理(与旧行为一致:存储不可用时不打扰)。
+  return prefGet(FIRST_RUN_KEY) === "1";
 }
 
 function markFirstRunSeen(): void {
-  try {
-    window.localStorage.setItem(FIRST_RUN_KEY, "1");
-  } catch {
-    // 忽略：下次仍会弹一次。
-  }
+  prefSet(FIRST_RUN_KEY, "1");
 }
 
 const messageOf = (cause: unknown): string =>

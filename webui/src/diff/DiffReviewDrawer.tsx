@@ -18,9 +18,11 @@ import {
 import IconX from "~icons/lucide/x";
 import IconChevronLeft from "~icons/lucide/chevron-left";
 import IconChevronRight from "~icons/lucide/chevron-right";
+import IconWrapText from "~icons/lucide/wrap-text";
 import IconCopy from "~icons/lucide/copy";
 import IconFileCode from "~icons/lucide/file-code";
 import { diffReviewStore } from "./review-store";
+import { diffWrap, toggleDiffWrap } from "./wrap";
 import { DiffFileView } from "./DiffView";
 import type { DeliverableFileSummary } from "./deliverables";
 
@@ -158,6 +160,16 @@ export const DiffReviewDrawer: Component = () => {
                   onClick={() => diffReviewStore.navigateFile(1)}
                 >
                   <IconChevronRight />
+                </button>
+                {/* 自动换行开关:阅读面默认开,压缩行/超长行折进内容列而非横向滚动。 */}
+                <button
+                  type="button"
+                  class={{ "diff-drawer-nav-btn": true, active: diffWrap() }}
+                  title={diffWrap() ? "自动换行:开(点击改为横向滚动)" : "自动换行:关(点击改为折行)"}
+                  aria-pressed={diffWrap() ? "true" : "false"}
+                  onClick={toggleDiffWrap}
+                >
+                  <IconWrapText />
                 </button>
               </div>
             </div>

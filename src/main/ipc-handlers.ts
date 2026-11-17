@@ -509,6 +509,28 @@ async function handleCommand(
       return client.serviceCall(method, params as MainServiceMap[MainServiceMethod]["params"]);
     }
 
+    /* 用户 shell 的 ws 数据面四条(ADR-0028 切片 5);open/close/list 走上面的 service_query。 */
+    case "shell_attach": {
+      return client.shellAttach(requireId(args.shell_id, "shell_id"));
+    }
+
+    case "shell_detach": {
+      return client.shellDetach(requireId(args.shell_id, "shell_id"));
+    }
+
+    case "shell_stdin": {
+      const shellId = requireId(args.shell_id, "shell_id");
+      if (typeof args.data !== "string") throw new Error("shell_stdin requires a string `data`");
+      return client.shellStdin(shellId, args.data);
+    }
+
+    case "shell_resize": {
+      if (!Number.isInteger(args.cols) || !Number.isInteger(args.rows)) {
+        throw new Error("shell_resize requires integer cols/rows");
+      }
+      return client.shellResize(requireId(args.shell_id, "shell_id"), args.cols, args.rows);
+    }
+
     /* ── 工作区 git 状态(只读,插件 capability "git-status" 的唯一取数面)──────
        不传 path 就解析活动会话的工作区:main 持有 activeSeed,daemon 的
        workspace.get 给出 cwd。插件因此不需要知道会话/工作区注册表。 */

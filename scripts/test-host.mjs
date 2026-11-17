@@ -75,7 +75,9 @@ export function mockNativeAddon() {
   const submissions = [];
   const watches = [];
   const closedSeeds = [];
+  const shellCalls = [];
   let handlers = null;
+  let shellHandlers = null;
   let nextAck = 1;
   let submitImpl = null;
   const client = {
@@ -105,6 +107,15 @@ export function mockNativeAddon() {
     async issuePairingToken() { return { pairing_token: "t", expires_in_ms: 60_000, tls_fp: "" }; },
     async listDevices() { return []; },
     async revokeDevice() {},
+    // 用户 shell 的四个口(ADR-0028 切片 5 · 方案 A 的 napi 面)。fake 只记录调用
+    // 并把三个回调存下来:下行面由 emit.shell* 驱动,与真实 Rust 读循环同形状。
+    async shellSubscribe(shellId, onFrame, onEvent, onStatus) {
+      shellCalls.push(["subscribe", shellId]);
+      shellHandlers = { onFrame, onEvent, onStatus };
+    },
+    async shellStdin(shellId, bytes) { shellCalls.push(["stdin", shellId, bytes]); },
+    async shellResize(shellId, cols, rows) { shellCalls.push(["resize", shellId, cols, rows]); },
+    async shellClose(shellId) { shellCalls.push(["close", shellId]); },
     close() {},
   };
   const addon = {
@@ -119,13 +130,18 @@ export function mockNativeAddon() {
     serviceMethods: () => serviceMethodsCache,
   };
   return {
-    addon, client, submissions, watches, closedSeeds, handlers: () => handlers,
+    addon, client, submissions, watches, closedSeeds, shellCalls, handlers: () => handlers,
     setSubmitImpl: impl => { submitImpl = impl; },
     emit: {
       status: payload => handlers?.onStatus(payload),
       event: (seed, event) => handlers?.onEvent({ session_id: seed, event }),
       reset: (seed, reason) => handlers?.onReset({ session_id: seed, reset: { session_id: seed, reason } }),
       liveness: () => handlers?.onLiveness(),
+      // 用户 shell 的 ws 三个出口(见 native-client.ts 的 shellSubscribe):裸字节、
+      // 协议帧 closed、传输状态。测试经这三个口驱动「Rust→JS」的下行面。
+      shellFrame: bytes => shellHandlers?.onFrame(bytes),
+      shellEvent: (shellId, event) => shellHandlers?.onEvent({ shell_id: shellId, event }),
+      shellStatus: payload => shellHandlers?.onStatus(payload),
     },
   };
 }

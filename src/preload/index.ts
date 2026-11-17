@@ -7,6 +7,8 @@ const events = new Set([
   "plugins://graph",
   "voice://status",
   "notify://handoff",
+  "app://found-in-page",
+  "app://shell-frame",
 ]);
 const pendingQuitEvents: unknown[] = [];
 const quitCallbacks = new Set<(payload: unknown) => void>();
@@ -52,6 +54,22 @@ contextBridge.exposeInMainWorld("qaqhHost", {
   gpuPref: {
     state: () => ipcRenderer.invoke("qaqh:gpu-pref-state") as Promise<{ currentLaunchDisabled: boolean; nextLaunchDisabled: boolean }>,
     set: (disabled: boolean) => ipcRenderer.invoke("qaqh:gpu-pref-set", { disabled }) as Promise<{ currentLaunchDisabled: boolean; nextLaunchDisabled: boolean }>,
+  },
+  // 用户 shell 的 ws 数据面四条(ADR-0028 切片 5);形状真源在 desktop-host 的 ShellBridge。
+  shell: {
+    attach: (id: string) => ipcRenderer.invoke("qaqh:invoke", "shell_attach", { shell_id: id }),
+    detach: (id: string) => ipcRenderer.invoke("qaqh:invoke", "shell_detach", { shell_id: id }),
+    stdin: (id: string, data: string) => ipcRenderer.invoke("qaqh:invoke", "shell_stdin", { shell_id: id, data }),
+    resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke("qaqh:invoke", "shell_resize", { shell_id: id, cols, rows }),
+  },
+  find: {
+    inPage: (text: string, options: { forward?: boolean; matchCase?: boolean } = {}) =>
+      ipcRenderer.invoke("qaqh:find-in-page", { text, ...options }) as Promise<boolean>,
+    stop: () => ipcRenderer.invoke("qaqh:find-stop") as Promise<void>,
+  },
+  prefs: {
+    snapshot: () => ipcRenderer.sendSync("qaqh:prefs-snapshot") as Record<string, string>,
+    set: (key: string, value: string | null) => ipcRenderer.invoke("qaqh:prefs-set", { key, value }) as Promise<void>,
   },
   relaunch: () => ipcRenderer.invoke("qaqh:relaunch"),
   updates: {

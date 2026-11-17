@@ -129,31 +129,25 @@ const shotSupported = screenshotSupported({
  *  冷启动默认落主页(产品决策 2026-11-14):首屏让给品牌与卖点,会话从侧栏/主页恢复。 */
 const [section, setSection] = createSignal<Exclude<GlobalSection, "settings">>("home");
 
-/* 侧栏收展(汉堡):记忆到 localStorage,与 MessageSidebar 的工作区分组折叠键分开。 */
+/* 侧栏收展(汉堡):记忆走壳层偏好(lib/prefs),与 MessageSidebar 的工作区分组折叠键分开。 */
+import { prefGet, prefSet } from "../lib/prefs";
 const SIDEBAR_COLLAPSED_KEY = "qaqh.app-sidebar.collapsed";
-const readSidebarCollapsed = (): boolean => {
-  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; } catch { return false; }
-};
+const readSidebarCollapsed = (): boolean => prefGet(SIDEBAR_COLLAPSED_KEY) === "1";
 const [sidebarCollapsed, setSidebarCollapsed] = createSignal<boolean>(readSidebarCollapsed());
-/* 侧栏拖拽调宽(用户侧需求):宽度记忆在 localStorage;拖拽路径不进 signal
+/* 侧栏拖拽调宽(用户侧需求):宽度记忆在壳层偏好;拖拽路径不进 signal
    (Sidebar 直写 #app 内联变量),松手才 commit——低于收回阈值等效汉堡收回,
    收拢动画由 #app 的 grid 轨道过渡播出。 */
 const SIDEBAR_WIDTH_KEY = "qaqh.app-sidebar.width";
-const readSidebarWidth = (): number | null => {
-  try { return restoreSidebarWidth(localStorage.getItem(SIDEBAR_WIDTH_KEY)); } catch { return null; }
-};
+const readSidebarWidth = (): number | null => restoreSidebarWidth(prefGet(SIDEBAR_WIDTH_KEY));
 const [sidebarWidth, setSidebarWidth] = createSignal<number | null>(readSidebarWidth());
 const commitSidebarWidth = (width: number | null): void => {
   if (width != null && shouldCollapseSidebar(width)) {
-    try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width)); } catch {}
+    prefSet(SIDEBAR_WIDTH_KEY, String(width));
     setSidebarWidth(width);
     setSidebarCollapsed(true);
     return;
   }
-  try {
-    if (width == null) localStorage.removeItem(SIDEBAR_WIDTH_KEY);
-    else localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
-  } catch {}
+  prefSet(SIDEBAR_WIDTH_KEY, width == null ? null : String(width));
   setSidebarWidth(width);
   if (width != null) setSidebarCollapsed(false);
 };
@@ -166,18 +160,13 @@ const [railDrawerOpen, setRailDrawerOpen] = createSignal(false);
    共享这一份,null=回自动(有待办自动展开);持久化,跨会话记忆用户偏好。 */
 const RAIL_MANUAL_KEY = "qaqh.rail.manual";
 const readRailManual = (): boolean | null => {
-  try {
-    const raw = localStorage.getItem(RAIL_MANUAL_KEY);
-    return raw === "1" ? true : raw === "0" ? false : null;
-  } catch { return null; }
+  const raw = prefGet(RAIL_MANUAL_KEY);
+  return raw === "1" ? true : raw === "0" ? false : null;
 };
 const [railManual, setRailManualSignal] = createSignal<boolean | null>(readRailManual());
 const setRailManual = (value: boolean | null): void => {
   setRailManualSignal(value);
-  try {
-    if (value == null) localStorage.removeItem(RAIL_MANUAL_KEY);
-    else localStorage.setItem(RAIL_MANUAL_KEY, value ? "1" : "0");
-  } catch {}
+  prefSet(RAIL_MANUAL_KEY, value == null ? null : value ? "1" : "0");
 };
 /* docked 态右栏当前是否展开(手动优先,否则按自动规则:有待办就展开)。 */
 const railDockedOpen = (): boolean => railManual() ?? (activeTab()?.store.todos[0]().length ?? 0) > 0;
@@ -194,7 +183,7 @@ const execPanelOpen = (): boolean => execPanelStore.snapshot().isOpen;
 const toggleSidebar = (): void => {
   setSidebarCollapsed((value) => {
     const next = !value;
-    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0"); } catch {}
+    prefSet(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0");
     return next;
   });
 };
@@ -249,8 +238,8 @@ const App: Component = () => {
   const toggleGamepadMode = (): void => { setGamepadMode((value) => !value); };
 
   // —— 语音输入/播报(懒人生形态:手柄按住扳机说话、agent 回复念出来)——
-  const [voiceOn, setVoiceOn] = createSignal(localStorage.getItem("qaqh.voice") === "1");
-  const [voicePhase, setVoicePhase] = createSignal<VoicePhase>(localStorage.getItem("qaqh.voice") === "1" ? "idle" : "off");
+  const [voiceOn, setVoiceOn] = createSignal(prefGet("qaqh.voice") === "1");
+  const [voicePhase, setVoicePhase] = createSignal<VoicePhase>(prefGet("qaqh.voice") === "1" ? "idle" : "off");
   const [voiceDetail, setVoiceDetail] = createSignal("");
   const [voiceLevel, setVoiceLevel] = createSignal(0);
   const voice = new VoiceIO({
@@ -275,7 +264,7 @@ const App: Component = () => {
   const toggleVoice = (): void => {
     const next = !voiceOn();
     setVoiceOn(next);
-    localStorage.setItem("qaqh.voice", next ? "1" : "0");
+    prefSet("qaqh.voice", next ? "1" : "0");
     if (next) void voice.enable().catch((error: unknown) => { toast(error instanceof Error ? error.message : String(error), "err"); });
     else voice.disable();
   };
@@ -409,10 +398,10 @@ const App: Component = () => {
     const poll = setInterval(() => void pollSessions(), 15_000);
     // 本地热更冷启动静默检查(5s 等首帧与连接稳定):发现新版本才出声(带「去安装」
     // 直达设置→关于),已最新/已暂存/检查失败/开发环境一律静默——大厂纪律。
-    // 开关存 localStorage(AboutSection 拥有 UI),关掉即整个分支不进。
+    // 开关存壳层偏好(AboutSection 拥有 UI),关掉即整个分支不进。
     const autoUpdateTimer = window.setTimeout(() => {
       const bridge = desktopHost()?.updates;
-      if (bridge == null || localStorage.getItem("qaqh.settings.autoCheckUpdates") === "off") return;
+      if (bridge == null || prefGet("qaqh.settings.autoCheckUpdates") === "off") return;
       bridge.check().then((status) => {
         const plan = status.plan;
         if (status.error != null || !status.available || plan == null || plan.upToDate || status.staged) return;

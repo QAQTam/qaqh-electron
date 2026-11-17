@@ -3,7 +3,7 @@
  *
  * backend exporter 生成的每文件 DTO（./qaqh/*）经此汇聚；@qaqh/sdk 已退役，
  * renderer 与 Electron main 共享同一份生成产物（../qaqh 的镜像）。
- * ServiceMap 是本地手写的 36 方法表——与 native addon `serviceMethods()` 的
+ * ServiceMap 是本地手写的 40 方法表——与 native addon `serviceMethods()` 的
  * 运行时白名单一致性由 Electron 侧 packaging 测试校验；账号面方法的 result
  * 维持 unknown（见 docs B08：后端尚未导出这批 DTO）。
  */
@@ -65,6 +65,11 @@ import type { SiwcSignInStartResult } from "./qaqh/SiwcSignInStartResult";
 import type { SiwcSignInStatusResult } from "./qaqh/SiwcSignInStatusResult";
 import type { SiwcSignOutResult } from "./qaqh/SiwcSignOutResult";
 import type { SiwcStatusResult } from "./qaqh/SiwcStatusResult";
+import type { ShellCloseParams } from "./qaqh/ShellCloseParams";
+import type { ShellCloseResult } from "./qaqh/ShellCloseResult";
+import type { ShellListResult } from "./qaqh/ShellListResult";
+import type { ShellOpenParams } from "./qaqh/ShellOpenParams";
+import type { ShellView } from "./qaqh/ShellView";
 
 /** 服务面 typed 方法表（真源：qaqh-client 的封闭查询枚举 + 账号面白名单）。 */
 export type ServiceMap = {
@@ -105,4 +110,8 @@ export type ServiceMap = {
   "dsaccount.bonus.ack": { params: { order_id: string }; result: null };
   "dsaccount.models": { params: Record<never, never>; result: DsAccountModel[] };
   "dsaccount.verify": { params: Record<never, never>; result: DsAccountVerifyResult };
+  // 用户 shell 面(ADR-0028)。owner 与可执行名都不在 params(D2/D4);字节面是一条 ws。
+  "shell.open": { params: ShellOpenParams; result: ShellView };
+  "shell.close": { params: ShellCloseParams; result: ShellCloseResult };
+  "shell.list": { params: Record<never, never>; result: ShellListResult };
 };

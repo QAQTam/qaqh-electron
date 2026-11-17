@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, session, powerSaveBlocker, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage, protocol, net, ipcMain, session, powerSaveBlocker, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -15,6 +15,7 @@ import { createDevHostEngine, devToolDefs } from "./dev-host/engine.js";
 import { wireBrowserMcpConfig } from "./browser-host/config-wiring.js";
 import { pluginsRoot, startPluginRegistry, notifyPluginsChanged } from "./plugins.js";
 import { openExternalUrl } from "./native-dialogs.js";
+import { readPrefsSync, writePref } from "./prefs.js";
 import { createNotifier } from "./notifier.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
@@ -356,6 +357,50 @@ ipcMain.handle("qaqh:titlebar-overlay", (event, options: unknown) => {
     console.warn("[app] setTitleBarOverlay unavailable:", error);
     return false;
   }
+});
+
+// 壳层偏好(见 prefs.ts):快照走 sendSync——渲染层首帧就要用偏好定尺寸/主题,
+// 异步水合会闪布局;写入全异步,主进程 debounce 落盘。
+ipcMain.on("qaqh:prefs-snapshot", (event) => {
+  event.returnValue = canControlWindow(event) ? readPrefsSync() : {};
+});
+ipcMain.handle("qaqh:prefs-set", (event, args: unknown) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  const { key, value } = (args ?? {}) as { key?: unknown; value?: unknown };
+  if (typeof key !== "string" || key === "") throw new Error("prefs-set requires a non-empty string key");
+  if (value !== null && typeof value !== "string") throw new Error("prefs values must be strings or null");
+  writePref(key, value as string | null);
+});
+
+// 转录页内查找(CTRL+F):Chromium 原生 find 高亮/滚动/计数全在浏览器进程完成,
+// 万行时间线零 DOM 代价、零渲染层干扰。命中数以 app://found-in-page 异步推回 UI。
+const findWired = new WeakSet<WebContents>();
+function wireFindResults(wc: WebContents): void {
+  if (findWired.has(wc)) return;
+  findWired.add(wc);
+  wc.on("found-in-page", (_event, result) => {
+    wc.send("qaqh:event:app://found-in-page", {
+      activeMatchIndex: result.activeMatchOrdinal,
+      matchCount: result.matches,
+    });
+  });
+}
+ipcMain.handle("qaqh:find-in-page", (event, payload: unknown) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  const { text, forward, matchCase } = (payload ?? {}) as { text?: unknown; forward?: unknown; matchCase?: unknown };
+  const wc = mainWindow?.webContents;
+  if (wc == null) return false;
+  wireFindResults(wc);
+  if (typeof text !== "string" || text === "") {
+    wc.stopFindInPage("clearSelection");
+    return false;
+  }
+  wc.findInPage(text, { forward: forward !== false, matchCase: matchCase === true, findNext: true });
+  return true;
+});
+ipcMain.handle("qaqh:find-stop", (event) => {
+  if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
+  mainWindow?.webContents.stopFindInPage("clearSelection");
 });
 
 ipcMain.handle("qaqh:window-hide", (event) => {

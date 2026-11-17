@@ -131,6 +131,21 @@ export interface NativeAddon {
 export interface NativeRingingClient {
   watchSession(seed: string): Promise<void>;
   deactivateStream(seed: string): Promise<void>;
+  /** 三个回调互不重叠：裸字节 / 协议帧 closed / 传输状态（ADR-0028 切片 5）。 */
+  shellSubscribe(
+    shellId: string,
+    onFrame: (bytes: Uint8Array) => void,
+    onEvent: (payload: { shell_id: string; event: Record<string, unknown> }) => void,
+    onStatus: (payload: {
+      shell_id: string;
+      state: "connecting" | "open" | "reconnecting" | "closed";
+      delivered?: number; retry_ms?: number; reason?: string;
+    }) => void,
+  ): Promise<void>;
+  shellStdin(shellId: string, bytes: Uint8Array): Promise<void>;
+  shellResize(shellId: string, cols: number, rows: number): Promise<void>;
+  /** 只关这条**订阅**；杀进程走服务面 `shell.close`（§D5 断联不 kill）。 */
+  shellClose(shellId: string): Promise<void>;
   submit(target: unknown, command: unknown, options?: NativeSubmitOptions): Promise<NativeSubmitResult>;
   commandStatus(commandId: string): Promise<unknown>;
   serviceCall(method: string, params: unknown): Promise<unknown>;

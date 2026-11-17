@@ -120,6 +120,31 @@ pub struct ConnectOptions {
 /// 参数，因此回调在 `connect()` 上直接接收。
 type PushFn = ThreadsafeFunction<Value, Unknown<'static>, Value, Status, false>;
 type VoidFn = ThreadsafeFunction<(), Unknown<'static>, (), Status, false>;
+/// 裸字节回调：PTY 输出**不**过 JSON（base64 一跳就把每帧代价翻倍）。
+/// Buffer → JS `Uint8Array`，渲染层原样交给 xterm。
+type BytesFn = ThreadsafeFunction<Buffer, Unknown<'static>, Buffer, Status, false>;
+
+/// `ShellStreamStatus` → 稳定 JSON 形状（与 `stream_status_payload` 同款口径：
+/// 传输生命周期是一种事实，`closed` 协议帧是另一种，两条不混在一个载荷里）。
+fn shell_status_payload(shell_id: &str, status: &qaqh_client::shell_stream::ShellStreamStatus) -> Value {
+    use qaqh_client::shell_stream::ShellStreamStatus as S;
+    match status {
+        S::Connecting => json!({ "shell_id": shell_id, "state": "connecting" }),
+        S::Open { delivered } => json!({ "shell_id": shell_id, "state": "open", "delivered": delivered }),
+        S::Reconnecting {
+            retry_ms,
+            delivered,
+            reason,
+        } => json!({
+            "shell_id": shell_id,
+            "state": "reconnecting",
+            "retry_ms": retry_ms,
+            "delivered": delivered,
+            "reason": reason,
+        }),
+        S::Closed { reason } => json!({ "shell_id": shell_id, "state": "closed", "reason": reason }),
+    }
+}
 
 /// `V2StreamStatus` → 稳定 JSON 形状（TS 侧据此映射 WatchStatus wire）。
 fn stream_status_payload(seed: &str, status: &qaqh_client::V2StreamStatus) -> Value {
@@ -155,6 +180,10 @@ pub struct NativeClient {
     client: Client,
     /// watch 任务的停止开关（`activate_stream` 的句柄由 Client 内部持有）。
     watches: Mutex<HashMap<String, WatchState>>,
+    /// 每条 shell 的 ws 订阅句柄（`ShellStream`）。句柄在这里、不在 `Client` 里：
+    /// 与 `watches` 同律——生命周期归调用方（主进程 shell-host），协议语义归 Rust。
+    /// `Drop` 即停订阅，而**停订阅不杀 shell**（ADR-0028 §D5）。
+    shells: Mutex<HashMap<String, std::sync::Arc<qaqh_client::shell_stream::ShellStream>>>,
 }
 
 struct WatchState {
@@ -275,6 +304,7 @@ impl NativeClient {
         Ok(NativeClient {
             client,
             watches: Mutex::new(HashMap::new()),
+            shells: Mutex::new(HashMap::new()),
         })
     }
 
@@ -306,6 +336,114 @@ impl NativeClient {
         }
         self.client.deactivate_stream(&seed).await;
         Ok(())
+    }
+
+    /// 订阅一条用户 shell 的 ws 数据面（ADR-0028 切片 5 · 方案 A：帧编解码在 Rust）。
+    ///
+    /// 三个回调的分工是刻意的、互不重叠：
+    /// - `on_frame(bytes)`：下行**裸字节**，原样交给 xterm——不过 JSON、不 base64；
+    ///   `shell_id` 不在载荷里重复携带，由 JS 侧每次订阅的闭包带着（一份事实一个来源）。
+    /// - `on_event({shell_id, event})`：下行 text 控制帧，词表里只有 `closed{reason}`。
+    /// - `on_status({shell_id, state, …})`：这条连接的传输生命周期
+    ///   （connecting / open / reconnecting / closed）。
+    ///
+    /// `from_offset` 续读、退避重连、base64 帧编码全在 `qaqh-client::shell_stream`，
+    /// 这里不写第二份——写第二份就是本次裁定要避免的那件事。
+    ///
+    /// 重复订阅同一个 `shell_id` = 替换旧句柄。旧句柄被 drop 只**断订阅**，
+    /// 不杀 shell（§D5 断联不 kill）。
+    #[napi]
+    pub async fn shell_subscribe(
+        &self,
+        shell_id: String,
+        on_frame: BytesFn,
+        on_event: PushFn,
+        on_status: PushFn,
+    ) -> Result<()> {
+        let handlers = qaqh_client::shell_stream::ShellStreamHandlers {
+            on_bytes: std::sync::Arc::new(move |_shell_id, bytes| {
+                on_frame.call(Buffer::from(bytes), ThreadsafeFunctionCallMode::Blocking);
+            }),
+            on_event: {
+                let on_event = on_event;
+                std::sync::Arc::new(move |shell_id: String, event| {
+                    let Ok(value) = serde_json::to_value(&event) else { return };
+                    on_event.call(json!({ "shell_id": shell_id, "event": value }), ThreadsafeFunctionCallMode::Blocking);
+                })
+            },
+            on_status: {
+                let on_status = on_status;
+                std::sync::Arc::new(move |shell_id: String, status| {
+                    on_status.call(shell_status_payload(&shell_id, &status), ThreadsafeFunctionCallMode::Blocking);
+                })
+            },
+        };
+        let stream = std::sync::Arc::new(
+            qaqh_client::shell_stream::ShellStream::start(shell_id.clone(), &self.client, handlers)
+                .await
+                .map_err(client_error)?,
+        );
+        // Arc 而不是裸句柄：`stdin`/`resize` 要在**不跨 await 持锁**的前提下用它，
+        // 持着 std::sync::MutexGuard 去 await 会让 future 变成 !Send（napi 的
+        // async 方法必须能在多线程 runtime 上跑）。
+        self.shells
+            .lock()
+            .expect("shells lock")
+            .insert(shell_id, stream);
+        Ok(())
+    }
+
+    /// 上行 `stdin`：一次粘贴是一帧，一次 keystroke 也是一帧。
+    /// 失败条件只有两种——没订阅、或那条流已经终止（重连太久把 64 帧队列挤满会
+    /// 当场报错，而不是静默吞掉用户敲的字）。
+    #[napi]
+    pub async fn shell_stdin(&self, shell_id: String, bytes: Buffer) -> Result<()> {
+        let stream = self.shell_handle(&shell_id)?;
+        stream.stdin(bytes.as_ref()).await.map_err(client_error)
+    }
+
+    /// 上行 `resize`。真值不回执（词表里没有 ack 帧）：要确认就读 `shell.list`。
+    #[napi]
+    pub async fn shell_resize(&self, shell_id: String, cols: u16, rows: u16) -> Result<()> {
+        let stream = self.shell_handle(&shell_id)?;
+        stream.resize(cols, rows).await.map_err(client_error)
+    }
+
+    /// 关掉这条**订阅**（不是关掉 shell）。要收走子进程走服务面 `shell.close`。
+    ///
+    /// 命名与 §切片 5 施工前置的四个口一致；把它理解成「杀 shell」是这次迁移里
+    /// 最容易造成的误会，所以这里写死口径：本方法只 drop 句柄 ⇒ 读循环停 ⇒ ws 断，
+    /// daemon 侧 `receiver_count` 减一，会话继续活。
+    ///
+    /// **幂等**：这个操作的约定是它想要的终态——「这个 id 上没有订阅」。没有订阅
+    /// 时它已经成立，所以不报错（渲染层拆页签时可能正赶上 daemon 重启后客户端重建，
+    /// 那不是错误路径，是常规竞态）。与之相反，`shellStdin`/`shellResize` 对着一条
+    /// 不存在的订阅发消息是调用方的 bug，那里必须红。
+    #[napi]
+    pub async fn shell_close(&self, shell_id: String) -> Result<()> {
+        self.shells
+            .lock()
+            .expect("shells lock")
+            .remove(&shell_id);
+        Ok(())
+    }
+
+    /// 取一条 shell 的句柄副本（锁只在这次调用里持有）。
+    fn shell_handle(
+        &self,
+        shell_id: &str,
+    ) -> Result<std::sync::Arc<qaqh_client::shell_stream::ShellStream>> {
+        self.shells
+            .lock()
+            .expect("shells lock")
+            .get(shell_id)
+            .cloned()
+            .ok_or_else(|| {
+                json_error(
+                    "protocol",
+                    format!("shell {shell_id} 没有活跃的 ws 订阅（先 shellSubscribe）"),
+                )
+            })
     }
 
     /// 提交一个 Ringing v2 命令（唯一命令入口）。daemon 明确拒绝
@@ -518,6 +656,10 @@ impl NativeClient {
         for (_, state) in self.watches.lock().expect("watches lock").drain() {
             let _ = state.stop.send(true);
         }
+        // shell 的 ws 订阅也归这里收：清句柄 ⇒ Drop ⇒ 读循环停。断的是**订阅**，
+        // 不是用户的 shell 进程（§D5）——那要么由 `shell.close` 服务面收走，
+        // 要么由 daemon 侧的 idle 回收/ revoke 收走。
+        self.shells.lock().expect("shells lock").clear();
     }
 }
 
@@ -533,13 +675,24 @@ pub fn command_contract_revision() -> String {
     qaqh_client::COMMAND_CONTRACT_REVISION.to_string()
 }
 
-/// 客户端放行的服务面方法全集：封闭查询枚举 + 账号面白名单。
+/// 客户端放行的服务面方法全集：封闭查询枚举 + 账号面白名单 + 用户 shell 三条。
 /// 主进程 IPC 的方法闸门直接消费这份清单，不再本地维护并集。
+///
+/// `shell.open/close/list` 在这里是有意的：渲染层「开一个终端」就是**一次普通的
+/// service_query**（与 `workspace.set`、`exec_session.interrupt` 同一条通用路），
+/// ws 订阅另走 `shellSubscribe`。桥里不再包一层 `shell_open`——同一个动作两个入口
+/// 就是两份事实源。RPC 与订阅之间被打断留下的无人观看 shell 由 daemon 的 idle 回收
+/// 收走（§D5），那正是它存在的理由，不需要在客户端再造一道闸门。
+///
+/// `shell.write` / `shell.output` 永远不该出现在这张表里：那是候选 A（长轮询）的
+/// 形状，与这条 ws 并存就是 §被否选项第 5 条点名的「静并存」。双向闸在 `qaqh-runtime`
+/// 的 `client_shell_method_table_mirrors_the_daemon_shell_surface`。
 #[napi]
 pub fn service_methods() -> Vec<String> {
     QueryRequest::query_service_methods()
         .iter()
         .map(|m| m.to_string())
         .chain(qaqh_client::SERVICE_METHODS.iter().map(|m| m.to_string()))
+        .chain(qaqh_client::service::SHELL_METHODS.iter().map(|m| m.to_string()))
         .collect()
 }

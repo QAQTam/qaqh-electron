@@ -319,6 +319,46 @@ export class RingingClient {
     return this.native.revokeDevice(deviceId);
   }
 
+  /* 用户 shell 的 ws 数据面(ADR-0028 切片 5)。生命周期走通用 service_query,这里只有
+     这条流。传输层断开不写成 closed:§D5 断联不 kill,那会是第二个版本的真相。 */
+  /** 订阅;重复订阅同一 id = 替换。不另存「哪些 id 已订阅」,那份副本必然陈旧。 */
+  async shellAttach(shellId: string): Promise<void> {
+    await this.init();
+    const native = this.native!;
+    await native.shellSubscribe(
+      shellId,
+      (bytes) => this.eventSender("app://shell-frame", { id: shellId, data: bytes }),
+      (payload) => this.eventSender("app://shell-frame", {
+        id: shellId,
+        closed: { reason: typeof payload.event?.reason === "string" ? payload.event.reason : "" },
+      }),
+      (status) => {
+        if (status.state === "reconnecting") {
+          console.warn(`[shell] ${shellId} 重连中(${status.retry_ms ?? 0}ms): ${status.reason ?? ""}`);
+        } else if (status.state === "closed") {
+          console.warn(`[shell] ${shellId} 流已结束: ${status.reason ?? ""}`);
+          void native.shellClose(shellId).catch(() => { /* 句柄已收 */ });
+        }
+      },
+    );
+  }
+
+  /** 退订(幂等;断联不杀 shell)。 */
+  async shellDetach(shellId: string): Promise<void> {
+    await this.init();
+    await this.native!.shellClose(shellId);
+  }
+
+  async shellStdin(shellId: string, data: string): Promise<void> {
+    await this.init();
+    await this.native!.shellStdin(shellId, new TextEncoder().encode(data));
+  }
+
+  async shellResize(shellId: string, cols: number, rows: number): Promise<void> {
+    await this.init();
+    await this.native!.shellResize(shellId, cols, rows);
+  }
+
   async reconnect(): Promise<void> {
     this.detachActive();
     await this.recreateClient();

@@ -221,6 +221,38 @@
   .icon-btn:disabled { opacity: .4; }
   .icon-btn svg { width: 16px; height: 16px; }
 
+  /* 转录页内查找(Ctrl+F):Chromium 原生 find 的高亮/滚动/计数在浏览器进程,
+     这里只放控制浮层。包含块同 .back-bottom(#session 的 relative 栈)。 */
+  .find-bar {
+    position: absolute; left: 50%; top: 10px; transform: translateX(-50%);
+    z-index: 60;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-panel);
+    background: var(--flyout-bg, var(--bg));
+    box-shadow: var(--shadow-panel);
+  }
+  .find-input {
+    width: 220px; height: 26px; padding: 0 8px;
+    border: 1px solid var(--border); border-radius: var(--r-md);
+    background: var(--bg); color: var(--text); font-size: var(--fs-xs);
+  }
+  .find-input:focus { outline: none; border-color: var(--focus-ring); }
+  .find-count {
+    min-width: 56px; text-align: center;
+    color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
+  }
+  .find-btn {
+    display: grid; place-items: center; width: 26px; height: 26px;
+    border: 0; border-radius: var(--r-md);
+    background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .find-btn:hover { background: var(--surface-2); color: var(--text); }
+  .find-btn.active { color: var(--accent); background: var(--accent-soft); }
+  .find-btn svg { width: 13px; height: 13px; }
+  .find-aa { font-size: 11px; font-weight: 650; }
+
   /* 历史记录/回到底部 */
   .history-note { color: var(--muted); font-size: var(--fs-xs); padding: 4px 0 8px; }
   .history-note.retry { min-height: 28px; }
@@ -233,16 +265,26 @@
     color: var(--muted); font-size: var(--fs-sm);
   }
   .sync-note svg { width: 15px; height: 15px; }
+  /* 回到底部:水平居中 + 淡入淡出(常驻 DOM,离底 .show 点亮)。绝对定位的
+     包含块是 #session;transform 同时承担水平居中,不与位移动画混用。 */
   .back-bottom {
-    position: absolute; right: var(--space-4); bottom: 12px;
+    position: absolute; left: 50%; bottom: 12px;
+    transform: translateX(-50%);
     display: inline-flex; align-items: center; gap: 6px;
     min-height: 28px; padding: 0 10px;
     border: 1px solid var(--border-strong);
     border-radius: var(--r-md);
     background: var(--bg);
     color: var(--text); font-size: var(--fs-xs);
-    transition: background-color var(--dur-fast) var(--ease);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity var(--dur-out) var(--ease), visibility 0s var(--dur-out), background-color var(--dur-fast) var(--ease);
   }
+  .back-bottom.show {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    transition: opacity var(--dur) var(--ease), background-color var(--dur-fast) var(--ease);
+  }
+  /* 未读新内容(流式期间离开底部):强调边框提示「下面还有没看过的」。 */
+  .back-bottom.unseen { border-color: var(--accent); color: var(--accent); }
   .back-bottom:hover { background: var(--surface-2); }
   .back-bottom svg { width: 12px; height: 12px; }
   /* 展开收起(§13.2):grid-template-rows 0fr↔1fr + opacity */

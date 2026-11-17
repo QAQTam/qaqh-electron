@@ -18,8 +18,10 @@ import {
 import IconPause from "~icons/lucide/pause";
 import IconSquare from "~icons/lucide/square";
 import IconCopy from "~icons/lucide/copy";
+import IconTerminal from "~icons/lucide/terminal";
 import IconX from "~icons/lucide/x";
 import { execPanelStore } from "./panel-store";
+import { desktopHost } from "../lib/desktop-host";
 import { activeTab } from "../tabs/store";
 import { execSessionContent } from "../tools/presentation";
 import { formatWorkDuration } from "../lib/strings";
@@ -34,6 +36,15 @@ let readOnlyTerminalPromise: Promise<ReadOnlyTerminalView> | undefined;
 function loadReadOnlyTerminal(): Promise<ReadOnlyTerminalView> {
   readOnlyTerminalPromise ??= import("../tools/ReadOnlyTerminal").then((module) => module.ReadOnlyTerminal);
   return readOnlyTerminalPromise;
+}
+
+/** 交互终端(含 xterm + 后端 PTY 的 ws 桥)只在按「终端」钮时拉,和只读终端同一纪律。 */
+type ShellTerminalView = Component<{ class?: string }>;
+let shellTerminalPromise: Promise<ShellTerminalView> | undefined;
+
+function loadShellTerminal(): Promise<ShellTerminalView> {
+  shellTerminalPromise ??= import("./ShellTerminal").then((module) => module.ShellTerminal);
+  return shellTerminalPromise;
 }
 
 const TerminalSlot: Component<ReadOnlyTerminalProps & { component: ReadOnlyTerminalView | undefined }> = (props) => (
@@ -68,6 +79,14 @@ export const ExecSessionDrawer: Component = () => {
   const [filterQuery, setFilterQuery] = createSignal("");
   const [animReady, setAnimReady] = createSignal(false);
   const [copied, setCopied] = createSignal(false);
+  // 「终端」档:抽屉工作区直接换成活 shell(cwd=工作区粘字段)。
+  const [shellMode, setShellMode] = createSignal(false);
+  const [shellView, setShellView] = createSignal<ShellTerminalView>();
+  const toggleShellMode = (): void => {
+    const next = !shellMode();
+    setShellMode(next);
+    if (next && shellView() == null) void loadShellTerminal().then(setShellView);
+  };
   const [terminalComponent, setTerminalComponent] = createSignal<ReadOnlyTerminalView>();
 
   const [tick, setTick] = createSignal(now());
@@ -182,11 +201,32 @@ export const ExecSessionDrawer: Component = () => {
                 <span class="exec-drawer-live-count">{runningCount()} 个运行中</span>
               </Show>
             </div>
+            <Show when={desktopHost()?.shell != null}>
+              <button
+                type="button"
+                class={{ "exec-drawer-shell-btn": true, active: shellMode() }}
+                title="用户终端(在当前工作区直开 shell)"
+                aria-pressed={shellMode() ? "true" : "false"}
+                onClick={toggleShellMode}
+              >
+                <IconTerminal />
+              </button>
+            </Show>
             <button type="button" class="exec-drawer-close-btn" title="关闭抽屉 (Esc)" onClick={() => execPanelStore.close()}>
               <IconX />
             </button>
           </header>
 
+          {shellMode() ? (
+            <div class="exec-drawer-body exec-drawer-body-shell">
+              <Show when={shellView()} fallback={<div class="exec-drawer-empty">正在加载终端…</div>}>
+                {(view) => {
+                  const ShellTerminalViewLazy = view();
+                  return <ShellTerminalViewLazy />;
+                }}
+              </Show>
+            </div>
+          ) : (
           <div class="exec-drawer-body">
             {/* 左侧会话导航 */}
             <div class="exec-drawer-sidebar">
@@ -301,6 +341,7 @@ export const ExecSessionDrawer: Component = () => {
               </Show>
             </div>
           </div>
+          )}
         </aside>
       </div>
     </Show>

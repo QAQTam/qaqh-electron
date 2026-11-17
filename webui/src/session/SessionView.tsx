@@ -16,6 +16,7 @@ import { anchorScrollTop, clampPlaceholderHeight, EVICT_SCREENS, shouldLoadOlder
 import { STR } from "../lib/strings";
 import type { SessionStore } from "../session/store";
 import { gapHeight, type Slot, type Wait } from "../session/types";
+import { FindBar } from "./FindBar";
 import type { Tab } from "../tabs/store";
 
 export const SessionView: Component<{ tab: Tab }> = (props) => {
@@ -122,7 +123,11 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
       return;
     }
     if (!userScrolled) return;
-    setPinned(nearBottom());
+    // 滞回带:贴底 80px 内重新吸随,向上离开超过 160px 才停随,中间维持原状。
+    // 单一 80px 阈值下,流式期间上滚一两步(距离 <80px)pinned 仍为 true,
+    // 下一片 token 的贴底写入就把用户拽回底部——表现为「频繁吸底」。
+    const dist = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    setPinned(dist < 80 ? true : dist > 160 ? false : pinned());
     const nav = navItems();
     let active: string | null = nav[0]?.key ?? null;
     const anchor = scroller.scrollTop + Math.min(96, scroller.clientHeight * 0.16);
@@ -230,13 +235,27 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
     let stable = 0;
     let budget = 30;
     let lastHeight = -1;
+    // 循环起点记下用户滚动版本:贴底期间用户动了滚轮/触摸,意图优先,立即停随。
+    const startVersion = userScrollVersion;
     const step = (): void => {
       pinHandle = null;
       const el = scroller;
       // 逐帧重读**最新**的跟随意图:这是 rAF 回调,建订阅没有意义(也读不到),
       // 所以显式 untrack —— 语义就是「每帧自己再看一次」。
       const follow = untrack(() => pinned() && !store.loadingOlder[0]());
-      if (el == null || !follow || anchoring) return;
+      if (el == null || !follow || anchoring) {
+        el?.style.removeProperty("overflow-anchor");
+        return;
+      }
+      if (userScrollVersion !== startVersion) {
+        el.style.removeProperty("overflow-anchor");
+        return;
+      }
+      // 贴底写入是绝对定位,原生 scroll anchoring 对上方任何高度变化(思考块
+      // 折叠、淘汰换占位、Markdown reveal 重排)的补偿都会和这一写打架——
+      // 一帧内「锚定拉回 → 贴底推下去」往复,就是流式时文字上下剧烈摆动的来源。
+      // 贴底期间关掉锚定,循环退出即恢复(loadOlder 的前插仍靠原生锚定兜底)。
+      el.style.overflowAnchor = "none";
       // .turn 带 content-visibility: auto,离屏回合按估算高度计入滚动范围,一次
       // `scrollTop = scrollHeight` 会被夹在还没展开的位置(实测首屏离底 2.5k px)。
       // 每帧重写一次:滚动范围随回合真正布局而展开,贴住底部(或 30 帧预算)后停。
@@ -249,11 +268,13 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
       lastHeight = el.scrollHeight;
       budget -= 1;
       if (stable < 2 && budget > 0) pinHandle = requestAnimationFrame(step);
+      else el.style.removeProperty("overflow-anchor");
     };
     pinHandle = requestAnimationFrame(step);
   };
   onCleanup(() => {
     if (pinHandle != null) cancelAnimationFrame(pinHandle);
+    scroller?.style.removeProperty("overflow-anchor");
   });
 
   createEffect(
@@ -363,20 +384,25 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
           )}</For>
         </nav>
       </Show>
-      <Show when={!pinned() && unseen()}>
-        <button
-          type="button"
-          class="back-bottom"
-          onClick={() => {
-            setPinned(true);
-            setUnseen(false);
-            scroller?.scrollTo({ top: scroller.scrollHeight });
-          }}
-        >
-          <IconArrowDown />
-          {STR.backToBottom}
-        </button>
-      </Show>
+      {/* 转录页内查找(Ctrl+F,桌面专属):挂在最后,浮层压在内容与回底钮之上。 */}
+      <FindBar />
+      {/* 回到底部:只要离开底部就常驻(淡入淡出),不要求「有未读新内容」——
+          恢复/已完结的会话上滚后没有新 chunk,unseen 永远不会置位,旧条件
+          (!pinned && unseen)下按钮就再也不出现。unseen 只做强调样式。 */}
+      <button
+        type="button"
+        class={{ "back-bottom": true, show: !pinned(), unseen: unseen() }}
+        tabindex={pinned() ? -1 : 0}
+        aria-hidden={pinned() ? "true" : undefined}
+        onClick={() => {
+          setPinned(true);
+          setUnseen(false);
+          scroller?.scrollTo({ top: scroller.scrollHeight });
+        }}
+      >
+        <IconArrowDown />
+        {STR.backToBottom}
+      </button>
     </div>
   );
 };

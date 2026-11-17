@@ -6,6 +6,8 @@
  * typed entry point so feature code does not reach into `window` directly.
  */
 
+import type { ShellStreamEvent } from "../api/qaqh/ShellStreamEvent";
+
 export type HostCommand =
   | "session_list"
   | "attach"
@@ -15,6 +17,10 @@ export type HostCommand =
   | "respond_approval"
   | "command"
   | "service_query"
+  | "shell_attach"
+  | "shell_detach"
+  | "shell_stdin"
+  | "shell_resize"
   | "git_status"
   | "session_bootstrap"
   | "content_read_text"
@@ -70,7 +76,9 @@ export type HostEvent =
   | "browser-view://state"
   | "plugins://graph"
   | "voice://status"
-  | "notify://handoff";
+  | "notify://handoff"
+  | "app://found-in-page"
+  | "app://shell-frame";
 
 /** 主进程内嵌浏览器面板状态（browser-view://state 事件与 browser_view_state 命令）。 */
 export interface BrowserPaneState {
@@ -169,11 +177,42 @@ export interface UpdatesBridge {
   apply(): Promise<void>;
 }
 
+/** 用户 shell 的 ws 帧:`data` = 裸字节;`closed.reason` 取金标准 `ShellStreamEvent`。 */
+export type ShellFrame = {
+  id: string;
+  data?: Uint8Array;
+  closed?: Pick<Extract<ShellStreamEvent, { type: "closed" }>, "reason">;
+};
+
+/** 桥只管这条流;`shell.open/close/list` 走通用 `transport.query`(ADR-0028 切片 5)。 */
+export interface ShellBridge {
+  attach(id: string): Promise<void>;
+  detach(id: string): Promise<void>;
+  stdin(id: string, data: string): Promise<void>;
+  resize(id: string, cols: number, rows: number): Promise<void>;
+}
+
+/** 转录页内查找(Chromium 原生 find;命中数经 app://found-in-page 事件异步推回)。 */
+export interface FindInPageBridge {
+  inPage(text: string, options?: { forward?: boolean; matchCase?: boolean }): Promise<boolean>;
+  stop(): Promise<void>;
+}
+
+/** 壳层偏好(userData/prefs.json):snapshot 同步全表(sendSync,只在启动拍一次),
+ *  set 异步落盘(主进程 debounce 合并写)。值一律字符串,null=删除。 */
+export interface DesktopPrefsBridge {
+  snapshot(): Record<string, string>;
+  set(key: string, value: string | null): Promise<void>;
+}
+
 export interface DesktopHostBridge {
   readonly platform: "electron";
   invoke<T = unknown>(command: HostCommand, args?: Record<string, unknown>): Promise<T>;
   listen(event: HostEvent, callback: (payload: any) => void): () => void;
   windowControls?: DesktopWindowControls;
+  prefs?: DesktopPrefsBridge;
+  shell?: ShellBridge;
+  find?: FindInPageBridge;
   devtools?: DevToolsBridge;
   devmode?: DevModeBridge;
   powerBlocker?: PowerBlockerBridge;

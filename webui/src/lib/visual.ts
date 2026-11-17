@@ -23,23 +23,15 @@ export function detectLowSpecHardware(): boolean {
   return cores <= 2;
 }
 
+import { prefGet, prefSet } from "./prefs";
 function readMaterial(): SessionMaterial {
-  try {
-    const value = localStorage.getItem(STORAGE_KEY);
-    return value === "solid" ? "solid" : "glass";
-  } catch {
-    return "glass";
-  }
+  return prefGet(STORAGE_KEY) === "solid" ? "solid" : "glass";
 }
 
 function readPerfMode(): PerformanceMode {
-  try {
-    const value = localStorage.getItem(PERF_MODE_KEY);
-    if (value === "low" || value === "quality" || value === "auto") return value;
-    return "auto";
-  } catch {
-    return "auto";
-  }
+  const value = prefGet(PERF_MODE_KEY);
+  if (value === "low" || value === "quality" || value === "auto") return value;
+  return "auto";
 }
 
 const [sessionMaterial, setSessionMaterialSignal] = createSignal<SessionMaterial>(readMaterial());
@@ -130,17 +122,13 @@ if (typeof window !== "undefined") {
 export function setSessionMaterial(value: SessionMaterial): void {
   setSessionMaterialSignal(value);
   applyMaterial(value);
-  try {
-    localStorage.setItem(STORAGE_KEY, value);
-  } catch {}
+  prefSet(STORAGE_KEY, value);
 }
 
 export function setPerformanceMode(value: PerformanceMode): void {
   setPerformanceModeSignal(value);
   applyPerfMode();
-  try {
-    localStorage.setItem(PERF_MODE_KEY, value);
-  } catch {}
+  prefSet(PERF_MODE_KEY, value);
   // 档位折算的 GPU 偏好推给壳(下次启动生效;设置页提示待重启)。
   syncShellGpuPref();
 }

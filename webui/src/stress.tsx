@@ -16,6 +16,7 @@ import { WorkspacePanel } from "./workspace/WorkspacePanel";
 import { Composer } from "./composer/Composer";
 import { ApprovalStack } from "./approval/ApprovalCards";
 import { DiffReviewDrawer } from "./diff/DiffReviewDrawer";
+import { setDiffWrap } from "./diff/wrap";
 import { Sidebar } from "./app/Sidebar";
 import { observeShellCols } from "./lib/shell-cols";
 import { buildContextMenu, ContextMenuHost, openContextMenu } from "./ui/contextMenu";
@@ -975,7 +976,7 @@ const scenarios = {
     const settled = Math.round(el.scrollHeight - el.scrollTop - el.clientHeight);
     await wait(600); // 给 requestIdleCallback 的 refit(窗口淘汰)时间
     await frames(20);
-    const out = { name: "toBottom", distAfterScroll: settled, scrollSteps: steps.length, buttonVisible: document.querySelector(".back-bottom") != null, ...metrics() };
+    const out = { name: "toBottom", distAfterScroll: settled, scrollSteps: steps.length, buttonVisible: document.querySelector(".back-bottom")?.classList.contains("show") ?? false, ...metrics() };
     report.push(out);
     return out;
   },
@@ -1177,6 +1178,9 @@ const scenarios = {
    * 3. DOM 只挂可见行 ±overscan,滚动帧间隔不许出现长任务。
    */
   async diffDrawer(): Promise<Record<string, unknown>> {
+    // 换行偏好会改变行高模型(21px × 折行数),本检查的滚动断言(middleTop/tail)
+    // 全部基于等高模型——显式关掉,保证夹具确定性;不写 localStorage。
+    setDiffWrap(false);
     const id = "t900";
     const total = 3000;
     const line = (index: number): string => `+  const drawerRow${index} = compute(${index}, "diff 抽屉压力夹具");`;

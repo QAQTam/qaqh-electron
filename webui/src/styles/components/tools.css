@@ -316,7 +316,10 @@
     box-sizing: border-box; width: max-content; min-width: 100%; min-height: 31px;
     padding: 8px 10px; overflow: hidden;
     background: var(--surface-code); color: var(--text);
-    font-family: var(--font-terminal); font-size: var(--fs-xs); line-height: 1.25;
+    /* 11px 视觉实验(9px 反馈偏小后定档):PTY 放宽口径讨论中,终端容量 =
+       11px×0.6=6.6px/列 → 80 列 ≈548px、160 列 ≈1076px、200 列 ≈1340px。
+       回退只需改回 var(--fs-xs);xterm 字号从这里 computed 读取,零 JS 联动。 */
+    font-family: var(--font-terminal); font-size: 11px; line-height: 1.25;
   }
   /* The parser and inner screen stay 80x24; only the surrounding viewport crops. */
   .tool-xterm .xterm { width: max-content; height: auto; }

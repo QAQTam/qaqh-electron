@@ -14,7 +14,10 @@
 }
 
 .exec-drawer-panel {
-  width: min(92vw, 910px);
+  /* xterm 解析器固定 80 列(PTY 口径,UI 不得 resize),910 时代内容区只剩
+     ~578px,80 列 @12px 恰好溢出触发横向滚动;放宽到 1440 后 80 列连大字号
+     (font-scale 1.4 ≈ 800px)都装得下,上限 94vw 保小窗呼吸位。 */
+  width: min(94vw, 1440px);
   height: 100%;
   background: var(--bg);
   border-left: 1px solid var(--border-strong);
@@ -31,6 +34,10 @@
   justify-content: space-between;
   height: 48px;
   padding: 0 16px;
+  /* WCO 安全区(与 diff 抽屉同款):右上角原生窗口控制绘制层级高于 web 内容,
+     抽屉头部关闭钮会与之重叠、误触关窗;右侧预留 WCO 宽度。
+     无 WCO 环境回退 100vw,增量为 0,行为不变。 */
+  padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw));
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -73,6 +80,33 @@
   color: var(--text);
 }
 
+/* 用户终端切换钮:与关闭钮同规格,active 用强调色标「现在是活 shell」。 */
+.exec-drawer-shell-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+.exec-drawer-shell-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.exec-drawer-shell-btn.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.exec-drawer-shell-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 .exec-drawer-close-btn svg {
   width: 18px;
   height: 18px;
@@ -84,6 +118,31 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* 终端档:工作区整体让给活 shell(无会话导航——此刻用户在自己敲命令)。 */
+.exec-drawer-body-shell {
+  display: flex;
+  padding: 10px 12px 12px;
+}
+.shell-terminal {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  background: var(--surface-code);
+  color: var(--text);
+  font-family: var(--font-terminal);
+  font-size: 11px;
+  outline: none;
+  overflow: hidden;
+}
+.shell-terminal:focus-within {
+  box-shadow: 0 0 0 1px var(--focus-ring);
+}
+.shell-terminal .xterm {
+  height: 100%;
 }
 
 .exec-drawer-sidebar {

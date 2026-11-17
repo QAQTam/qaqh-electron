@@ -103,24 +103,16 @@ function recompute(animate = true): void {
  * 一次无谓的 config.save 热载广播。
  */
 const THEME_STORAGE_KEY = "qaqh.theme";
+import { prefGet, prefSet } from "./prefs";
 
 /** 本地主题偏好;null = 从未设置过(冷启动以 daemon 现值为初值做一次性迁移)。 */
 export function storedTheme(): string | null {
-  try {
-    return localStorage.getItem(THEME_STORAGE_KEY);
-  } catch {
-    // 隐私模式等禁用 localStorage:按未设置处理。
-    return null;
-  }
+  return prefGet(THEME_STORAGE_KEY);
 }
 
 export function applyTheme(value: string | null | undefined, animate = true): void {
   configTheme = value ?? "";
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, configTheme);
-  } catch {
-    // 存不下不影响本次应用。
-  }
+  prefSet(THEME_STORAGE_KEY, configTheme);
   recompute(animate);
 }
 
@@ -149,15 +141,11 @@ export const THEME_PRESET_OPTIONS: readonly ThemePresetOption[] = [
 const PRESET_STORAGE_KEY = "qaqh.theme-preset";
 
 export function storedThemePreset(): ThemePreset {
-  try {
-    const val = localStorage.getItem(PRESET_STORAGE_KEY) as ThemePreset | null;
-    if (val && THEME_PRESET_OPTIONS.some((opt) => opt.value === val)) {
-      return val;
-    }
-    return "default";
-  } catch {
-    return "default";
+  const val = prefGet(PRESET_STORAGE_KEY) as ThemePreset | null;
+  if (val && THEME_PRESET_OPTIONS.some((opt) => opt.value === val)) {
+    return val;
   }
+  return "default";
 }
 
 const [currentPreset, setCurrentPreset] = createSignal<ThemePreset>(storedThemePreset());
@@ -168,9 +156,7 @@ const [currentPreset, setCurrentPreset] = createSignal<ThemePreset>(storedThemeP
  * 保证切换到任何主题（包括切回 default）时 100% 干净、无任何历史类名或属性残留。
  */
 export function applyThemePreset(preset: ThemePreset): void {
-  try {
-    localStorage.setItem(PRESET_STORAGE_KEY, preset);
-  } catch {}
+  prefSet(PRESET_STORAGE_KEY, preset);
   setCurrentPreset(preset);
   if (typeof document === "undefined") return;
   const root = document.documentElement;

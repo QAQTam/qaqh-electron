@@ -15,7 +15,9 @@ doctest = false
 [dependencies]
 napi = { version = "3.16", features = ["async", "serde-json"] }
 napi-derive = "3.7"
-qaqh-client = { path = "../../../qaqh-backend/crates/qaqh-client" }
+# `shell-stream`：用户 shell 的 ws 数据面客户端（ADR-0028 切片 5 · 方案 A）。
+# 帧编解码与重连语义留在 Rust `qaqh-client`，本层只做搬运——协议运行时只有一份。
+qaqh-client = { path = "../../../qaqh-backend/crates/qaqh-client", features = ["shell-stream"] }
 serde = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }

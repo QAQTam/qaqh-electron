@@ -212,7 +212,9 @@
   }
 
   .diff-drawer-panel {
-    width: min(92vw, 1180px);
+    /* 审查是阅读面:上限给到 1760(1920 全屏下内容列 ≈1480px,120 列代码免横向滚动),
+       94vw 保小窗下仍留出侧栏与遮罩呼吸位。 */
+    width: min(94vw, 1760px);
     height: 100%;
     background: var(--bg);
     border-left: 1px solid var(--border-strong);
@@ -239,6 +241,11 @@
     justify-content: space-between;
     height: 48px;
     padding: 0 16px;
+    /* WCO 安全区:原生窗口控制(含关闭钮)画在右上角 48px 条带,
+       层级高于一切 web 内容——抽屉全窗覆盖后,头部关闭钮恰好压在原生关闭钮之下,
+       点击会误触关窗。右侧预留 WCO 宽度(100vw - titlebar-area-width,同 #top 的
+       预留手法);无 WCO 环境回退 100vw,增量恰好为 0,行为不变。 */
+    padding-right: calc(16px + 100vw - env(titlebar-area-width, 100vw));
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
@@ -279,6 +286,12 @@
 
   .diff-drawer-nav-btn:hover {
     background: var(--surface-2);
+    color: var(--accent);
+  }
+
+  /* 自动换行开关的按下态:与 hover 同一强调色,常驻可辨。 */
+  .diff-drawer-nav-btn.active {
+    border-color: var(--accent);
     color: var(--accent);
   }
 

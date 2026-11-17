@@ -81,6 +81,7 @@ const [workspaceCatalog, setWorkspaceCatalog] = createSignal<SidebarWorkspace[]>
 const DRAFT_PREFIX = "qaqh.draft.";
 const WORKSPACE_CWD_KEY = "qaqh.workspace.cwd";
 const TITLE_PREFIX = "qaqh.session.title.";
+import { prefGet, prefSet } from "../lib/prefs";
 
 function readStoredDrafts(): Record<string, string> {
   const result: Record<string, string> = {};
@@ -100,11 +101,7 @@ function readStoredDrafts(): Record<string, string> {
 }
 
 function readStoredCwd(): string | null {
-  try {
-    return localStorage.getItem(WORKSPACE_CWD_KEY);
-  } catch {
-    return null;
-  }
+  return prefGet(WORKSPACE_CWD_KEY);
 }
 
 /**
@@ -117,10 +114,7 @@ function readStoredCwd(): string | null {
 const [newSessionCwd, setNewSessionCwdSignal] = createSignal<string | null>(readStoredCwd());
 const setNewSessionCwd = (value: string | null): void => {
   setNewSessionCwdSignal(value);
-  try {
-    if (value != null) localStorage.setItem(WORKSPACE_CWD_KEY, value);
-    else localStorage.removeItem(WORKSPACE_CWD_KEY);
-  } catch {}
+  prefSet(WORKSPACE_CWD_KEY, value);
 };
 
 /**

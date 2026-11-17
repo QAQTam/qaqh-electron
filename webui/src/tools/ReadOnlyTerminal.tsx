@@ -5,9 +5,11 @@ import { resolvedTheme, themePreset } from "../lib/theme";
 import { terminalScheme, terminalThemeFor } from "../lib/terminal-theme";
 import type { ToolProgressStream } from "../session/types";
 
-// Match ExecSessionManager's PTY size. Cropping the UI must never resize the parser.
-const TERMINAL_COLS = 80;
-const TERMINAL_ROWS = 24;
+// 兜底 PTY 尺寸=历史会话口径(80×24)。真实口径应随会话契约的 cols/rows 传导
+// (ExecSessionView 加字段 + just sdk-sync 后由调用方传入):后端改宽时前端不再
+// 跟着动仓,老记录带老尺寸照常渲染。UI 裁剪永不 resize 解析器。
+const DEFAULT_PTY_COLS = 80;
+const DEFAULT_PTY_ROWS = 24;
 const LINE_HEIGHT = 1.25;
 const VERTICAL_PADDING = 16;
 // 高度收缩迟滞窗口:活跃输出期间高度只增不减(取运行最大值),安静这么久后
@@ -24,9 +26,14 @@ export type ReadOnlyTerminalProps = {
   stderr?: string;
   stderrStream?: ToolProgressStream;
   tty?: boolean;
+  /** PTY 快照尺寸,来自会话契约(缺省 = 老口径 80×24)。会话期内不会变。 */
+  cols?: number;
+  rows?: number;
 };
 
 export const ReadOnlyTerminal: Component<ReadOnlyTerminalProps> = (props) => {
+  const termCols = () => props.cols ?? DEFAULT_PTY_COLS;
+  const termRows = () => props.rows ?? DEFAULT_PTY_ROWS;
   let host: HTMLDivElement | undefined;
   let terminal: Terminal | undefined;
   let observer: ResizeObserver | undefined;
@@ -84,7 +91,7 @@ export const ReadOnlyTerminal: Component<ReadOnlyTerminalProps> = (props) => {
     // inside. Scan the screen because progress UIs often restore the cursor
     // after painting a status bar on the bottom row.
     let rows = Math.max(1, buffer.cursorY + 1);
-    for (let row = TERMINAL_ROWS - 1; row >= rows; row--) {
+    for (let row = termRows() - 1; row >= rows; row--) {
       if (buffer.getLine(buffer.viewportY + row)?.translateToString(true)) {
         rows = row + 1;
         break;
@@ -97,7 +104,7 @@ export const ReadOnlyTerminal: Component<ReadOnlyTerminalProps> = (props) => {
     if (host == null) return;
     const fontSize = Number.parseFloat(getComputedStyle(host).fontSize) || 12;
     const screenHeight = host.querySelector(".xterm-screen")?.getBoundingClientRect().height;
-    const rowHeight = screenHeight ? screenHeight / TERMINAL_ROWS : fontSize * LINE_HEIGHT;
+    const rowHeight = screenHeight ? screenHeight / termRows() : fontSize * LINE_HEIGHT;
     host.style.height = `${Math.ceil(rows * rowHeight + VERTICAL_PADDING)}px`;
   };
 
@@ -247,8 +254,8 @@ export const ReadOnlyTerminal: Component<ReadOnlyTerminalProps> = (props) => {
   onSettled(() => {
     if (host == null) return;
     terminal = new Terminal({
-      cols: TERMINAL_COLS,
-      rows: TERMINAL_ROWS,
+      cols: termCols(),
+      rows: termRows(),
       allowTransparency: false,
       convertEol: !(props.tty ?? false),
       cursorBlink: false,

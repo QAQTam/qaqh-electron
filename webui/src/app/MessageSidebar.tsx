@@ -25,9 +25,10 @@ const WORKSPACE_COLLAPSED_KEY = "qaqh.sidebar.collapsed";
 /** 滚动停止多久后恢复待响应卡的模糊与无限动画(滚动期降级,见 onGroupsScroll)。 */
 const SCROLL_SETTLE_MS = 160;
 
+import { prefGet, prefSet } from "../lib/prefs";
 function readStoredCollapsed(): Set<string> {
   try {
-    const raw = localStorage.getItem(WORKSPACE_COLLAPSED_KEY);
+    const raw = prefGet(WORKSPACE_COLLAPSED_KEY);
     if (raw) return new Set(JSON.parse(raw));
   } catch {}
   return new Set();
@@ -77,9 +78,7 @@ export const MessageSidebar: Component<{
   const [collapsed, setCollapsedSignal] = createSignal<Set<string>>(readStoredCollapsed());
   const setCollapsed = (next: Set<string>): void => {
     setCollapsedSignal(next);
-    try {
-      localStorage.setItem(WORKSPACE_COLLAPSED_KEY, JSON.stringify([...next]));
-    } catch {}
+    prefSet(WORKSPACE_COLLAPSED_KEY, JSON.stringify([...next]));
   };
   /** 展开行菜单的会话 seed(null = 全部收起);同时只开一个。 */
   const [menuSeed, setMenuSeed] = createSignal<string | null>(null);

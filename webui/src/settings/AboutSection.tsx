@@ -12,6 +12,7 @@ import { For, Show, createSignal, onSettled, type Component } from "solid-js";
 import { Section } from "./controls";
 import { loadBuildInfo, type BuildInfo } from "../lib/version";
 import { transport } from "../lib/transport";
+import { prefGet, prefSet } from "../lib/prefs";
 import { daemonLanStatus } from "../lib/pairing";
 import { toast } from "../ui/toast";
 import { devConsoleOpen, devMode, openDevConsole, pushUnlockClick } from "../lib/devmode";
@@ -35,9 +36,7 @@ export const AboutSection: Component = () => {
   /** 本地热更新状态(仅桌面壳;浏览器 dev 环境整块隐藏)。 */
   const [update, setUpdate] = createSignal<UpdateStatus | null>(null);
   const [updateBusy, setUpdateBusy] = createSignal(false);
-  const [autoCheck, setAutoCheck] = createSignal(
-    typeof localStorage === "undefined" || localStorage.getItem(AUTO_CHECK_KEY) !== "off",
-  );
+  const [autoCheck, setAutoCheck] = createSignal(prefGet(AUTO_CHECK_KEY) !== "off");
 
   const toggleDevtools = (): void => {
     const bridge = desktopHost()?.devtools;
@@ -243,7 +242,7 @@ export const AboutSection: Component = () => {
               checked={autoCheck()}
               onToggle={(value) => {
                 setAutoCheck(value);
-                try { localStorage.setItem(AUTO_CHECK_KEY, value ? "on" : "off"); } catch { /* 隐私模式等:开关本次会话内仍生效 */ }
+                prefSet(AUTO_CHECK_KEY, value ? "on" : "off");
               }}
               label="启动时自动检查更新"
               hint="冷启动 5 秒后静默检查本地更新源;发现新版本提示,失败不出声"

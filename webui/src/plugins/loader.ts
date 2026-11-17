@@ -101,11 +101,12 @@ function makeContainer(id: string, slot: string): HTMLElement {
    样式表走 app:// 同源 + rev-bust,和 JS bundle 共用同一套 stat-poll 热更语义。
    插件 CSS 不带 @layer,天然压过 tokens/components 各层(未分层 > 任何层)。 */
 const THEME_PACK_KEY = "qaqh.theme-pack";
+import { prefGet, prefSet } from "../lib/prefs";
 
 export interface ThemePackInfo { id: string; name: string; rev: string; css: string }
 
 function readStoredPack(): string {
-  try { return localStorage.getItem(THEME_PACK_KEY) ?? ""; } catch { return ""; }
+  return prefGet(THEME_PACK_KEY) ?? "";
 }
 
 const [themePacks, setThemePacks] = createSignal<ThemePackInfo[]>([]);
@@ -133,9 +134,9 @@ function syncPack(): void {
   publishStatus();
 }
 
-/** 设置页入口:id="" = 经典(卸载 link)。选择是本窗口偏好,与主题深浅同走 localStorage。 */
+/** 设置页入口:id="" = 经典(卸载 link)。选择是本窗口偏好,与主题深浅同走壳层偏好。 */
 export function setThemePackSelection(id: string): void {
-  try { localStorage.setItem(THEME_PACK_KEY, id); } catch { /* 存不下不影响本次应用 */ }
+  prefSet(THEME_PACK_KEY, id);
   setPackSelection(id);
   syncPack();
 }
@@ -151,14 +152,14 @@ export interface SyntaxThemePackInfo { id: string; name: string; rev: string; li
 export interface SyntaxPackRef { id: string; rev: string; light: string; dark: string }
 
 function readStoredSyntaxPack(): string {
-  try { return localStorage.getItem(SYNTAX_PACK_KEY) ?? ""; } catch { return ""; }
+  return prefGet(SYNTAX_PACK_KEY) ?? "";
 }
 
 const [syntaxThemes, setSyntaxThemes] = createSignal<SyntaxThemePackInfo[]>([]);
 const [syntaxPackSelection, setSyntaxSelection] = createSignal<string>(readStoredSyntaxPack());
 
 export function setSyntaxPackSelection(id: string): void {
-  try { localStorage.setItem(SYNTAX_PACK_KEY, id); } catch { /* 存不下不影响本次应用 */ }
+  prefSet(SYNTAX_PACK_KEY, id);
   setSyntaxSelection(id);
 }
 

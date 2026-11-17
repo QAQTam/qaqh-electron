@@ -71,11 +71,12 @@ export const FONT_PRESETS = {
 };
 
 const TYPOGRAPHY_STORAGE_KEY = "qaqh.typography";
+import { prefGet, prefSet } from "./prefs";
 
 export function loadStoredTypography(): TypographyState {
   if (typeof window === "undefined") return { ...DEFAULT_TYPOGRAPHY };
   try {
-    const raw = localStorage.getItem(TYPOGRAPHY_STORAGE_KEY);
+    const raw = prefGet(TYPOGRAPHY_STORAGE_KEY);
     if (raw == null) return { ...DEFAULT_TYPOGRAPHY };
     const parsed = JSON.parse(raw) as Partial<TypographyState>;
     return {
@@ -129,9 +130,7 @@ function applyDomTypography(state: TypographyState): void {
 
 export function updateTypography(patch: Partial<TypographyState>): void {
   const next = { ...typographySignal(), ...patch };
-  try {
-    localStorage.setItem(TYPOGRAPHY_STORAGE_KEY, JSON.stringify(next));
-  } catch {}
+  prefSet(TYPOGRAPHY_STORAGE_KEY, JSON.stringify(next));
   setTypographySignal(next);
   applyDomTypography(next);
 }

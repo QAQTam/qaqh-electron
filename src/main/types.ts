@@ -12,6 +12,11 @@ import type { SessionActivity } from "../../webui/src/api/qaqh/SessionActivity";
 import type { SessionDashboard } from "../../webui/src/api/qaqh/SessionDashboard";
 import type { SessionListEntry } from "../../webui/src/api/qaqh/SessionListEntry";
 import type { SessionMeta } from "../../webui/src/api/qaqh/SessionMeta";
+import type { ShellCloseParams } from "../../webui/src/api/qaqh/ShellCloseParams";
+import type { ShellCloseResult } from "../../webui/src/api/qaqh/ShellCloseResult";
+import type { ShellListResult } from "../../webui/src/api/qaqh/ShellListResult";
+import type { ShellOpenParams } from "../../webui/src/api/qaqh/ShellOpenParams";
+import type { ShellView } from "../../webui/src/api/qaqh/ShellView";
 import type { WorkspaceEntry } from "../../webui/src/api/qaqh/WorkspaceEntry";
 
 export type DaemonDiscovery = ContractDaemonDiscovery;
@@ -47,6 +52,10 @@ export type MainServiceMap = {
   "todo.list": { params: { session_id: string; [key: string]: unknown }; result: Record<string, unknown> };
   "plan.read": { params: { session_id: string }; result: unknown };
   "diagnostics.memory.snapshot": { params: { after_sequence?: number }; result: unknown };
+  // 用户 shell 面(ADR-0028)。params 里没有 owner 也没有可执行名(D2/D4)。
+  "shell.open": { params: ShellOpenParams; result: ShellView };
+  "shell.close": { params: ShellCloseParams; result: ShellCloseResult };
+  "shell.list": { params: Record<never, never>; result: ShellListResult };
   "siwc.status": { params: Record<never, never>; result: unknown };
   "siwc.profiles": { params: Record<never, never>; result: unknown };
   "siwc.models": { params: { profile_id?: string }; result: unknown };
@@ -80,6 +89,7 @@ export const MAIN_SERVICE_METHODS: readonly MainServiceMethod[] = [
   "siwc.sign_out", "dsaccount.status", "dsaccount.balance", "dsaccount.bonuses",
   "dsaccount.sign_in.start", "dsaccount.sign_in.status", "dsaccount.sign_in.cancel",
   "dsaccount.sign_out", "dsaccount.bonus.ack", "dsaccount.models", "dsaccount.verify",
+  "shell.open", "shell.close", "shell.list",
 ];
 
 /**
