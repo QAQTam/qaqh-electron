@@ -1,0 +1,13 @@
+/* 插件面板卡:panel 槽插件渲染进右栏工作区(与待办卡并列)。
+   契约与 plugin-dock 同构:manifest 必带 icon,容器归属宿主,插件只给内容。 */
+.plugin-panel-card { flex: none; border-top: 1px solid var(--border, #373b42); margin-top: 8px; }
+.plugin-panel-card-head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px 4px;
+  color: var(--muted, #abb0b8); font-size: var(--fs-xs, 11px); font-weight: 600;
+}
+.plugin-panel-icon { width: 14px; height: 14px; display: block; }
+.plugin-panel-emoji { font-size: 13px; line-height: 1; }
+.plugin-panel-card-body {
+  padding: 4px 14px 10px; overflow: auto;
+  font: 12px/1.6 ui-sans-serif, system-ui; color: var(--text, #edeef0);
+}

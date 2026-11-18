@@ -1,6 +1,6 @@
 # 插件槽位与窗口布局——可插入渲染面分析
 
-> 状态:提案(ADR 前置分析)。本文盘点主窗口的全部布局区域,逐区评估
+> 状态:panel 槽已落地,其余为提案(ADR 前置分析)。本文盘点主窗口的全部布局区域,逐区评估
 > 「是否适合开放给插件渲染」,并给出槽位契约的演进方向。
 
 ## 1. 现有槽位(已落地)
@@ -11,6 +11,7 @@
 | `syntax-theme` | shiki 主题 JSON 对(light/dark) | diff 高亮 | 无 JS |
 | `overlay` | 全屏 fixed 容器,插件自管层级 | 任意覆盖视觉 | 必须自兜 pointer-events |
 | `dock` | 右下角插件坞:图标条 + 向上弹出渲染窗 | 快速工具(贪吃蛇/手柄映射/git 面板) | manifest 必带 icon;懒挂载常驻 |
+| `panel` | 右栏工作区卡:与待办卡并列,容器随右栏开合 | 常驻信息卡(项目仪表盘) | manifest 必带 icon;契约与 dock 同构 |
 
 dock 槽的契约(本次落地,后续槽位对齐此范式):
 - manifest 必带 `icon`(emoji 文本或图标资产路径)+ `entry`;
@@ -36,7 +37,7 @@ dock 槽的契约(本次落地,后续槽位对齐此范式):
 | 区域 | 开放建议 | 槽位提案 | 理由与约束 |
 |---|---|---|---|
 | 时间线正文内联 | ✅ 已有事实标准 | `timeline-inline`(现状即 WidgetMount) | visualize 工具段已验证"宿主给容器、插件给内容"的模型;入口由**模型工具调用**驱动而非 manifest 静态声明,是和其他槽的本质差异 |
-| 右栏工作区面板 | ✅ 推荐,次期落地 | `panel`:manifest 声明 icon+title,卡式渲染进右栏,与 todo/goal/handoff 卡并列 | 容器归属明确、与 dock 同构(懒挂载+保状态);适合"常驻信息卡"类插件(如项目仪表盘) |
+| 右栏工作区面板 | ✅ 已落地 | `panel`:manifest 声明 icon(name 即卡题),卡式渲染进右栏,与待办卡并列 | 容器归属明确、与 dock 同构(懒挂载+保状态);首个试点 qaqh-dashboard(git-status,零新 capability) |
 | 插件坞(dock) | ✅ 已落地 | `dock` | 快速唤起类;面板尺寸/层级归宿主 |
 | 用户终端 dock | ⚠️ 谨慎 | 暂不开放 | xterm 面板与数据面(ws 帧流)耦合深;开放需终端级 capability + 键盘焦点仲裁 |
 | composer 输入区 | ⚠️ 谨慎 | `composer-attach`(工具按钮位) | 输入路径是核心链路;只开放"附加按钮"位,不开放输入面本身 |
@@ -60,9 +61,9 @@ dock 槽的契约(本次落地,后续槽位对齐此范式):
 
 ## 4. 下一步(建议顺序)
 
-1. `panel` 槽 ADR:契约与 dock 同构,落右栏工作区;首个试点插件建议选
-   "项目仪表盘"类(读 git-status + session 元数据,零新 capability)。
-2. 槽位注册表重构:loader 的 slot 分支(theme/syntax/overlay/dock)收敛为
+1. ~~`panel` 槽~~:已落地(契约与 dock 同构;试点 qaqh-dashboard;stress 预览台
+   `?plugins=1` 门控入画,真机冒烟走 stress 页 + playwright,一次性脚本未入库)。
+2. 槽位注册表重构:loader 的 slot 分支(theme/syntax/overlay/dock/panel)收敛为
    槽位描述符表(slot → 容器策略 + 挂载时机),新槽位零改动接入。
 3. `composer-attach` / `titlebar-tray`:等真实插件需求出现再立(避免
    无消费者的投机槽位)。

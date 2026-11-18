@@ -10,12 +10,11 @@
  * onCleanup（rc.15 的 CLEANUP/REACTIVE_WRITE 双闸门）。
  */
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { dockPlugins, ensureDockMounted } from "./loader";
+import { ASSET_ICON, dockPlugins, ensureDockMounted } from "./loader";
 import { prefGet, prefSet } from "../lib/prefs";
 import { STR } from "../lib/strings";
 
 const OPEN_KEY = "qaqh.plugin-dock.open";
-const ASSET_ICON = /\.(svg|png|webp|gif)$/i;
 
 function readOpen(): string | null {
   const v = prefGet(OPEN_KEY);

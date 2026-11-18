@@ -1,0 +1,11 @@
+{
+  "id": "qaqh-dashboard",
+  "name": "项目仪表盘",
+  "version": "0.1.0",
+  "entry": "dist/entry.js",
+  "slot": "panel",
+  "capabilities": [
+    "git-status"
+  ],
+  "icon": "📊"
+}

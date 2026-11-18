@@ -57,9 +57,16 @@ export interface DockPluginInfo { id: string; name: string; icon: string; rev: s
 const [dockPlugins, setDockPlugins] = createSignal<DockPluginInfo[]>([]);
 const dockDesired = new Map<string, GraphEntry>();
 
-/** dock 插件懒挂载:已挂载且 rev 一致直接返回容器;失配/未挂载则重挂。失败返回 null(详情进 pluginStatus)。 */
-export async function ensureDockMounted(id: string): Promise<HTMLElement | null> {
-  const entry = dockDesired.get(id);
+/* panel 槽:右栏工作区卡(与待办卡并列)——契约与 dock 同构(必带 icon),
+   容器同样由装载器持有:卡片可见时搬进卡体,收起/切页孤儿化,状态不丢。 */
+export interface PanelPluginInfo { id: string; name: string; icon: string; rev: string }
+const [panelPlugins, setPanelPlugins] = createSignal<PanelPluginInfo[]>([]);
+const panelDesired = new Map<string, GraphEntry>();
+
+/** 懒挂载内核(dock/panel 共用):已挂载且 rev 一致直接返回容器;失配/未挂载则
+    teardown 重挂。失败返回 null(详情进 pluginStatus)。 */
+async function ensureSlotMounted(desired: Map<string, GraphEntry>, id: string): Promise<HTMLElement | null> {
+  const entry = desired.get(id);
   if (entry == null) return null;
   const state = loaded.get(id);
   if (state != null && state.rev === entry.rev) return state.container;
@@ -78,11 +85,22 @@ export async function ensureDockMounted(id: string): Promise<HTMLElement | null>
     return container;
   } catch (error) {
     statusFailures[id] = error instanceof Error ? error.message : String(error);
-    console.error(`[plugins] dock ${id} 装载失败:`, error);
+    console.error(`[plugins] slot ${id} 装载失败:`, error);
     publishStatus();
     return null;
   }
 }
+/** dock 插件懒挂载(PluginDock 首次点开调用)。 */
+export function ensureDockMounted(id: string): Promise<HTMLElement | null> {
+  return ensureSlotMounted(dockDesired, id);
+}
+/** panel 插件懒挂载(右栏卡片可见时调用)。 */
+export function ensurePanelMounted(id: string): Promise<HTMLElement | null> {
+  return ensureSlotMounted(panelDesired, id);
+}
+
+/** 图标 vs 图标资产:manifest.icon 以资产扩展名结尾即按 app:// 资产渲染。 */
+export const ASSET_ICON = /\.(svg|png|webp|gif)$/i;
 let bootRelease: string | null = null;
 let warnedRelease: string | null = null;
 
@@ -251,16 +269,18 @@ async function reconcile(graph: Graph): Promise<void> {
   const desired = new Map(graph.entries.filter((entry) => entry.slot === "overlay").map((entry) => [entry.id, entry]));
   // dock 目录整帧刷新:图里消失的插件随 teardown 出局,rev 推进在下次打开时重挂。
   dockDesired.clear();
+  panelDesired.clear();
   for (const entry of graph.entries) {
-    if (entry.slot !== "dock") continue;
-    dockDesired.set(entry.id, entry);
+    if (entry.slot === "dock") dockDesired.set(entry.id, entry);
+    if (entry.slot === "panel") panelDesired.set(entry.id, entry);
   }
   setDockPlugins([...dockDesired.values()].map((entry) => ({ id: entry.id, name: entry.name, icon: entry.icon ?? entry.name, rev: entry.rev })));
+  setPanelPlugins([...panelDesired.values()].map((entry) => ({ id: entry.id, name: entry.name, icon: entry.icon ?? entry.name, rev: entry.rev })));
   for (const [id, state] of [...loaded]) {
-    if (dockDesired.has(id)) {
-      // dock 生命周期独立管理:rev 失配立即 teardown(下次打开重挂)。
-      const next = dockDesired.get(id);
-      if (next == null || next.rev !== state.rev) teardown(id);
+    // dock/panel 生命周期独立管理:rev 失配立即 teardown(下次可见时重挂)。
+    const kept = dockDesired.get(id) ?? panelDesired.get(id);
+    if (kept != null) {
+      if (kept.rev !== state.rev) teardown(id);
       continue;
     }
     const next = desired.get(id);
@@ -313,4 +333,4 @@ export function startPluginHost(): void {
 }
 
 /** 当前图里可用的主题包/语法主题包目录(设置页消费);pluginStatus = 装载器自述状态(工具页消费)。 */
-export { themePacks, themePackSelection, pluginStatus, syntaxThemes, syntaxPackSelection, dockPlugins };
+export { themePacks, themePackSelection, pluginStatus, syntaxThemes, syntaxPackSelection, dockPlugins, panelPlugins };

@@ -29,7 +29,7 @@ export interface PluginGraphEntry {
   dark?: string;
   /** dock 槽插件的图标：emoji 文本或图标资产相对路径（manifest.icon 原样）。 */
   icon?: string;
-  slot: "overlay" | "theme" | "syntax-theme" | "dock";
+  slot: "overlay" | "theme" | "syntax-theme" | "dock" | "panel";
   capabilities: string[];
 }
 
@@ -75,8 +75,9 @@ function scanPlugin(root: string, dir: string): PluginGraphEntry | null {
   const isTheme = manifest.slot === "theme";
   const isOverlay = manifest.slot === "overlay";
   const isDock = manifest.slot === "dock";
+  const isPanel = manifest.slot === "panel";
   const isSyntax = manifest.slot === "syntax-theme";
-  if (!isTheme && !isOverlay && !isSyntax && !isDock) {
+  if (!isTheme && !isOverlay && !isSyntax && !isDock && !isPanel) {
     console.warn(`[plugins] ${dir}: 未知 slot ${String(manifest.slot)}，跳过`);
     return null;
   }
@@ -109,17 +110,18 @@ function scanPlugin(root: string, dir: string): PluginGraphEntry | null {
       capabilities: [],
     };
   }
-  // dock 槽 = 图标插件:图标是入场券(缺失即跳过),渲染窗由宿主 PluginDock 提供。
+  // dock/panel 槽 = 图标插件:图标是入场券(缺失即跳过),渲染窗归属宿主
+  // (dock 在右下角坞,panel 在右栏工作区)。
   const icon = typeof manifest.icon === "string" && manifest.icon !== "" ? manifest.icon : null;
-  if (isDock && icon == null) {
-    console.warn(`[plugins] ${dir}: dock 须带 icon 字段（emoji 或图标资产路径），跳过`);
+  if ((isDock || isPanel) && icon == null) {
+    console.warn(`[plugins] ${dir}: ${manifest.slot} 须带 icon 字段（emoji 或图标资产路径），跳过`);
     return null;
   }
   const assetRel = isTheme
     ? (typeof manifest.css === "string" && manifest.css !== "" ? manifest.css : null)
     : (typeof manifest.entry === "string" && manifest.entry !== "" ? manifest.entry : null);
   if (assetRel == null) {
-    console.warn(`[plugins] ${dir}: theme 须带 css 字段、overlay 须带 entry 字段，跳过`);
+    console.warn(`[plugins] ${dir}: theme 须带 css 字段、overlay/dock/panel 须带 entry 字段，跳过`);
     return null;
   }
   const assetPath = join(root, dir, assetRel);
@@ -135,8 +137,8 @@ function scanPlugin(root: string, dir: string): PluginGraphEntry | null {
     name: typeof manifest.name === "string" ? manifest.name : dir,
     entry: isTheme ? "" : assetRel,
     ...(isTheme ? { css: assetRel } : {}),
-    slot: isTheme ? "theme" : isDock ? "dock" : "overlay",
-    ...(isDock && icon != null ? { icon } : {}),
+    slot: isTheme ? "theme" : isDock ? "dock" : isPanel ? "panel" : "overlay",
+    ...((isDock || isPanel) && icon != null ? { icon } : {}),
     capabilities: Array.isArray(manifest.capabilities) ? manifest.capabilities.map(String) : [],
   };
 }

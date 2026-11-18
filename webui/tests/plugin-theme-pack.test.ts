@@ -18,6 +18,10 @@ vi.mock("../src/lib/desktop-host.js", () => ({
       return () => {};
     },
   }),
+  /* startPluginHost 注册监听后会经模块级 requireDesktopHost 主动 invoke 拉一次
+     当前图(501499f 的双通道闭环);测试里以拒绝收场——.catch 吞掉,不与测试
+     手推的帧竞争。 */
+  requireDesktopHost: () => ({ invoke: () => Promise.reject(new Error("graph pull disabled in tests")) }),
 }));
 vi.mock("../src/lib/gamepad.js", () => ({
   startGamepadRawFeed: () => () => {},

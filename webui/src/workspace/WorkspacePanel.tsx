@@ -19,6 +19,7 @@ import autoAnimate from "@formkit/auto-animate";
 import IconListTodo from "~icons/lucide/list-todo";
 import { STR } from "../lib/strings";
 import { normalizeStatus, todoStatusLabel, type TodoStatus } from "../lib/todo";
+import { PluginPanelCards } from "../plugins/panel";
 import type { SessionStore } from "../session/store";
 
 /** 会话列宽度低于此值时,右栏默认收起为窄栏(仍占位,不覆盖消息)。 */
@@ -173,6 +174,10 @@ export const WorkspacePanel: Component<{ store: SessionStore;
                   </For>
                 </ul>
               </div>
+            </Show>
+            {/* panel 槽插件卡:与待办卡并列;右栏收起即整体卸下(容器孤儿化保状态)。 */}
+            <Show when={open()}>
+              <PluginPanelCards />
             </Show>
           </div>
         </div>

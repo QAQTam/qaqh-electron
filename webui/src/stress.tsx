@@ -13,6 +13,8 @@ import { SessionStore } from "./session/store";
 import type { SessionRunStatus } from "./api/qaqh/SessionRunStatus";
 import { SessionView } from "./session/SessionView";
 import { WorkspacePanel } from "./workspace/WorkspacePanel";
+import { startPluginHost } from "./plugins/loader";
+import { PluginDock } from "./plugins/dock";
 import { Composer } from "./composer/Composer";
 import { ApprovalStack } from "./approval/ApprovalCards";
 import { DiffReviewDrawer } from "./diff/DiffReviewDrawer";
@@ -79,6 +81,9 @@ const [previewSettingsSection, setPreviewSettingsSection] = createSignal<string 
 const [previewSettingsNonce, setPreviewSettingsNonce] = createSignal(0);
 const sidebarDrawerPreview = previewParams.get("sidebarDrawer") === "1";
 const railDrawerPreview = previewParams.get("railDrawer") === "1";
+/** `?plugins=1` → 插件宿主与 dock 一并入画(panel/dock 槽的视觉评审与真机冒烟);
+     默认关闭,不搅动既有视觉基线。 */
+const pluginsPreview = previewParams.get("plugins") === "1";
 const TOTAL = isVisualPreview ? 4 : 200;
 let fixtureIdSeq = 2001;
 let wireSeq = 0;
@@ -1575,6 +1580,9 @@ render(
         <WorkspacePanel store={previewActiveTab().store} drawer={fixtureCols() < 3} drawerOpen={railDrawerPreview} />
       </Show>
       <ContextMenuHost />
+      <Show when={pluginsPreview}>
+        <PluginDock />
+      </Show>
     </div>
   ),
   document.getElementById("root") as HTMLElement,
@@ -1586,6 +1594,7 @@ render(
 }
 
 if (document.getElementById("messages") != null) churnReset();
+if (pluginsPreview) startPluginHost();
 void (async () => {
   // 接入页没有消息树，不能启动消息压力夹具的 observer、resnapshot 与 metrics。
   if (previewView === "oauth") return;
