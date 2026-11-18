@@ -502,6 +502,7 @@ const SegmentView: Component<{ segment: Accessor<TurnSegment>; turn: Turn; waits
             text={() => text()!.contentRef && !text()!.text
               ? props.contentStatus?.[text()!.contentRef!] === "failed" ? "正文加载失败，请重试正文" : "正文加载中…"
               : text()!.text}
+            copyText={() => (text()!.contentRef && !text()!.text) ? "" : text()!.text}
             revision={text()!.id}
             streaming={props.turn.status === "running" && text()!.endedAt == null}
           />

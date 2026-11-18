@@ -265,6 +265,10 @@
   .collapse.instant { transition: none; }
   .turn-intermediate { margin: 6px 0; }
   .turn-answer { font-family: var(--font-prose); overflow-anchor: auto; }
+  /* 复制原文:悬停浮出;懒加载占位(copyText 空串)不渲染,见 AssistantContent。 */
+  .answer-body { position: relative; }
+  .answer-copy { position: absolute; top: 0; right: 0; opacity: 0; transition: opacity 150ms; }
+  .answer-body:hover .answer-copy, .answer-copy:focus-visible { opacity: 1; }
 
   /* ── 插话条目(看门狗/折叠提示/用户同回合转向) ─────────────────────────
      后端把它按普通 timeline input 落库(actor.kind=api),但它不是用户说的话:
