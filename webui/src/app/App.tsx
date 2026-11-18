@@ -111,6 +111,7 @@ import { buildContextMenu, ContextMenuHost, openContextMenu, type ContextMenuIte
 import { DiffReviewDrawer } from "../diff/DiffReviewDrawer";
 import { ExecSessionDrawer } from "../exec/ExecSessionDrawer";
 import { execPanelStore } from "../exec/panel-store";
+import { ShellDock } from "../exec/ShellDock";
 import BrowserPane from "../browser/BrowserPane";
 import "../styles/app.css";
 
@@ -1181,6 +1182,9 @@ const App: Component = () => {
         class={{ "drawer-mask": true, open: (appCols() === 1 && sidebarDrawerOpen()) || (appCols() < 3 && railDrawerOpen()) }}
         onClick={closeDrawers}
       />
+      {/* 用户终端 dock 挂在 App 顶层,切会话标签不卸载;shell 生命周期由
+          shell-tabs store 管,这里只负责显示。 */}
+      <ShellDock />
       <Show when={connectionNotice() != null}>
         <div class="connection-notice" role="status" aria-live="polite">
           <span>{connectionNotice()}</span>

@@ -4,6 +4,7 @@
  */
 import DOMPurify, { type Config } from "dompurify";
 import { marked } from "marked";
+import { decorateMarkdownHtml } from "./decorate";
 marked.setOptions({ gfm: true, breaks: false, async: false });
 
 let hooked = false;
@@ -63,5 +64,5 @@ export function renderMarkdownHtml(src: string): string {
   ensureHooks();
   if (src.trim() === "") return "";
   const html = marked.parse(src) as string;
-  return DOMPurify.sanitize(html, PURIFY_CONFIG) as string;
+  return decorateMarkdownHtml(DOMPurify.sanitize(html, PURIFY_CONFIG) as string);
 }

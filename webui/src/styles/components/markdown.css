@@ -97,4 +97,7 @@
   .md-host img { max-width: 100%; border-radius: var(--r-md); }
   .md-host hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
   .md-image-link { color: var(--accent); font-size: var(--fs-xs); word-break: break-all; }
+  .md-host .md-inline-icon { display: inline-block; width: 1em; height: 1em; margin-right: .3em; max-width: none; border-radius: 0; vertical-align: text-bottom; }
+  /* GitHub 标遮罩跟链接色:与 tools.css .tool-command-icon 同机制(path 无 fill,<img> 深色主题下纯黑)。 */
+  .md-host .md-inline-icon-mark { background-color: currentColor; -webkit-mask-image: var(--md-inline-icon); mask-image: var(--md-inline-icon); -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: center; mask-position: center; }
 }

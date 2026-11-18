@@ -26,6 +26,7 @@
 @import "./components/markdown.css";
 @import "./components/workspace-panel.css";
 @import "./components/composer.css";
+@import "./components/shell-dock.css";
 @import "./components/context-menu.css";
 @import "./components/approval.css";
 @import "./components/gamepad.css";

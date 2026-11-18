@@ -132,6 +132,16 @@ areas:
           活跃输出期间高度单调不减)。
         where: webui/src/tools/ReadOnlyTerminal.tsx
         perf: cargo/dotnet 快编译每秒上百个小块,无合并时每帧几十次强制布局
+      - id: user-shell-terminal
+        contract: |
+          composer「启动终端」菜单(pwsh/bash/cmd)→ 底部滑入 overlay 盖住全屏面:
+          几何由 FitAddon 按字形实测,xterm 网格是唯一真值、同一份数字同步 PTY
+          (上限 200×70,2026-11-18 所有者口径,clamp 而非钉死,小窗不出条不缩
+          字号);kind 透传 `shell.open` 的 shell 枚举,argv 解析
+          全在 daemon 端(闭集词表与 exec 模型面同源,传不进任意可执行路径);
+          关闭即 shell.close,ws 断联不杀是后端纪律(ADR-0028 §D5)。
+          抽屉里的旧交互终端入口已按同一裁定移除——exec 归 exec,用户 shell 独立单次。
+        where: webui/src/composer/Composer.tsx, webui/src/exec/ShellTerminal.tsx, styles/components/composer.css
       - id: terminal-colors
         contract: |
           终端配色方案(设置→外观→终端配色):follow(继承应用)或经典方案

@@ -1,6 +1,6 @@
 [package]
 name = "qaqh-napi-client"
-version = "4.0.1"
+version = "4.0.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Node-API (Electron main) bindings over qaqh-client for the QAQ-Harness desktop shell"

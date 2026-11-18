@@ -301,7 +301,7 @@
     border-radius: var(--r-md);
     padding: 8px 10px;
     font-family: var(--font-terminal);
-    font-size: var(--fs-sm);
+    font-size: var(--fs-tool-out);
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
@@ -313,26 +313,22 @@
   /* exec 正文（运行中与终态）只在后台执行抽屉渲染；消息区不再有输出表面。 */
   .tool-shell-output { display: grid; gap: 0; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior: contain; }
   .tool-xterm {
-    box-sizing: border-box; width: max-content; min-width: 100%; min-height: 31px;
+    /* min-height / 骨架高度 = 单行 10px×1.25 + 上下 padding 16 ≈ 29px,跟着输出档位走。 */
+    box-sizing: border-box; width: max-content; min-width: 100%; min-height: 29px;
     padding: 8px 10px; overflow: hidden;
     background: var(--surface-code); color: var(--text);
-    /* 11px 视觉实验(9px 反馈偏小后定档):PTY 放宽口径讨论中,终端容量 =
-       11px×0.6=6.6px/列 → 80 列 ≈548px、160 列 ≈1076px、200 列 ≈1340px。
-       回退只需改回 var(--fs-xs);xterm 字号从这里 computed 读取,零 JS 联动。 */
-    font-family: var(--font-terminal); font-size: 11px; line-height: 1.25;
+    /* 输出档位统一走 var(--fs-tool-out)(10px):PTY 放宽口径讨论中,终端容量 =
+       10px×0.6=6px/列 → 80 列 ≈480px、160 列 ≈960px、200 列 ≈1200px。
+       xterm 字号从这里 computed 读取,零 JS 联动;调档只改 tokens 那一行。 */
+    font-family: var(--font-terminal); font-size: var(--fs-tool-out); line-height: 1.25;
   }
   /* The parser and inner screen stay 80x24; only the surrounding viewport crops. */
   .tool-xterm .xterm { width: max-content; height: auto; }
   .tool-xterm .xterm-viewport { background: var(--surface-code); }
-  .tool-xterm-loading { height: 31px; }
+  .tool-xterm-loading { height: 29px; }
   .tool-text .tool-section-line { display: block; margin: 2px 0 1px; color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }
   .tool-error { color: var(--err); }
   .tool-truncated { color: var(--warn); font-size: var(--fs-xs); }
-  .tool-waiting { color: var(--warn); font-size: var(--fs-sm); }
-  .kv-table { display: grid; gap: 2px; font-size: var(--fs-sm); }
-  .kv-row { display: grid; grid-template-columns: minmax(80px, max-content) 1fr; gap: 10px; padding: 2px 0; }
-  .kv-key { color: var(--muted); font-family: var(--font-terminal); overflow-wrap: anywhere; }
-  .kv-value { font-family: var(--font-terminal); white-space: pre-wrap; overflow-wrap: anywhere; }
   .ghost-mini {
     display: inline-flex; align-items: center; gap: 4px;
     min-height: 28px; padding: 0 8px;

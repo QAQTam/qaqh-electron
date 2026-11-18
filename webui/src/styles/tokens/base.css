@@ -112,6 +112,12 @@
     --fs-md: calc(17px * var(--font-scale));
     --fs-lg: calc(22px * var(--font-scale));
     --fs-body: calc(17px * var(--font-scale));
+    /* 工具详情区单独一档：报错正文（.tool-error）与 exec PTY 输出（.tool-xterm）。
+       顶部状态位/工具名走 --fs-xs，输出必须比顶部小——原先继承 --fs-sm 时 15px 的
+       红字压过 13px 的标题，报错反而抢眼。固定 10px 不吃 --font-scale，与 .tool-xterm
+       原有的定档口径同源（xterm 从 computed 读字号，零 JS 联动）；fluent 层不覆盖它，
+       所以 Windows 与 macOS 是同一个 10px。要调档只改这一行。 */
+    --fs-tool-out: 10px;
 
     /* 4 大核心语义字体槽位
        中文不内嵌：macOS 走苹方；Windows 11 24H2+ 系统自带 Noto Sans SC 可变

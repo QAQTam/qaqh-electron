@@ -18,6 +18,7 @@ import IconPaperclip from "~icons/lucide/paperclip";
 import IconCamera from "~icons/lucide/camera";
 import IconChevronDown from "~icons/lucide/chevron-down";
 import IconFolder from "~icons/lucide/folder";
+import IconTerminal from "~icons/lucide/terminal";
 import IconX from "~icons/lucide/x";
 import { STR } from "../lib/strings";
 import { GAMEPAD_ACTION_EVENT, type GamepadAction } from "../lib/gamepad";
@@ -29,7 +30,7 @@ import { WorkspaceMenu } from "../workspace/WorkspaceMenu";
 import { EffortCard } from "./EffortCard";
 import { ToolModeCard } from "./ToolModeCard";
 import { useDismissable } from "../ui/dismissable";
-
+import { shellTabs } from "../exec/shell-tabs";
 export type SendBlockReason = "running" | "pending" | "offline" | "no-session" | "sealed" | null;
 
 /** HUD 里端点原生 usage 字段的展示上限,其余归入 `+N` 的 title。 */
@@ -375,6 +376,17 @@ export const Composer: Component<{
                 </Show>
               </div>
             </Show>
+            <div class="composer-control-wrap">
+              <button
+                type="button"
+                class="composer-tool-button composer-terminal-button"
+                aria-label="启动终端"
+                title="新建终端标签（用上次的 shell；面板里可换档位）"
+                onClick={() => void shellTabs.open()}
+              >
+                <IconTerminal />
+              </button>
+            </div>
           </div>
           <div class="composer-submit-area">
             <Show
