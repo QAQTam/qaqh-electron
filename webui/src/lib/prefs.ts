@@ -2,8 +2,8 @@
  * 渲染层偏好唯一通道。webui 已是 Electron 渲染层,偏好不该再散写 localStorage
  * (缓存清理即丢、无法随 userData 备份):桌面壳下全部走主进程 prefs.json。
  *
- * - 桌面(host.prefs 存在):启动拍一次同步快照(sendSync)进内存表,读全同步
- *   ——组件在 module-eval 期就要拿偏好定主题/尺寸,异步水合会闪布局;写乐观
+ * - 桌面(host.prefs 存在):入口 await ensurePrefs() 拍一次快照进内存表,读全同步
+ *   ——module-eval 期同步读的语义由「先水合后求值」门闩保序;写乐观
  *   更新内存表 + 异步落盘,失败只出声不回滚(下次写会带全值)。
  * - 无宿主(vitest/headless harness 的 mock 里没 prefs):直接读写 localStorage,
  *   测试与开发页零改动。这是宿主探测(profile),不是每个调用点套一层兼容。
@@ -49,11 +49,26 @@ function migrateLegacy(snapshot: Record<string, string>): void {
   }
 }
 
-if (host?.prefs != null) {
-  const snapshot = host.prefs.snapshot();
-  for (const [key, value] of Object.entries(snapshot)) table.set(key, value);
-  migrateLegacy(snapshot);
+let hydratePromise: Promise<void> | null = null;
+
+/**
+ * 入口门闩:水合快照到位后才放行应用模块求值(index.tsx await 这里)。
+ * module-eval 期同步读(prefGet)的语义由「先水合后求值」保序,读侧零 await;
+ * 无宿主环境(vitest/headless)立即完成。模块求值期即自发启动,非门闩入口
+ * 的 QA 检查页也能最终拿到水合表(仅初始默认可能短暂回退,QA 面)。
+ */
+export function ensurePrefs(): Promise<void> {
+  if (hydratePromise != null) return hydratePromise;
+  hydratePromise = (async () => {
+    if (host?.prefs == null) return; // 无宿主:localStorage 直读,无水合步骤
+    const snapshot = await host.prefs.snapshot();
+    for (const [key, value] of Object.entries(snapshot)) table.set(key, value);
+    migrateLegacy(snapshot);
+  })();
+  return hydratePromise;
 }
+
+void ensurePrefs();
 
 export const prefGet = (key: string): string | null => {
   if (host?.prefs != null) return table.get(key) ?? null;

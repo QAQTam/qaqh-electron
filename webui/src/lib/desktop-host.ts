@@ -198,10 +198,10 @@ export interface FindInPageBridge {
   stop(): Promise<void>;
 }
 
-/** 壳层偏好(userData/prefs.json):snapshot 同步全表(sendSync,只在启动拍一次),
+/** 壳层偏好(userData/prefs.json):snapshot 全表一次(promise;入口水合门闩消费),
  *  set 异步落盘(主进程 debounce 合并写)。值一律字符串,null=删除。 */
 export interface DesktopPrefsBridge {
-  snapshot(): Record<string, string>;
+  snapshot(): Promise<Record<string, string>>;
   set(key: string, value: string | null): Promise<void>;
 }
 

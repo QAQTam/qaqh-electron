@@ -360,10 +360,10 @@ ipcMain.handle("qaqh:titlebar-overlay", (event, options: unknown) => {
   }
 });
 
-// 壳层偏好(见 prefs.ts):快照走 sendSync——渲染层首帧就要用偏好定尺寸/主题,
-// 异步水合会闪布局;写入全异步,主进程 debounce 落盘。
-ipcMain.on("qaqh:prefs-snapshot", (event) => {
-  event.returnValue = canControlWindow(event) ? readPrefsSync() : {};
+// 壳层偏好(见 prefs.ts):快照走 invoke——渲染层入口挂载前 await 水合(module-eval 同步读由门闩保序),
+// splash 盖住这段加载窗;写入全异步,主进程 debounce 落盘。
+ipcMain.handle("qaqh:prefs-snapshot", (event) => {
+  return canControlWindow(event) ? readPrefsSync() : {};
 });
 ipcMain.handle("qaqh:prefs-set", (event, args: unknown) => {
   if (!canControlWindow(event)) throw new Error("IPC sender is not the application renderer");
@@ -628,7 +628,7 @@ function createMainWindow(): BrowserWindow {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       spellcheck: false, // 禁用拼写检查字典，直接节省 40MB+ 内存并消除打字 CPU 占用
       backgroundThrottling: true, // 后台深度挂起定时器与 CSS 动画，节约空闲 CPU
     },

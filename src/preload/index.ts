@@ -68,7 +68,7 @@ contextBridge.exposeInMainWorld("qaqhHost", {
     stop: () => ipcRenderer.invoke("qaqh:find-stop") as Promise<void>,
   },
   prefs: {
-    snapshot: () => ipcRenderer.sendSync("qaqh:prefs-snapshot") as Record<string, string>,
+    snapshot: () => ipcRenderer.invoke("qaqh:prefs-snapshot") as Promise<Record<string, string>>,
     set: (key: string, value: string | null) => ipcRenderer.invoke("qaqh:prefs-set", { key, value }) as Promise<void>,
   },
   relaunch: () => ipcRenderer.invoke("qaqh:relaunch"),
