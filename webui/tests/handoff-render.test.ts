@@ -13,6 +13,19 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 vi.mock("solid-js", () => import("../node_modules/solid-js/dist/solid.dev.js"));
 vi.mock("@solidjs/web", () => import("../node_modules/@solidjs/web/dist/web.dev.js"));
 
+/** B 侧门禁读 tabs/store 的会话目录:这里注入内存目录(空数组 = 那行还没被
+ *  pollSessions 捞回来),用来钉"事件没到、目录没到也要出卡"的指纹路径。 */
+const catalogBox = vi.hoisted(() => ({ list: [] as Array<Record<string, unknown>> }));
+vi.mock("../src/tabs/store", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    sessionCatalog: () => catalogBox.list,
+    openSession: async () => null,
+    pollSessions: async () => {},
+  };
+});
+
 import { createComponent, flush } from "solid-js";
 import { render } from "@solidjs/web";
 import { TurnView } from "../src/turn/TurnView";
@@ -90,13 +103,13 @@ function makeTurn(options: { withUserPrompt: boolean; sealed: boolean; endedAt?:
 }
 
 /** TurnView 只读这几路信号；视图测试不需要真的状态机。 */
-function fakeStore(turn: Turn, latest = true, sealed: HandoffSealedView | null = null): SessionStore {
+function fakeStore(turn: Turn, latest = true, sealed: HandoffSealedView | null = null, seed = REPORT.from_session_id): SessionStore {
   // latest=false 时在槽位尾部塞一个更新的回合键:isLatestTurn 据此判这条卡不是最新。
   const slots: Array<{ kind: "turn"; key: string }> = latest
     ? [{ kind: "turn", key: turn.key }]
     : [{ kind: "turn", key: turn.key }, { kind: "turn", key: "turn_newer" }];
   return {
-    seed: REPORT.from_session_id,
+    seed,
     state: [{ slots, turns: { [turn.key]: turn } }],
     composerProfile: [{ providerKind: "byok" }],
     composerModel: ["gpt-5-flash"],
@@ -109,11 +122,11 @@ function fakeStore(turn: Turn, latest = true, sealed: HandoffSealedView | null =
 
 let root: HTMLElement;
 
-function mount(turn: Turn, latest = true, sealed: HandoffSealedView | null = null): void {
+function mount(turn: Turn, latest = true, sealed: HandoffSealedView | null = null, seed = REPORT.from_session_id): void {
   root = document.createElement("div");
   document.body.append(root);
   render(() => createComponent(TurnView, {
-    turn, waits: [], store: fakeStore(turn, latest, sealed),
+    turn, waits: [], store: fakeStore(turn, latest, sealed, seed),
     // latest=false 时必须留给 TurnView 自己扫槽位:显式 true 会短路 isLatestTurn。
     isLatestTurn: latest ? true : undefined,
   }), root);
@@ -245,3 +258,83 @@ test("交接工具行显示工作简述，不是整篇文档的第一个字符�
   expect(summary).not.toContain("##");   // 不是整篇 handoff_doc 的第一个字符串
   expect(row?.querySelector(".tool-state")?.textContent).toBe("已封箱交接");
 });
+
+/* ── B 侧开箱门禁(ADR-016)───────────────────────────────────────────────
+ * 生产实测:自动跳转落在 B 流订阅之前——`handoff_sealed` 双发到后继线读不到,
+ * 目录血缘又要等 pollSessions。三条判据各钉一条:投递指纹即时出卡、目录毫秒
+ * 武装仪式、秒粒度老后端换算后不再漏 1970。 */
+
+/** 内核 fork 投影给 B 的第一条输入(形状照 handoff_fork.rs 的 deliver_input)。 */
+function makeOpenTurn(inputId: string | null): Turn {
+  return {
+    id: "turn_B",
+    key: "turn_B",
+    inputId,
+    turnIndex: null,
+    user: { text: REPORT.handoff_doc, blockId: "block_b_doc" },
+    steps: [],
+    answer: null,
+    answerStepId: null,
+    status: "done",
+    expanded: true,
+  };
+}
+
+test("B 侧指纹到即出卡:事件没到、目录没捞到也不顶裸文本墙", async () => {
+  catalogBox.list = []; // pollSessions 还没把 B 行捞回来
+  mount(makeOpenTurn("handoff-doc:ses_A:turn_A"), true, null, "ses_B");
+  await flush();
+
+  expect(root.querySelector(".handoff-open")).not.toBeNull();
+  expect(root.querySelector(".turn-user .bubble")).toBeNull();
+  // 没有权威 T0(目录缺席)不拿「现在」冒充:不播仪式、不显示假封箱时刻。
+  expect(root.querySelector(".handoff-ritual")).toBeNull();
+  expect(root.querySelector(".handoff-open-meta")?.textContent).not.toContain("封箱于");
+});
+
+test("B 侧目录毫秒 T0 在场:刚开箱播大盒仪式", async () => {
+  catalogBox.list = [{
+    session_id: "ses_B",
+    handoff_from_session_id: "ses_A",
+    title: REPORT.work_summary,
+    created_at_ms: Date.now() - 2_000,
+    created_at: Math.floor((Date.now() - 2_000) / 1000),
+  }];
+  try {
+    mount(makeOpenTurn(null), true, null, "ses_B"); // 老行没指纹 → 血缘兜底
+    await flush();
+    expect(root.querySelector(".handoff-open")).not.toBeNull();
+    expect(root.querySelector(".handoff-ritual")).not.toBeNull();
+    expect(root.querySelector(".handoff-open-summary")?.textContent).toBe(REPORT.work_summary);
+  } finally {
+    catalogBox.list = [];
+  }
+});
+
+test("B 侧秒粒度 created_at(老后端)换算成毫秒:不再 1970、不再永不出仪式", async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  catalogBox.list = [
+    // 刚开完箱:秒换算后落在 12s 窗口内 → 仪式武装。
+    { session_id: "ses_B", handoff_from_session_id: "ses_A", created_at: nowSec },
+  ];
+  try {
+    mount(makeOpenTurn(null), true, null, "ses_B");
+    await flush();
+    expect(root.querySelector(".handoff-ritual")).not.toBeNull();
+  } finally {
+    // 一小时前封的箱:出卡但不回播,且「封箱于」是今年而不是 1970。
+    document.body.replaceChildren();
+    catalogBox.list = [
+      { session_id: "ses_B", handoff_from_session_id: "ses_A", created_at: nowSec - 3_600 },
+    ];
+    mount(makeOpenTurn(null), true, null, "ses_B");
+    await flush();
+    expect(root.querySelector(".handoff-open")).not.toBeNull();
+    expect(root.querySelector(".handoff-ritual")).toBeNull();
+    const meta = root.querySelector(".handoff-open-meta")?.textContent ?? "";
+    expect(meta).toContain("封箱于");
+    expect(meta).not.toContain("1970");
+    catalogBox.list = [];
+  }
+});
+

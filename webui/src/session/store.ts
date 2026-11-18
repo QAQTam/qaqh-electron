@@ -394,8 +394,37 @@ export class SessionStore {
     this.approvalGeneration++;
   }
 
+  /**
+   * 懒水合纪律:非 handoff 工具的输出正文只在展开区打开时拉取
+   * (`loadToolOutput`),自动水合一律跳过——大正文占内存不占屏幕的时代结束。
+   * 例外:`handoff` 的封箱判定要读 result 里的 `handed_off:true`,必须到达即水合。
+   * 扫归约后的 state 而不是 payload:`tool_finished` 事件不带 tool_name。
+   */
+  private lazyToolOutputRefs(): Set<string> {
+    const lazy = new Set<string>();
+    const state = this.stateGet;
+    for (const turn of Object.values(state.turns)) {
+      for (const step of turn.steps) {
+        if (step.kind === "tool" && step.outputRef != null && step.name !== HANDOFF_TOOL) lazy.add(step.outputRef);
+      }
+    }
+    for (const snapshot of Object.values(state.originTurns)) {
+      for (const tool of snapshot.tools) {
+        const ref = tool.output?.kind === "ref" ? tool.output.data.content_ref : undefined;
+        if (ref != null && tool.tool_name !== HANDOFF_TOOL) lazy.add(ref);
+      }
+    }
+    return lazy;
+  }
+
+  /** 展开区按需拉取一条工具输出正文(loader 幂等;失败过的重新入队)。 */
+  loadToolOutput(ref: string): void {
+    this.contentLoader.requestNow(ref);
+  }
+
   private hydrateContent(refs: Iterable<string> = pendingContentRefs(this.stateGet)): void {
-    for (const ref of refs) this.contentLoader.request(ref);
+    const lazy = this.lazyToolOutputRefs();
+    for (const ref of refs) if (!lazy.has(ref)) this.contentLoader.request(ref);
     this.hydrated[1](true);
   }
 

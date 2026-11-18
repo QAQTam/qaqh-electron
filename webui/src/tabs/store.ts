@@ -48,8 +48,10 @@ export type SidebarSession = {
   title?: string | null;
   cwd?: string | null;
   updated_at?: number;
-  /** 会话创建时刻(unix ms):开箱卡「封箱于」的血缘路径取值。 */
+  /** 会话创建时刻(unix **秒**,后端 `SessionMeta.created_at` 冻结语义)。 */
   created_at?: number;
+  /** 同一时刻的毫秒值(后端加法字段);开箱仪式的 12s 窗口只认这个。 */
+  created_at_ms?: number | null;
   archived?: boolean;
   /**
    * 回合在跑,或卡在用户这一侧(授权/ask/计划评审)。宿主按 `SessionRunStatus`

@@ -6,6 +6,11 @@
     border-radius: 10px;
     border: 1px dashed var(--border, #d2d6df);
     background: var(--surface-2, #eaedf1);
+    /* 高度帽:iframe 自调高最高 10000px,不能让它把消息流顶成单屏巨石;
+       超出部分在挂载点内滚,完整交互仍可用。 */
+    max-height: min(75vh, 900px);
+    overflow: auto;
+    overscroll-behavior: contain;
   }
 
   .qqh-widget-mount:has(> iframe.qqh-widget-frame) {

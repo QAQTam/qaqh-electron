@@ -75,11 +75,21 @@ test("flat bootstrap and cursor arrive together; referenced content hydrates on 
   const turn = store.state[0].turns.t1!;
   expect(turn.user.text).toBe(bodies[0]);
   expect(turn.steps[0]).toMatchObject({ kind: "thinking", text: bodies[1] });
-  expect(turn.steps[1]).toMatchObject({ kind: "tool", argsJson: '{\n  "path": "README.md"\n}', output: { text: "正文", exitCode: 0 } });
-  expect(read).toHaveBeenCalledTimes(4);
+  // 懒水合纪律:工具输出正文不再随 bootstrap 拉取——大正文占内存不占屏幕;
+  // 输入/思考/回答照常即时。展开区经 loadToolOutput 按需取回(含 diffText 重解析)。
+  expect(turn.steps[1]).toMatchObject({ kind: "tool", argsJson: '{\n  "path": "README.md"\n}', outputRef: refs[3] });
+  expect(turn.steps[1]?.kind === "tool" && turn.steps[1].output).toBeUndefined();
+  expect(read).toHaveBeenCalledTimes(3);
   expect(bootstrap).not.toHaveBeenCalled();
   await store.loadBootstrap();
   expect(store.state[0].turns.t1?.answer?.text).toBe(bodies[2]);
+  expect(read).toHaveBeenCalledTimes(3);
+  store.loadToolOutput(refs[3]!);
+  await vi.waitFor(() => {
+    // 从 live state 重新取 turn:loadBootstrap 重建 backing,旧引用不反映新写入。
+    const fresh = store.state[0].turns.t1!;
+    expect(fresh.steps[1]?.kind === "tool" && fresh.steps[1].output).toMatchObject({ text: "正文", exitCode: 0 });
+  });
   expect(read).toHaveBeenCalledTimes(4);
 });
 

@@ -1,6 +1,6 @@
 /** 面向用户的工具结果：文件路径/diff、exec 终态徽章、待办/skills 语义。
  *  exec 的输出正文（运行中与终态）都不在这里渲染——只进后台执行抽屉。 */
-import { createMemo, createSignal, Match, onCleanup, Show, Switch, type Component } from "solid-js";
+import { createEffect, createMemo, createSignal, Match, onCleanup, Show, Switch, untrack, type Component } from "solid-js";
 import IconFile from "~icons/lucide/file-text";
 import IconEdit from "~icons/lucide/file-pen-line";
 import IconSearch from "~icons/lucide/search";
@@ -19,6 +19,7 @@ import { STR, formatWorkDuration } from "../lib/strings";
 import { now } from "../lib/time";
 import { DiffList } from "../diff/DiffView";
 import type { ToolStep, Turn } from "../session/types";
+import { parseJsonish } from "../session/reducer";
 import { handoffToolErrorCode } from "../session/handoff";
 import { primaryArg, toolLabel } from "./registry";
 import { execRowBadge, handoffSummary, isSkillStep, semanticLabel, spawnForkBadge, toolPaths, toolPresentation, toolPhaseLabel } from "./presentation";
@@ -40,21 +41,80 @@ const LiveElapsed: Component<{ startedAt: number | undefined }> = (props) => {
   return <span class="tool-elapsed">{formatWorkDuration(props.startedAt == null ? 0 : Math.max(0, tick() - props.startedAt))}</span>;
 };
 
-export const ToolDetail: Component<{ step: ToolStep }> = (props) => {
+/**
+ * 展开区是「第二层」:zcode 纪律——每层有界,下一层有出口。
+ * 正文进视口前按字符数封顶(布局只为可见区付钱);全文仍在数据层,
+ * 截断与否由徽标/提示行说话,不许静默。
+ */
+const DETAIL_MAX_CHARS = 200_000;
+const ARGS_MAX_CHARS = 8_000;
+
+function clipText(text: string, cap: number): { text: string; omitted: number } {
+  return text.length > cap ? { text: text.slice(0, cap), omitted: text.length - cap } : { text, omitted: 0 };
+}
+
+function prettyArgs(argsJson: string | undefined): string {
+  if (argsJson == null || argsJson.trim() === "") return "";
+  const parsed = parseJsonish(argsJson);
+  if (parsed == null) return argsJson;
+  try { return JSON.stringify(parsed, null, 2); } catch { return argsJson; }
+}
+
+export const ToolDetail: Component<{ step: ToolStep; loadOutput?: (ref: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed"> }> = (props) => {
   const step = () => props.step;
-  const file = () => !isSkillStep(step()) && ["read", "edit"].includes(toolPresentation(step()));
+  const kind = () => toolPresentation(step());
+  const shell = () => kind() === "shell";
+  const args = createMemo(() => clipText(prettyArgs(step().argsJson), ARGS_MAX_CHARS));
+  // exec 的输入/输出都归命令摘要与抽屉,展开区只有 error 一种事实(文件头口径)。
+  const showArgs = () => !shell() && kind() !== "handoff" && step().status !== "declared" && args().text !== "";
+  const result = createMemo(() => {
+    const text = step().output?.text;
+    return text == null || shell() ? null : clipText(text, DETAIL_MAX_CHARS);
+  });
+  // 懒水合:外置正文(>32 KiB)未拉取时这里给占位/失败重试,不静默空段。
+  const pending = () => !shell() && step().outputRef != null && step().output?.text == null;
+  const pendingStatus = () => (step().outputRef != null ? props.contentStatus?.[step().outputRef!] : undefined);
+  const stderr = () => (!shell() ? step().output?.stderr : undefined);
+  const omitLine = (omitted: number) => <Show when={omitted > 0}><span class="tool-omit">{STR.resultCharsOmitted(omitted)}</span></Show>;
   return <div class="tool-detail">
-    <Show when={file()}>
-      <Show when={step().status === "finished" && step().output?.diffText}>
-        <div class="tool-detail-label">修改结果<span class="spacer" /><CopyButton text={() => step().output?.diffText ?? ""} /></div>
-        <DiffList diffText={step().output!.diffText!} hideSingleFilePath />
+    <Show when={step().status === "finished" && step().output?.diffText}>
+      <div class="tool-detail-label">修改结果<span class="spacer" /><CopyButton text={() => step().output?.diffText ?? ""} /></div>
+      <DiffList diffText={step().output!.diffText!} hideSingleFilePath />
+    </Show>
+    <Show when={showArgs()}>
+      <div class="tool-detail-label">{STR.toolSectionInput}<span class="spacer" /><CopyButton text={() => args().text} /></div>
+      <pre class="tool-text">{args().text}{omitLine(args().omitted)}</pre>
+    </Show>
+    <Show when={result() || pending()}>
+      <Show when={result()} fallback={
+        <Show when={pendingStatus() === "failed"} fallback={<p class="tool-text muted" role="status">正文加载中…</p>}>
+          <button type="button" class="content-placeholder retry" onClick={() => {
+            const ref = step().outputRef;
+            if (ref != null) props.loadOutput?.(ref);
+          }}>正文加载失败，重试</button>
+        </Show>
+      }>
+        {(body) => <>
+          <div class="tool-detail-label">
+            {STR.toolSectionResult}
+            <Show when={step().output?.truncated === true}><span class="tool-omit">{STR.truncatedNotice}</span></Show>
+            <span class="spacer" /><CopyButton text={() => body().text} />
+          </div>
+          <pre class="tool-text">{body().text}{omitLine(body().omitted)}</pre>
+        </>}
       </Show>
+    </Show>
+    <Show when={stderr()}>
+      {(text) => <>
+        <div class="tool-detail-label">{STR.toolSectionStderr}</div>
+        <pre class="tool-text tool-error">{text()}</pre>
+      </>}
     </Show>
     <Show when={step().error}><pre class="tool-text tool-error">{step().error}</pre></Show>
   </div>;
 };
 
-export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boolean; cwd?: string | null; isLatest?: boolean; isShimmer?: boolean; onFollowUp?: (text: string) => void }> = (props) => {
+export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boolean; cwd?: string | null; isLatest?: boolean; isShimmer?: boolean; onFollowUp?: (text: string) => void; loadOutput?: (ref: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed"> }> = (props) => {
   const step = () => props.step;
   const kind = () => isSkillStep(step()) ? "skill" : toolPresentation(step());
   const semantic = () => semanticLabel(step());
@@ -92,11 +152,22 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
     return Boolean(active && (summary() || commandIcon()));
   });
   const execTarget = () => kind() === "shell" && step().execSessionId != null;
-  const hasDetails = () => (["read", "edit"].includes(kind()) && step().status === "finished" && Boolean(step().output?.diffText))
-    || Boolean(step().error);
+  const bodyTool = () => kind() !== "shell" && kind() !== "handoff";
+  const terminalish = () => ["finished", "failed", "cancelled", "interrupted"].includes(step().status);
+  const hasDetails = () => Boolean(step().error)
+    || (step().status === "finished" && Boolean(step().output?.diffText))
+    || (bodyTool() && terminalish()
+        && (Boolean(step().outputRef) || Boolean(step().output?.text) || Boolean(step().output?.stderr) || Boolean(step().argsJson)));
   const [override, setOverride] = createSignal<boolean | null>(null);
-  // exec 展开区只剩工具级 error 一种事实；其余工具的展开语义不变。
-  const open = () => hasDetails() && (override() ?? step().status === "failed");
+  // 展开区一律默认收起:失败不再自动展开(zcode 纪律——错误由状态位 tooltip
+  // 与手动展开承担,红块墙不是消息区的职责)。
+  const open = () => hasDetails() && (override() ?? false);
+  // 展开即按需拉取外置正文:收起状态下几百 KB 不进渲染进程。
+  createEffect(open, (isOpen) => {
+    if (!isOpen) return;
+    const ref = untrack(() => step().outputRef);
+    if (ref != null) props.loadOutput?.(ref);
+  });
   const stats = createMemo(() => {
     // 终态 code_delta 是真实 diff(权威,优先);编辑中只有内核随参数流数出的
     // 累计估算 linesAdded/linesRemoved 可用,逐帧实时更新。
@@ -167,10 +238,15 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
           <span class="tool-state err" title={step().error ?? undefined}>{handoffToolErrorCode(step()) ?? STR.failed}</span>
         </Match>
         <Match when={step().status === "cancelled" || step().status === "interrupted"}><span class="tool-state">{STR.aborted}</span></Match>
+        {/* 截断必须可见(非 shell——exec 的窗口提示在抽屉):过去 output_truncated
+            在消息区零展示,用户无法区分「没有输出」与「输出被截断」。 */}
+        <Match when={step().output?.truncated === true && bodyTool()}>
+          <span class="tool-state err" title={STR.truncatedNotice}>{STR.truncatedFlag}</span>
+        </Match>
       </Switch>
       <Show when={hasDetails()}><IconChevronRight class={`tool-chevron${open() ? " is-open" : ""}`} /></Show>
     </button>
-    <Collapse open={open()}><ToolDetail step={step()} /></Collapse>
+    <Collapse open={open()}><ToolDetail step={step()} loadOutput={props.loadOutput} contentStatus={props.contentStatus} /></Collapse>
     </div>}>
       <Match when={todoCardData(step())}>
         <TodoCard step={step()} />

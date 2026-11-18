@@ -127,12 +127,33 @@ function scanArgsPrefix(name: string, text: string): string[] {
 }
 
 /**
+ * 参数流重扫节流:`tool_arguments_delta` 是累计前缀,每帧对整段前缀跑正则
+ * 就是 O(前缀)/帧——超长 write/patch 参数时消息区替布局器买单。前缀只增不减、
+ * 首命中不后移,距上次全扫增长 <4 KiB 时直接复用上一结果(文件名显示最多晚一帧,
+ * 收敛性由权威终态分支兜底)。checkpoint 整段换文本(变短)即刻失效重扫。
+ */
+const PREFIX_SCAN_STRIDE = 4096;
+const prefixScanCache = new Map<string, { len: number; out: string[] }>();
+
+function scanArgsPrefixCached(id: string, name: string, text: string): string[] {
+  const cached = prefixScanCache.get(id);
+  if (cached != null && text.length >= cached.len && text.length - cached.len < PREFIX_SCAN_STRIDE) return cached.out;
+  const out = scanArgsPrefix(name, text);
+  if (prefixScanCache.size > 512) {
+    const oldest = prefixScanCache.keys().next();
+    if (!oldest.done) prefixScanCache.delete(oldest.value);
+  }
+  prefixScanCache.set(id, { len: text.length, out });
+  return out;
+}
+
+/**
  * `apply_patch` 的目标文件不再在这里数：补丁文法的唯一事实源是后端补丁引擎，
  * 它把已经数完的结论随参数流一起发下来（`tool_arguments_delta.target_files`）。
  * 客户端再养一份 header 正则，就是两份文法各自漂移的开始。
  */
 export function toolPaths(
-  step: Pick<ToolStep, "name" | "argsJson" | "output" | "targetFiles">,
+  step: Pick<ToolStep, "name" | "argsJson" | "output" | "targetFiles"> & { id?: string },
   cwd?: string | null,
 ): string[] {
   const args = parseJsonish(step.argsJson);
@@ -150,7 +171,10 @@ export function toolPaths(
     }
     base = typeof args.cwd === "string" ? args.cwd : typeof args.workdir === "string" ? args.workdir : cwd;
   } else if (typeof step.argsJson === "string") {
-    fromArgs.push(...scanArgsPrefix(step.name, step.argsJson));
+    const scanned = step.id != null
+      ? scanArgsPrefixCached(step.id, step.name, step.argsJson)
+      : scanArgsPrefix(step.name, step.argsJson);
+    fromArgs.push(...scanned);
   }
   // 内核的结论排在最前：补丁类调用参数里没有路径字段，只有它能给出文件名。
   fromArgs.unshift(...(step.targetFiles ?? []));

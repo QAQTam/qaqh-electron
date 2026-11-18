@@ -425,6 +425,8 @@ export const DiffFileView: Component<{ file: ParsedFile; hidePath?: boolean }> =
 };
 
 export const DiffList: Component<{ diffText: string; hideSingleFilePath?: boolean }> = (props) => {
+  // parseUnifiedDiff 对畸形输入不抛错只产出空集（截断的 diff 就落在这里）；
+  // 「解析失败」与「没有改动」必须可区分——静默空白等于把截断藏起来。
   const files = createMemo(() => {
     try {
       return parseUnifiedDiff(props.diffText);
@@ -433,7 +435,11 @@ export const DiffList: Component<{ diffText: string; hideSingleFilePath?: boolea
     }
   });
   return (
-    <Show when={files().length > 0}>
+    <Show when={files().length > 0} fallback={
+      <Show when={props.diffText.trim() !== ""}>
+        <div class="tool-text diff-unparsed">{STR.diffUnparsable}</div>
+      </Show>
+    }>
       <div class="diff-list">
         <For each={files()}>{(file) => <DiffFileView file={file} hidePath={props.hideSingleFilePath && files().length === 1} />}</For>
       </div>

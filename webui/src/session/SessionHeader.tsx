@@ -13,6 +13,8 @@ import IconFork from "~icons/lucide/git-fork";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
 import IconCopy from "~icons/lucide/copy";
 import IconEdit from "~icons/lucide/file-pen-line";
+import IconListTodo from "~icons/lucide/list-todo";
+import { currentDensity as density, toggleDensity } from "../lib/density";
 import { localTitleOf, renameSession, sessionCatalog, type Tab } from "../tabs/store";
 import { parentSessionOf } from "../session/handoff-journal";
 import { GoalBadge } from "./GoalBadge";
@@ -204,6 +206,16 @@ export const SessionHeader: Component<SessionHeaderProps> = (props) => {
                   <span>复制工作区路径</span>
                 </button>
               </Show>
+              {/* 密度档是转录显示偏好（prefs 通道持久化）：compact 聚合更紧、行距更小。 */}
+              <button
+                type="button"
+                class="session-header-menu-item"
+                role="menuitem"
+                onClick={() => toggleDensity()}
+              >
+                <IconListTodo />
+                <span>{density() === "compact" ? "切换为舒适密度" : "切换为紧凑密度"}</span>
+              </button>
             </div>
           </Show>
         </div>

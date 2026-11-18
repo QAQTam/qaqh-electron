@@ -166,6 +166,11 @@
 
   /* 工具行(§8) */
   .step-row.tool { min-width: 0; }
+  /* 紧凑密度档（lib/density，SessionHeader 开关）：行距收紧一档，
+     聚合阈值 2 由 JS 读同一偏好——CSS 只管视觉，不管结构。 */
+  html[data-density="compact"] .timeline { gap: 2px; }
+  html[data-density="compact"] .timeline-row { min-height: 24px; }
+  html[data-density="compact"] .agg-run-head { min-height: 24px; }
   /* todo v2 语义卡片:成功终态的 todo 调用原位渲染清单快照,替代纯文字语义行。
      入场(motion kit):轻微上浮淡入,新卡片落进时间线时有「落定」感;
      一次性 compositor 动画,长回放也只是首帧多一次合成。 */
@@ -186,6 +191,10 @@
     color: var(--muted); font-size: var(--fs-xs); font-weight: 600;
   }
   .todo-card-head svg { width: 13px; height: 13px; flex: none; }
+  /* 折叠头是按钮:吃掉默认按钮皮,保留 flex 排版。 */
+  button.todo-card-head { width: 100%; background: none; border: 0; padding: 0; font: inherit; color: var(--muted); cursor: pointer; text-align: left; }
+  button.todo-card-head:hover { color: var(--text); }
+  .todo-omit { padding: 4px 6px; color: var(--muted); font-size: var(--fs-xs); }
   .todo-card-action { font-weight: 500; }
   .todo-card-head .todo-count { margin-left: auto; }
   .todo-card-bar {
@@ -310,6 +319,8 @@
     min-width: 0; margin: 0;
   }
   .tool-text { max-height: 280px; overflow: auto; overscroll-behavior: contain; }
+  /* 截断/省略提示行:与 .tool-text 视口配套,「看不全」必须说出来。 */
+  .tool-omit { display: block; margin-top: 4px; color: var(--muted); font-size: var(--fs-xs); font-style: normal; }
   /* exec 正文（运行中与终态）只在后台执行抽屉渲染；消息区不再有输出表面。 */
   .tool-shell-output { display: grid; gap: 0; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior: contain; }
   .tool-xterm {

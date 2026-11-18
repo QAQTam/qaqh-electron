@@ -85,7 +85,7 @@
   .md-code-head { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); }
   .md-copy-code { min-width: 48px; min-height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-xs); }
   .md-copy-code:hover { background: var(--surface-2); color: var(--text); }
-  .md-host pre { font-size: var(--md-code-scale); line-height: 1.45; padding: var(--space-4); overflow-x: auto; overflow-wrap: normal; }
+  .md-host pre { font-size: var(--md-code-scale); line-height: 1.45; padding: var(--space-4); overflow: auto; max-height: min(48vh, 560px); overscroll-behavior: contain; overflow-wrap: normal; }
   .md-host .md-code-block > pre { margin: 0; background: transparent; border: 0; border-radius: 0; }
   .md-host pre code { font-size: 100%; line-height: inherit; background: none; padding: 0; }
   .md-host blockquote { margin: 8px 0; padding: 2px 12px; border-left: 2px solid var(--border-strong); color: var(--muted); }

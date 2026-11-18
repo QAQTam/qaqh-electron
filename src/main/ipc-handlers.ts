@@ -451,6 +451,7 @@ async function handleCommand(
           cwd: entry.cwd ?? null,
           updated_at: entry.updated_at,
           created_at: entry.created_at,
+          created_at_ms: entry.created_at_ms ?? null,
           turn_count: entry.turn_count,
           status,
           busy: sessionIsBusy(status),

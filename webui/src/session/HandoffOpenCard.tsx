@@ -42,7 +42,8 @@ export const HandoffOpenCard: Component<{ doc: string; source: HandoffOpenSource
             <span class="handoff-open-summary">{summary()}</span>
           </Show>
           <span class="handoff-open-meta">
-            封箱于 {stampText(props.source.atMs)} · 来源会话 <code title={props.source.sessionId}>{props.source.sessionId.slice(0, 12)}…</code>
+            <Show when={props.source.atMs > 0}>封箱于 {stampText(props.source.atMs)} · </Show>
+            来源会话 <code title={props.source.sessionId}>{props.source.sessionId.slice(0, 12)}…</code>
             <button type="button" class="handoff-open-jump" onClick={openSource} title="打开封箱侧会话 A">
               <IconArrowUpRight /> 去源头
             </button>

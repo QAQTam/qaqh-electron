@@ -1,0 +1,139 @@
+<!doctype html>
+<!-- QAQ-Harness 启动 splash(壳层首窗)。整页自包含:data: URL 加载,无网络、
+     无字体文件、无外部资源;GPU 默认禁用,动画只用 transform/opacity(合成器
+     层,软件合成也扛得住);reduced-motion 全静止。状态行由主进程经
+     executeJavaScript 调 window.__splash/__splashMeta 更新——本页不设任何
+     可交互控件,整窗可拖。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Overcoder</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #17181b;
+    --fg: #edeef0;
+    --muted: #8b8d98;
+    --accent: #7aa2ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+    /* 无边框窗唯一的拖动区;没有它 splash 会钉死在屏幕中央。 */
+    -webkit-app-region: drag;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    position: relative;
+  }
+  /* 顶部一道极淡的辉光,给纯色窗口一点纵深,不花哨。 */
+  body::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 130px;
+    background: radial-gradient(60% 100% at 50% 0%, rgba(122, 162, 255, 0.10), transparent 70%);
+    pointer-events: none;
+  }
+  .mark {
+    width: 58px;
+    height: 58px;
+    color: var(--accent);
+    animation: bob 2.4s cubic-bezier(.45,0,.55,1) infinite;
+  }
+  .mark svg { display: block; width: 100%; height: 100%; }
+  .mark .lid { animation: tilt 2.4s cubic-bezier(.45,0,.55,1) infinite; transform-origin: 12px 7px; }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-4px); }
+  }
+  @keyframes tilt {
+    0%, 100% { transform: rotate(0deg); }
+    50%      { transform: rotate(-7deg); }
+  }
+  .wordmark {
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: 0.34em;
+    text-indent: 0.34em; /* 补掉末字符的 letter-spacing,视觉居中 */
+    color: var(--fg);
+  }
+  .track {
+    width: 190px;
+    height: 3px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    position: relative;
+  }
+  .sweep {
+    position: absolute;
+    top: 0;
+    left: -40%;
+    width: 40%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: sweep 1.35s cubic-bezier(.5,0,.5,1) infinite;
+  }
+  @keyframes sweep {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(350%); }
+  }
+  .status {
+    font-size: 12.5px;
+    color: var(--muted);
+    min-height: 17px;
+    letter-spacing: 0.04em;
+  }
+  .meta {
+    position: absolute;
+    left: 0; right: 0; bottom: 14px;
+    text-align: center;
+    font-size: 10.5px;
+    color: rgba(139, 141, 152, 0.72);
+    letter-spacing: 0.06em;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mark, .mark .lid, .sweep { animation: none; }
+    .sweep { left: 30%; width: 40%; opacity: 0.85; }
+  }
+</style>
+</head>
+<body>
+  <div class="mark" aria-hidden="true">
+    <!-- 盒体描线 = 产品交接盒(box)母题的极简变体,与封箱/开箱仪式同一视觉语系。 -->
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 9h16v12H4z"/>
+      <path d="M12 12v3"/>
+      <path class="lid" d="M4 9 12 5 20 9"/>
+    </svg>
+  </div>
+  <div class="wordmark">OVERCODER</div>
+  <div class="track" aria-hidden="true"><div class="sweep"></div></div>
+  <div class="status" id="status">正在启动…</div>
+  <div class="meta" id="meta"></div>
+<script>
+  // 主进程在页面就绪后回灌状态与版本;executeJavaScript 可能早于本页脚本
+  // 完成解析,两个函数都做「先占位后定义,补投由主进程侧负责」的反向约定
+  // 不取——简单起见:定义即写入 DOM,主进程在 did-finish-load 后统一推送。
+  window.__splash = function (text) {
+    var el = document.getElementById("status");
+    if (el && typeof text === "string") el.textContent = text;
+  };
+  window.__splashMeta = function (text) {
+    var el = document.getElementById("meta");
+    if (el && typeof text === "string") el.textContent = text;
+  };
+</script>
+</body>
+</html>

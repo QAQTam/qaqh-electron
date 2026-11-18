@@ -35,6 +35,21 @@ export const WATCHDOG_ACTOR_ID = "handoff-watchdog";
  */
 export const HANDOFF_FATAL_CODES = ["handoff_missing", "context_overflow"] as const;
 
+/**
+ * 内核 fork 投递交接文档时写死的 `input_id` 指纹(`handoff_fork.rs`:
+ * `handoff-doc:<封箱会话>:<封箱回合>`)。它随 bootstrap 快照同到:事件流错过、
+ * 目录没刷新都不影响它——B 侧开箱判据里唯一无竞态的源。
+ */
+export const HANDOFF_DOC_INPUT_PREFIX = "handoff-doc:";
+
+/** 解析投递指纹里的封箱会话 id;不是投递文档返回 null。 */
+export function handoffDocSource(inputId: string | null | undefined): string | null {
+  if (typeof inputId !== "string" || !inputId.startsWith(HANDOFF_DOC_INPUT_PREFIX)) return null;
+  // 会话 id 是 `ses_` + ULID,不含冒号;第一段就是 A。
+  const sessionId = inputId.slice(HANDOFF_DOC_INPUT_PREFIX.length).split(":")[0] ?? "";
+  return sessionId === "" ? null : sessionId;
+}
+
 export type HandoffFact = {
   /** 去重键:`${from_session_id}|${turn_id}`。同一条只允许 fork 一次。 */
   key: string;

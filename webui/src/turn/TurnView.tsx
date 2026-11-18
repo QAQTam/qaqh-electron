@@ -19,16 +19,19 @@ import { CommandRejectedError } from "../lib/transport";
 import { STR, formatWorkDuration } from "../lib/strings";
 import { workDurationMs } from "../lib/time";
 import type { SessionStore } from "../session/store";
-import { HANDOFF_FATAL_CODES, handoffFactOfTurn, type HandoffFact } from "../session/handoff";
+import { HANDOFF_FATAL_CODES, handoffDocSource, handoffFactOfTurn, type HandoffFact } from "../session/handoff";
 import { registerHandoffRemote, unregisterHandoffRemote } from "../session/handoff-remote";
 import { HandoffOpenCard } from "../session/HandoffOpenCard";
 import type { InterjectionStep, Step, Turn, Wait } from "../session/types";
 import { turnSegments, workSegmentEnd, type TurnSegment, type WorkSegment } from "./segments";
+import { groupRuns, type WorkUnit } from "./aggRuns";
+import { toolPaths } from "../tools/presentation";
+import { aggMinRun } from "../lib/density";
 import { interjectionHint, interjectionLabel, isSystemInterjection } from "./interjection";
 import { thinkingLabel, thinkingRichSummary, thinkingTitle } from "./thinking-label";
-import { openSession, sessionCatalog } from "../tabs/store";
+import { openSession, pollSessions, sessionCatalog } from "../tabs/store";
 
-const WorkStep: Component<{ step: Accessor<Step>; turn: Turn; thinkingRich: () => boolean; cwd?: string | null; isLatest?: boolean; onFollowUp?: (text: string) => void; widgetCtx: WidgetHostContext }> = (props) => {
+const WorkStep: Component<{ step: Accessor<Step>; turn: Turn; thinkingRich: () => boolean; cwd?: string | null; isLatest?: boolean; onFollowUp?: (text: string) => void; widgetCtx: WidgetHostContext; loadOutput?: (ref: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed"> }> = (props) => {
   const thinking = createMemo(() => { const step = props.step(); return step.kind === "thinking" ? step : null; });
   // 套餐路径的思考是服务端摘要而非模型原文:标签必须分开(见 ./thinking-label)。
   const thinkingText = () => thinkingLabel(thinking()?.reasoningKind);
@@ -101,7 +104,7 @@ const WorkStep: Component<{ step: Accessor<Step>; turn: Turn; thinkingRich: () =
           </Collapse>
         </div>
       </Match>
-      <Match when={tool() != null}>{tool()!.name === "visualize" ? <WidgetMount step={tool()!} ctx={props.widgetCtx} /> : <StepRow step={tool()!} turn={props.turn} cwd={props.cwd} isLatest={props.isLatest} onFollowUp={props.onFollowUp} />}</Match>
+      <Match when={tool() != null}>{tool()!.name === "visualize" ? <WidgetMount step={tool()!} ctx={props.widgetCtx} /> : <StepRow step={tool()!} turn={props.turn} cwd={props.cwd} isLatest={props.isLatest} onFollowUp={props.onFollowUp} loadOutput={props.loadOutput} contentStatus={props.contentStatus} />}</Match>
     </Switch>
   );
 };
@@ -125,7 +128,63 @@ function getCachedWorkDuration(turnKey: string, workKey: string): number | undef
   return undefined;
 }
 
-const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null; onFollowUp?: (text: string) => void; widgetCtx: WidgetHostContext }> = (props) => {
+/**
+ * 跨类型聚合条(zcode `ConsecutiveSummaryGroup` 的极简版):组只持有展开状态,
+ * 行内摘要/状态/展开语义仍由原 StepRow/WorkStep 提供——不复制工具文案规则。
+ * 默认收起;展开体 16 行封顶内滚(CSS `.agg-run-body`)。生命周期事件不改写
+ * 用户的开合选择:`open` 是本组件局部 signal,keyed For 按组头 id 保实例。
+ */
+const RunGroup: Component<{ unit: Accessor<Extract<WorkUnit, { kind: "run" }>>; turn: Turn; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null; onFollowUp?: (text: string) => void; widgetCtx: WidgetHostContext; loadOutput?: (ref: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed"> }> = (props) => {
+  const [open, setOpen] = createSignal(false);
+  const steps = () => props.unit().steps;
+  const family = () => props.unit().family;
+  const pathList = createMemo(() => {
+    if (family() !== "change") return [];
+    const list: string[] = [];
+    for (const step of steps()) {
+      if (step.kind !== "tool") continue;
+      for (const path of toolPaths(step, props.cwd)) if (!list.includes(path)) list.push(path);
+    }
+    return list;
+  });
+  const label = () => {
+    const count = steps().length;
+    if (family() === "explore") return STR.aggExplore(count);
+    if (family() === "run") return STR.aggRun(count);
+    // 「修改 N 个文件」按去重路径数——两步改同一文件是两个动作、一个文件。
+    if (family() === "change") return STR.aggChange(pathList().length || count);
+    return STR.aggThink(count);
+  };
+  const paths = createMemo(() => pathList().join(" · "));
+  const stats = createMemo(() => {
+    if (family() !== "change") return null;
+    let add = 0;
+    let del = 0;
+    for (const step of steps()) {
+      if (step.kind !== "tool") continue;
+      add += step.codeDelta?.lines_added ?? step.linesAdded ?? 0;
+      del += step.codeDelta?.lines_removed ?? step.linesRemoved ?? 0;
+    }
+    return add === 0 && del === 0 ? null : { add, del };
+  });
+  return (
+    <div class={{ "agg-run": true, [`fam-${family()}`]: true }}>
+      <button type="button" class="agg-run-head" aria-expanded={open() ? "true" : "false"} onClick={() => setOpen(!open())}>
+        <Show when={open()} fallback={<IconChevronRight />}><IconChevronDown /></Show>
+        <span class="agg-run-label">{label()}</span>
+        <Show when={paths()}><span class="agg-run-paths" title={paths()}>{paths()}</span></Show>
+        <Show when={stats()}><span class="tool-diffstat"><b class="diff-stat-add">+{stats()!.add}</b><b class="diff-stat-del">−{stats()!.del}</b></span></Show>
+      </button>
+      <Collapse open={open()}>
+        <div class="agg-run-body timeline">
+          <For each={steps()} keyed={(step) => step.id}>{(step) => <WorkStep step={step} turn={props.turn} thinkingRich={props.thinkingRich} cwd={props.cwd} isLatest={props.latestToolStepId != null && step().id === props.latestToolStepId} onFollowUp={props.onFollowUp} widgetCtx={props.widgetCtx} loadOutput={props.loadOutput} contentStatus={props.contentStatus} />}</For>
+        </div>
+      </Collapse>
+    </div>
+  );
+};
+
+const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null; onFollowUp?: (text: string) => void; widgetCtx: WidgetHostContext; loadOutput?: (ref: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed"> }> = (props) => {
   const [override, setOverride] = createSignal<boolean | null>(null);
   // 回复边界自动收起一次;之后用户仍可展开这个已完成工作段。
   let wasClosed = untrack(() => props.group.closed);
@@ -134,10 +193,7 @@ const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thin
     wasClosed = closed;
   });
   const open = () => override() ?? !props.group.closed;
-  const groups = createMemo(() => {
-    const steps = props.group.steps;
-    return untrack(() => Array.from({ length: Math.ceil(steps.length / 8) }, (_, index) => ({ key: steps[index * 8]!.id, steps: steps.slice(index * 8, index * 8 + 8) })));
-  }, { name: "work.structure" });
+  const units = createMemo(() => groupRuns(props.group.steps, aggMinRun()), { name: "work.structure" });
   const waits = createMemo(() => {
     const start = props.group.steps[0]?.startedAt ?? props.turn.workStartedAt ?? 0;
     return props.waits.filter((wait) => wait.from >= start && wait.from < (props.group.until ?? Infinity));
@@ -180,7 +236,9 @@ const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thin
       {/* 回复边界的自动收起也播放回收动画；历史闭合段初次挂载仍不挂详情。 */}
       <Collapse open={open()}>
         <div class="timeline turn-steps">
-          <For each={groups()} keyed={(group) => group.key}>{(group) => <div class="work-step-group"><For each={group().steps} keyed={(step) => step.id}>{(step) => <WorkStep step={step} turn={props.turn} thinkingRich={props.thinkingRich} cwd={props.cwd} isLatest={props.latestToolStepId != null && step().id === props.latestToolStepId} onFollowUp={props.onFollowUp} widgetCtx={props.widgetCtx} />}</For></div>}</For>
+          <For each={units()} keyed={(unit) => unit.key}>{(unit) => unit().kind === "run"
+            ? <RunGroup unit={unit as Accessor<Extract<WorkUnit, { kind: "run" }>>} turn={props.turn} thinkingRich={props.thinkingRich} cwd={props.cwd} latestToolStepId={props.latestToolStepId} onFollowUp={props.onFollowUp} widgetCtx={props.widgetCtx} loadOutput={props.loadOutput} contentStatus={props.contentStatus} />
+            : <WorkStep step={() => (unit() as Extract<WorkUnit, { kind: "single" }>).step} turn={props.turn} thinkingRich={props.thinkingRich} cwd={props.cwd} isLatest={props.latestToolStepId != null && (unit() as Extract<WorkUnit, { kind: "single" }>).step.id === props.latestToolStepId} onFollowUp={props.onFollowUp} widgetCtx={props.widgetCtx} loadOutput={props.loadOutput} contentStatus={props.contentStatus} />}</For>
           <For each={waits().filter((wait) => wait.kind !== "approval")}>{(wait) => <div class="timeline-row wait"><span class="timeline-label">{STR.waitAnswer(formatWorkDuration(Math.max(0, (wait.to ?? wait.from) - wait.from)))}</span></div>}</For>
         </div>
       </Collapse>
@@ -315,6 +373,8 @@ export const HandoffCard: Component<{ fact: HandoffFact; sealedAt: number | null
   const openSuccessor = async (): Promise<void> => {
     const child = props.successor();
     if (child == null) return;
+    // 血缘行要赶在 B 挂载前落到目录里:开箱卡的 created_at_ms/标题都读它。
+    void pollSessions();
     // 纯跳转:先飞箱再开 B。视图一切换,起点矩形就没了,顺序不能反。
     await flyBoxToSession(iconSlot, child);
     await openSession(child);
@@ -426,13 +486,13 @@ export const HandoffCard: Component<{ fact: HandoffFact; sealedAt: number | null
   );
 };
 
-const SegmentView: Component<{ segment: Accessor<TurnSegment>; turn: Turn; waits: Wait[]; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null; onFollowUp?: (text: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed">; retryContent?: () => void; widgetCtx: WidgetHostContext }> = (props) => {
+const SegmentView: Component<{ segment: Accessor<TurnSegment>; turn: Turn; waits: Wait[]; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null; onFollowUp?: (text: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed">; retryContent?: () => void; widgetCtx: WidgetHostContext; loadOutput?: (ref: string) => void }> = (props) => {
   const work = createMemo(() => { const segment = props.segment(); return segment.kind === "work" ? segment : null; });
   const text = createMemo(() => { const segment = props.segment(); return segment.kind === "text" ? segment.step : null; });
   const interject = createMemo(() => { const segment = props.segment(); return segment.kind === "interject" ? segment.step : null; });
   return (
     <Switch>
-      <Match when={work() != null}><WorkGroup group={work()!} turn={props.turn} waits={props.waits} thinkingRich={props.thinkingRich} cwd={props.cwd} latestToolStepId={props.latestToolStepId} onFollowUp={props.onFollowUp} widgetCtx={props.widgetCtx} /></Match>
+      <Match when={work() != null}><WorkGroup group={work()!} turn={props.turn} waits={props.waits} thinkingRich={props.thinkingRich} cwd={props.cwd} latestToolStepId={props.latestToolStepId} onFollowUp={props.onFollowUp} widgetCtx={props.widgetCtx} loadOutput={props.loadOutput} contentStatus={props.contentStatus} /></Match>
       <Match when={interject() != null}>
         <InterjectRow step={interject()!} contentStatus={props.contentStatus ?? {}} retryContent={() => props.retryContent?.()} />
       </Match>
@@ -477,11 +537,18 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
     }
     return true;
   });
-  /* 开箱判据(B 侧,ADR-016 权威两源):本会话是交接后继、当前是时间线第一个
-     turn。源一:HandoffSealed 事件(双发到后继线,successor==本会话);源二:目录
-     血缘字段 session.list 的 handoff_from_session_id(重开/事件错过也能重建,
-     workSummary 用后继标题——内核把它写成 work_summary 同源值)。命中则该
-     "用户消息"画成开箱卡,不再是裸文本墙;旧投递指纹已随前端 fork 退役。 */
+  /* 开箱判据(B 侧,ADR-016):本会话是交接后继、当前是时间线第一个 turn。
+     源按到达时机排:
+       1) 投递指纹 `turn.input_id = handoff-doc:<A>:<回合>`——内核 fork 投文档
+          时写死、随 bootstrap 快照同到,无事件/轮询竞态(实测:B 流订阅晚于
+          fork 发布,`handoff_sealed` 双发到后继线在自动跳转路径上永远读不到;
+          目录血缘又要等 pollSessions,裸文本墙会顶 0~15s);
+       2) HandoffSealed 事件——fork 时 B 流已在订阅(断线 resync/手动先开)时
+          最权威,workSummary 取事件那份;
+       3) 目录血缘字段 session.list 的 handoff_from_session_id——历史老行的兜底。
+     封箱时刻:事件源用自带毫秒 at_ms;指纹/血缘取 created_at_ms(后端加法
+     毫秒字段),缺席时把 created_at 的**秒**粒度冻结契约换算成毫秒——不拿
+     Date.now() 冒充 T0。 */
   const handoffOpen = createMemo(() => {
     const text = props.turn.user.text;
     if (text == null || text === "") return null;
@@ -493,11 +560,14 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
       return { sessionId: sealed.sealedSessionId, workSummary: sealed.workSummary, atMs: sealed.atMs };
     }
     const entry = sessionCatalog().find((item) => item.session_id === seed);
-    const parent = entry?.handoff_from_session_id;
-    if (parent != null && parent !== "") {
-      return { sessionId: parent, workSummary: entry?.title?.trim() ?? "", atMs: entry?.created_at ?? 0 };
-    }
-    return null;
+    const parent = handoffDocSource(props.turn.inputId) ?? (entry?.handoff_from_session_id ?? null);
+    if (parent == null || parent === "" || parent === seed) return null;
+    return {
+      sessionId: parent,
+      // 标题与 work_summary 同源:内核 fork 时把 work_summary 写成后继标题。
+      workSummary: entry?.title?.trim() ?? "",
+      atMs: entry?.created_at_ms ?? (entry?.created_at ?? 0) * 1000,
+    };
   });
   const latestToolStepId = createMemo(() => {
     if (!isLatestTurn()) return null;
@@ -587,7 +657,7 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
         </Show></div>}
         >{(info) => <div class="turn-user-open"><HandoffOpenCard doc={props.turn.user.text!} source={info()} /></div>}</Show>
       </Show>
-      <For each={segments()} keyed={(segment) => segment.key}>{(segment) => <SegmentView segment={segment} turn={props.turn} waits={props.waits} thinkingRich={thinkingRich} cwd={cwd()} latestToolStepId={latestToolStepId()} contentStatus={props.store.contentStatus[0]()} retryContent={() => props.store.retryContent()} widgetCtx={widgetCtx} onFollowUp={(text) => void props.store.sendMessage(text)} />}</For>
+      <For each={segments()} keyed={(segment) => segment.key}>{(segment) => <SegmentView segment={segment} turn={props.turn} waits={props.waits} thinkingRich={thinkingRich} cwd={cwd()} latestToolStepId={latestToolStepId()} contentStatus={props.store.contentStatus[0]()} retryContent={() => props.store.retryContent()} loadOutput={(ref) => props.store.loadToolOutput(ref)} widgetCtx={widgetCtx} onFollowUp={(text) => void props.store.sendMessage(text)} />}</For>
       <Show when={props.turn.status === "aborted" && props.turn.steps.length === 0}><div class="turn-aborted">{STR.interrupted}</div></Show>
       <Show when={props.turn.status === "failed" && props.turn.error != null}>
         <div class={{ "turn-error": true, "turn-error-noteworthy": fatalErrorCode() != null }}>

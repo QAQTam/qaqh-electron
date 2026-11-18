@@ -29,6 +29,8 @@ const [steps, setSteps] = createSignal<ToolStep[]>([
   { kind: "tool", id: "todo-title", seq: 11, name: "todo_update", status: "finished", argsJson: JSON.stringify({ title: "前端卡片适配", status: "completed", evidence: "tsc 通过" }), output: { text: "{\"receipt\":\"internal\"}" } },
   { kind: "tool", id: "skill", seq: 8, name: "skill_activate", status: "finished", argsJson: JSON.stringify({ name: "mc-source-driven-mod" }), output: { text: source } },
   { kind: "tool", id: "skill-read", seq: 9, name: "read", status: "finished", argsJson: JSON.stringify({ path: "C:/Users/test/.agents/skills/example/SKILL.md" }), output: { text: source } },
+  // 截断纪律验收：徽标可见 + 展开区「结果」段带截断提示，不再静默空白。
+  { kind: "tool", id: "trunc", seq: 12, name: "grep", status: "finished", argsJson: JSON.stringify({ pattern: "TODO", paths: ["src"] }), output: { text: Array.from({ length: 200 }, (_, i) => `src/a.ts:${i + 1}: TODO: item ${i}`).join("\n"), truncated: true } },
 ]);
 const turn = { id: "fixture", key: "fixture", turnIndex: 0, user: { text: "工具渲染验收" }, steps: [], answer: null, answerStepId: null, status: "running", expanded: true } satisfies Turn;
 declare global { interface Window { __toolRenderCheck: { finish: () => void } } }

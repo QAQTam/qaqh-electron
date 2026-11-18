@@ -44,6 +44,13 @@ export class ContentLoader {
     for (const ref of retry) this.request(ref);
   }
 
+  /** 用户显式发起的单次拉取(展开工具输出时):失败过就重新入队;
+   *  进行中/已完成由 request 的幂等语义兜住。 */
+  requestNow(ref: string): void {
+    this.failed.delete(ref);
+    this.request(ref);
+  }
+
   clear(evictCache = false): void {
     this.generation++;
     this.failed.clear();

@@ -17,6 +17,7 @@ import { pluginsRoot, startPluginRegistry, notifyPluginsChanged } from "./plugin
 import { openExternalUrl } from "./native-dialogs.js";
 import { readPrefsSync, writePref } from "./prefs.js";
 import { createNotifier } from "./notifier.js";
+import { showSplash, setSplashStatus, closeSplash } from "./splash.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
 protocol.registerSchemesAsPrivileged([
@@ -447,6 +448,10 @@ function ensureClient(): Promise<RingingClient> {
 
 async function bootstrapApp(): Promise<void> {
   console.log("[app] Bootstrapping QAQ-Harness Electron shell...");
+  // 首件事弹 splash:下面的 ensureClient 冷启动 daemon 最长可等 15s,那期间
+  // 原本一个窗口都没有——splash 盖住这段壳层空窗,主窗 ready-to-show 交棒。
+  showSplash();
+  setSplashStatus("初始化壳层…");
   loadWindowPrefs();
 
   // 0. 注册 app:// 协议处理器，使 /assets 等 SPA 绝对路径无缝映射到本地文件
@@ -513,15 +518,18 @@ async function bootstrapApp(): Promise<void> {
     });
   }
   try {
+    setSplashStatus("正在启动会话引擎…");
     await ensureClient();
   } catch (err) {
     console.error("[app] Failed to connect or start qaqh-daemon:", err);
+    setSplashStatus("会话引擎未就绪，离线打开界面…");
   }
   // 桌面通知：配置面(notificationsEnabled)与跨会话 waiting_user 边沿靠轮询刷,
   // 会话事件流已在 ensureClient 的 EventSender 双投接入。
   notifier.start();
 
   // 2. Create renderer after IPC registration.
+  setSplashStatus("准备界面…");
   createMainWindow();
   // 2.5 插件注册表：stat-poll 插件目录，graph 帧推渲染层（热更基石，对齐 dsh client-hmr 可移植件）。
   startPluginRegistry(() => mainWindow);
@@ -638,6 +646,8 @@ function createMainWindow(): BrowserWindow {
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
+    // 交棒：splash 补足最短驻留后自行销毁（closeSplash 幂等 + 25s 保险丝）。
+    closeSplash();
   });
   // 渲染层插件监听器在页面脚本执行期注册,可能晚于 stat-poll 的首帧:
   // 加载完成强制清空签名重发一次,杜绝"图从未送达"的一次性静默。

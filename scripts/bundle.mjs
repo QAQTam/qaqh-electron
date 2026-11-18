@@ -37,6 +37,9 @@ const commonOptions = {
   sourcemap: true,
   external: ["electron"],
   logLevel: "info",
+  // 启动 splash 的自包含页面(splash.html)以字符串编进主进程 bundle,asar 内外
+  // 同一份,不新增打包管道(见 src/main/splash.ts)。
+  loader: { ".html": "text" },
   define: {
     "process.env.QAQH_BUILD_VERSION": JSON.stringify(build.version),
     "process.env.QAQH_GIT_COMMIT": JSON.stringify(build.commit),

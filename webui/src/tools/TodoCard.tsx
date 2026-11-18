@@ -8,10 +8,12 @@
  * 解析失败/非成功终态返回 null,由 StepRow 回退为普通工具行(错误与授权等待
  * 仍按既有规则展示),卡片不掩盖失败语义。
  */
-import { For, Show, type Component } from "solid-js";
+import { createSignal, For, Show, type Component } from "solid-js";
+import IconChevronRight from "~icons/lucide/chevron-right";
 import IconListTodo from "~icons/lucide/list-todo";
 import IconCheck from "~icons/lucide/check";
 import IconLoader from "~icons/lucide/loader-circle";
+import { Collapse } from "../ui/Collapse";
 import { normalizeStatus, todoStatusLabel, type TodoStatus } from "../lib/todo";
 import { STR } from "../lib/strings";
 import { parseJsonish } from "../session/reducer";
@@ -24,7 +26,7 @@ const MAX_CARD_ITEMS = 50;
 export type TodoCardItem = { title: string; status: TodoStatus; evidence?: string; description?: string };
 
 export type TodoCardData =
-  | { kind: "list"; items: TodoCardItem[] }
+  | { kind: "list"; items: TodoCardItem[]; omitted: number }
   | { kind: "update"; id: string; status: TodoStatus; evidence?: string };
 
 function cardItem(raw: unknown): TodoCardItem | null {
@@ -86,16 +88,17 @@ export function todoCardData(step: ToolStep): TodoCardData | null {
   if (args == null || typeof args !== "object") return null;
   const record = args as Record<string, unknown>;
   // 文本范式（本版本）：write 的入参是 `list` 纯文本块（apply_patch 形态）。
+  // 渲染封顶与 legacy items 分支同一纪律：卡片是聊天流里的快照，不是清单真相。
   if (typeof record.list === "string") {
-    const items = parseListText(record.list);
-    if (items == null) return null;
-    return items.length > 0 ? { kind: "list", items } : null;
+    const parsed = parseListText(record.list);
+    if (parsed == null) return null;
+    return parsed.length > 0 ? { kind: "list", items: parsed.slice(0, MAX_CARD_ITEMS), omitted: Math.max(0, parsed.length - MAX_CARD_ITEMS) } : null;
   }
   // legacy 回放：旧 transcript 的 items/todos 数组形态（v4 全量覆写）。
   const rawItems = Array.isArray(record.items) ? record.items : Array.isArray(record.todos) ? record.todos : null;
   if (rawItems != null) {
-    const items = rawItems.slice(0, MAX_CARD_ITEMS).map(cardItem).filter((item): item is TodoCardItem => item != null);
-    return items.length > 0 ? { kind: "list", items } : null;
+    const all = rawItems.map(cardItem).filter((item): item is TodoCardItem => item != null);
+    return all.length > 0 ? { kind: "list", items: all.slice(0, MAX_CARD_ITEMS), omitted: Math.max(0, all.length - MAX_CARD_ITEMS) } : null;
   }
   // update：新形态 {title, status, evidence?}——title 即身份；旧 {id, ...} 保留回放。
   if (typeof record.title === "string" && record.title.trim()) {
@@ -128,6 +131,10 @@ export const TodoCard: Component<{ step: ToolStep }> = (props) => {
     const data = todoCardData(props.step);
     return data?.kind === "list" ? data.items : [];
   };
+  const omitted = (): number => {
+    const data = todoCardData(props.step);
+    return data?.kind === "list" ? data.omitted : 0;
+  };
   const update = () => {
     const data = todoCardData(props.step);
     return data?.kind === "update" ? data : null;
@@ -136,28 +143,43 @@ export const TodoCard: Component<{ step: ToolStep }> = (props) => {
   const total = () => items().length;
   // 头部动作只保留动词(标题独立为「待办」);非成功终态不会有卡片,这里总带「已」。
   const action = () => (props.step.name === "todo_create" ? "已创建" : "已更新");
+  // 长清单默认收起:统计句 + 进度条已经说了该说的,逐行是「第二层」。
+  const [open, setOpen] = createSignal<boolean | null>(null);
+  const isOpen = () => open() ?? total() <= 12;
+  const headInner = (
+    <>
+      <IconListTodo />
+      <span class="todo-card-title">{STR.todoTitle}</span>
+      <span class="todo-card-action">{action()}</span>
+      <Show when={total() > 0}><b class="todo-count">{STR.todoDone(done(), total())}</b></Show>
+      <Show when={total() > 0}><IconChevronRight class={`tool-chevron${isOpen() ? " is-open" : ""}`} /></Show>
+    </>
+  );
   return (
     <div class={{ "todo-card": true, "is-update": update() != null }} role="group" aria-label={`${STR.todoTitle},${action()}`}>
-      <div class="todo-card-head">
-        <IconListTodo />
-        <span class="todo-card-title">{STR.todoTitle}</span>
-        <span class="todo-card-action">{action()}</span>
-        <Show when={total() > 0}><b class="todo-count">{STR.todoDone(done(), total())}</b></Show>
-      </div>
-      <Show when={total() > 0}>
-        <div class="todo-card-bar" aria-hidden="true"><span style={{ width: `${Math.round((done() / total()) * 100)}%` }} /></div>
-        <ul class="todo-card-list">
-          <For each={items()}>
-            {(item) => (
-              <li class={{ "todo-row": true, "todo-card-row": true, [`st-${item.status}`]: true }}
-                aria-label={`${item.title}，${todoStatusLabel(item.status)}`}>
-                <CardDot status={item.status} />
-                <span class="todo-title" title={item.evidence ?? item.description ?? item.title}>{item.title}</span>
-                <span class="sr-only">{todoStatusLabel(item.status)}</span>
-              </li>
-            )}
-          </For>
-        </ul>
+      <Show
+        when={total() > 0}
+        fallback={<div class="todo-card-head">{headInner}</div>}
+      >
+        <button type="button" class="todo-card-head" aria-expanded={isOpen() ? "true" : "false"} onClick={() => setOpen(!isOpen())}>
+          {headInner}
+        </button>
+        <Collapse open={isOpen()}>
+          <div class="todo-card-bar" aria-hidden="true"><span style={{ width: `${Math.round((done() / total()) * 100)}%` }} /></div>
+          <ul class="todo-card-list">
+            <For each={items()}>
+              {(item) => (
+                <li class={{ "todo-row": true, "todo-card-row": true, [`st-${item.status}`]: true }}
+                  aria-label={`${item.title}，${todoStatusLabel(item.status)}`}>
+                  <CardDot status={item.status} />
+                  <span class="todo-title" title={item.evidence ?? item.description ?? item.title}>{item.title}</span>
+                  <span class="sr-only">{todoStatusLabel(item.status)}</span>
+                </li>
+              )}
+            </For>
+            <Show when={omitted() > 0}><li class="todo-omit">{STR.todoCardTruncated(omitted())}</li></Show>
+          </ul>
+        </Collapse>
       </Show>
       <Show when={update()} keyed>
         {(upd) => (

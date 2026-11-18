@@ -246,6 +246,8 @@
     font-size: var(--fs-md); line-height: 1.65;
     white-space: pre-wrap;
     word-break: break-word;
+    /* 粘贴千行也是用户输入的原话:窗口化直读,全文进不了"墙"。 */
+    max-height: 40vh; overflow: auto; overscroll-behavior: contain;
   }
   /* 撤回是「删掉整段历史」的入口,弱化成气泡右侧一枚次要控件:平时只有字,
      hover 才出边框。它不该比气泡显眼,但必须落在同一行右端一眼找得到。 */
@@ -286,8 +288,16 @@
     margin: 0; color: var(--text);
     font-size: var(--fs-sm); line-height: 1.55;
     white-space: pre-wrap; word-break: break-word;
+    /* 有界视口:看门狗提醒/排队输入可能整段文档,插话不是"墙"的责任田。 */
+    max-height: 320px; overflow: auto; overscroll-behavior: contain;
   }
   .interject-text.muted { color: var(--muted); }
+  /* 子代理终态通知:含子级最终答复全文,过去零样式零封顶——统一上窗。 */
+  .subagent-notice-text {
+    margin: 4px 0;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 320px; overflow: auto; overscroll-behavior: contain;
+  }
 
   /* ── 交接卡(回合尾部常驻入口) ───────────────────────────────────────
      后端不自动开 B:客户端关掉/掉线时 A 就停在这条事实上,所以这条入口
@@ -409,6 +419,8 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* 堆栈类错误正文上窗:错误可见 ≠ 错误铺满全屏。 */
+  .turn-error p { max-height: 240px; overflow: auto; overscroll-behavior: contain; }
 
   /* 折叠行「已工作 X 秒」(§7.3) */
   .collapsed-row {
@@ -420,6 +432,31 @@
   }
   .collapsed-row:hover { background: var(--surface-2); }
   .collapsed-row svg { width: 14px; height: 14px; }
+
+  /* ── 跨类型聚合条(RunGroup)：统计句一行,展开体 16 行封顶内滚 ──
+     层级纪律：组头是「第一层」,组内原始行是「第二层」,原始行自己的展开是「第三层」。 */
+  .agg-run { min-width: 0; }
+  .agg-run-head {
+    display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0;
+    min-height: 28px; padding: 2px 6px;
+    border-radius: var(--r-md);
+    color: var(--muted); font-size: var(--fs-sm); line-height: 1.5;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .agg-run-head:hover { background: var(--surface-2); }
+  .agg-run-head svg { width: 14px; height: 14px; flex: none; }
+  .agg-run-label { flex: none; font-weight: 500; }
+  .agg-run-paths {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--font-terminal); font-size: var(--fs-xs); opacity: .8;
+  }
+  .agg-run-head .tool-diffstat { margin-left: auto; flex: none; }
+  .agg-run-body {
+    max-height: 544px; overflow: auto; overscroll-behavior: contain;
+    margin: 2px 0 6px 8px;
+    border-left: 1px solid var(--border); padding-left: 12px;
+    display: grid; gap: 2px;
+  }
 }
 
 /* ── 开箱交接卡(B 侧):封箱投递的文档不再以 user 裸文本墙呈现 ── */
