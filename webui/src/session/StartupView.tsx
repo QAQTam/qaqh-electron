@@ -101,7 +101,9 @@ export const StartupView: Component<{
 }> = (props) => {
   const [draftText, setDraftText] = createSignal("");
   const [openMenu, setOpenMenu] = createSignal<"workspace" | "profile" | null>(null);
-  void refreshRegistry();
+  // Solid 2 严格模式:组件 owned scope 内禁止写信号——refreshRegistry 同步
+  // setLoading/setError,挪进微任务在作用域外跑。
+  queueMicrotask(() => { void refreshRegistry(); });
 
   const workspaceLabel = (): string => {
     const cwd = newSessionCwd();

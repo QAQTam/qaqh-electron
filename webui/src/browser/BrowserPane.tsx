@@ -7,7 +7,7 @@
  *  - 渲染层经 browser_view_viewport 上报测量矩形（可见期间持续上报）；
  *  - 用户侧开合走 browser_view_show / browser_view_hide / browser_view_navigate。
  */
-import { createEffect, createSignal, onCleanup, onSettled, Show, type Component } from "solid-js";
+import { createEffect, createSignal, onSettled, Show, type Component } from "solid-js";
 import { desktopHost, type BrowserPaneState } from "../lib/desktop-host";
 
 const PANE_HIDDEN: BrowserPaneState = { visible: false, url: "", title: "" };
@@ -36,7 +36,8 @@ const BrowserPane: Component = () => {
       setState(payload);
       if (payload.url) setUrlDraft(payload.url);
     });
-    onCleanup(unlisten);
+    // rc.15:onSettled 作用域禁止 onCleanup——返回清理函数由 onSettled 收口。
+    return unlisten;
   });
 
   /** 视口测量 → 主进程落位。可见期间持续生效（窗口缩放/侧栏拖拽都覆盖）。 */
