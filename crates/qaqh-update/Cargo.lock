@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "qaqh-update"
-version = "4.0.2"
+version = "4.1.0"
 dependencies = [
  "hex",
  "libc",

@@ -1169,7 +1169,7 @@ dependencies = [
 
 [[package]]
 name = "qaqh-napi-client"
-version = "4.0.2"
+version = "4.1.0"
 dependencies = [
  "napi",
  "napi-build",
