@@ -15,6 +15,7 @@ import type { CommandPrecondition } from "../../webui/src/api/qaqh/CommandPrecon
 import type { ConversationSendMessage } from "../../webui/src/api/qaqh/ConversationSendMessage";
 import { isIP } from "node:net";
 import { spawn } from "node:child_process";
+import { pluginsGraphSnapshot } from "./plugins.js";
 import { resolveDaemonExecutable } from "./daemon.js";
 import { hostname } from "node:os";
 import type { RingingClient } from "./ringing-client.js";
@@ -441,6 +442,9 @@ async function handleCommand(
   browser: BrowserPaneControl | null
 ): Promise<any> {
   switch (cmd) {
+    case "plugins_graph": {
+      return pluginsGraphSnapshot();
+    }
     case "session_list": {
       const list = await client.serviceCall("session.list", {});
       return list.map((entry) => {

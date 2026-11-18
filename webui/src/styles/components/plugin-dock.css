@@ -1,0 +1,15 @@
+/* 插件坞：右下角 dock 槽的统一收口（图标条 + 向上弹出的插件渲染窗）。
+   插件自管定位自此退役——qaqh-snake/qaqh-padview/qaqh-git 迁入 dock 槽，
+   manifest 必须带 icon；z-index 与旧 overlay 容器同量级。 */
+.plugin-dock { position: fixed; right: 16px; bottom: 16px; z-index: 2147483000; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; pointer-events: none; }
+.plugin-dock > * { pointer-events: auto; }
+.plugin-dock-bar { display: flex; gap: 8px; padding: 6px; border-radius: 14px; border: 1px solid var(--border, #373b42); background: color-mix(in srgb, var(--surface, #202226) 88%, transparent); box-shadow: 0 8px 28px rgba(0, 0, 0, .35); }
+.plugin-dock-btn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid transparent; background: transparent; color: var(--text, #edeef0); font-size: 18px; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.plugin-dock-btn:hover { background: var(--surface-2, #292c31); }
+.plugin-dock-btn.active { border-color: var(--accent, #8ab4ff); color: var(--accent, #8ab4ff); }
+.plugin-dock-btn img { width: 20px; height: 20px; display: block; }
+.plugin-dock-emoji { line-height: 1; }
+.plugin-dock-panel { width: min(420px, calc(100vw - 32px)); max-height: min(60vh, 560px); display: flex; flex-direction: column; border-radius: 14px; border: 1px solid var(--border, #373b42); background: var(--surface, #202226); color: var(--text, #edeef0); font: 12px/1.6 ui-sans-serif, system-ui; box-shadow: 0 12px 40px rgba(0, 0, 0, .45); overflow: hidden; }
+.plugin-dock-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border, #373b42); font-weight: 600; flex: none; }
+.plugin-dock-body { overflow: auto; padding: 12px; }
+.plugin-dock-empty { color: var(--muted, #abb0b8); font-size: 11px; padding: 0 6px; align-self: center; }

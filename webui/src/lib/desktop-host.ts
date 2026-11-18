@@ -13,6 +13,7 @@ export type HostCommand =
   | "attach"
   | "pending_approvals"
   | "team_snapshot"
+  | "plugins_graph"
   | "invalidate_approvals"
   | "respond_approval"
   | "command"

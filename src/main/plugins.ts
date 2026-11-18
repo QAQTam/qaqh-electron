@@ -27,7 +27,9 @@ export interface PluginGraphEntry {
   /** syntax-theme 包的两份 shiki 主题 JSON 相对路径（manifest.light/dark 原样）。 */
   light?: string;
   dark?: string;
-  slot: "overlay" | "theme" | "syntax-theme";
+  /** dock 槽插件的图标：emoji 文本或图标资产相对路径（manifest.icon 原样）。 */
+  icon?: string;
+  slot: "overlay" | "theme" | "syntax-theme" | "dock";
   capabilities: string[];
 }
 
@@ -50,6 +52,7 @@ interface ManifestFile {
   light?: unknown;
   dark?: unknown;
   slot?: unknown;
+  icon?: unknown;
   capabilities?: unknown;
 }
 
@@ -71,8 +74,9 @@ function scanPlugin(root: string, dir: string): PluginGraphEntry | null {
   // 导入一个文件夹即热应用,渲染层按用户选择挂 <link>(rev-bust 走 app:// 同源)。
   const isTheme = manifest.slot === "theme";
   const isOverlay = manifest.slot === "overlay";
+  const isDock = manifest.slot === "dock";
   const isSyntax = manifest.slot === "syntax-theme";
-  if (!isTheme && !isOverlay && !isSyntax) {
+  if (!isTheme && !isOverlay && !isSyntax && !isDock) {
     console.warn(`[plugins] ${dir}: 未知 slot ${String(manifest.slot)}，跳过`);
     return null;
   }
@@ -105,6 +109,12 @@ function scanPlugin(root: string, dir: string): PluginGraphEntry | null {
       capabilities: [],
     };
   }
+  // dock 槽 = 图标插件:图标是入场券(缺失即跳过),渲染窗由宿主 PluginDock 提供。
+  const icon = typeof manifest.icon === "string" && manifest.icon !== "" ? manifest.icon : null;
+  if (isDock && icon == null) {
+    console.warn(`[plugins] ${dir}: dock 须带 icon 字段（emoji 或图标资产路径），跳过`);
+    return null;
+  }
   const assetRel = isTheme
     ? (typeof manifest.css === "string" && manifest.css !== "" ? manifest.css : null)
     : (typeof manifest.entry === "string" && manifest.entry !== "" ? manifest.entry : null);
@@ -125,7 +135,8 @@ function scanPlugin(root: string, dir: string): PluginGraphEntry | null {
     name: typeof manifest.name === "string" ? manifest.name : dir,
     entry: isTheme ? "" : assetRel,
     ...(isTheme ? { css: assetRel } : {}),
-    slot: isTheme ? "theme" : "overlay",
+    slot: isTheme ? "theme" : isDock ? "dock" : "overlay",
+    ...(isDock && icon != null ? { icon } : {}),
     capabilities: Array.isArray(manifest.capabilities) ? manifest.capabilities.map(String) : [],
   };
 }
@@ -155,6 +166,11 @@ function scanGraph(): PluginGraphEntry[] {
  * 启动 stat-poll（1s 周期，每插件 2 次 stat，开销可忽略）。
  * 图变化才发帧；返回停止函数。
  */
+/** 渲染层启动拉取(loader.startPluginHost 注册监听后 invoke):当前生效图的同步快照。 */
+export function pluginsGraphSnapshot(): PluginGraph {
+  return { release: app.getVersion(), entries: scanGraph() };
+}
+
 export function startPluginRegistry(getWindow: () => BrowserWindow | null): () => void {
   const release = app.getVersion();
   let last = "";

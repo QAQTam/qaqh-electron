@@ -105,6 +105,7 @@ import {
 } from "../lib/gamepad";
 import { VoiceIO, type VoicePhase } from "../lib/voice";
 import { startPluginHost } from "../plugins/loader";
+import { PluginDock } from "../plugins/dock";
 import { notifyConfigChanged, onConfigChanged } from "../lib/config-events";
 import { toast, ToastHost } from "../ui/toast";
 import { buildContextMenu, ContextMenuHost, openContextMenu, type ContextMenuItem } from "../ui/contextMenu";
@@ -1271,6 +1272,7 @@ const App: Component = () => {
       <ExecSessionDrawer />
       <ContextMenuHost />
       <ToastHost />
+      <PluginDock />
       <Show when={isDesktop}>
         <BrowserPane />
       </Show>

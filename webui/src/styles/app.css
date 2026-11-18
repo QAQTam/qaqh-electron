@@ -28,6 +28,7 @@
 @import "./components/composer.css";
 @import "./components/shell-dock.css";
 @import "./components/context-menu.css";
+@import "./components/plugin-dock.css";
 @import "./components/approval.css";
 @import "./components/gamepad.css";
 @import "./components/widget.css";

@@ -33,6 +33,8 @@ interface GraphEntry {
   light?: string;
   dark?: string;
   slot: string;
+  /** dock 槽插件图标（manifest.icon 原样）。 */
+  icon?: string;
   capabilities: string[];
 }
 
@@ -48,6 +50,39 @@ interface LoadedState {
 }
 
 const loaded = new Map<string, LoadedState>();
+/* dock 槽:图标插件统一收口到 PluginDock(右下角坞)——manifest 必须带 icon。
+   容器懒挂载:首次点开才 mount,之后常驻(保留插件状态);rev 失配即 teardown,
+   下次打开重挂。面板开合与容器进出场由 dock.tsx 管理。 */
+export interface DockPluginInfo { id: string; name: string; icon: string; rev: string }
+const [dockPlugins, setDockPlugins] = createSignal<DockPluginInfo[]>([]);
+const dockDesired = new Map<string, GraphEntry>();
+
+/** dock 插件懒挂载:已挂载且 rev 一致直接返回容器;失配/未挂载则重挂。失败返回 null(详情进 pluginStatus)。 */
+export async function ensureDockMounted(id: string): Promise<HTMLElement | null> {
+  const entry = dockDesired.get(id);
+  if (entry == null) return null;
+  const state = loaded.get(id);
+  if (state != null && state.rev === entry.rev) return state.container;
+  teardown(id);
+  try {
+    const container = document.createElement("div");
+    container.dataset.qaqhPlugin = id;
+    const url = `app://localhost/plugins/${entry.id}/${entry.entry}?rev=${entry.rev}`;
+    const mod = (await import(/* @vite-ignore */ url)) as { default?: PluginModule };
+    const plugin = mod.default;
+    if (plugin == null || typeof plugin.mount !== "function") throw new Error(`插件 ${entry.id} 缺少 default.mount`);
+    const dispose = plugin.mount(container, facadeFor(entry));
+    loaded.set(id, { rev: entry.rev, container, dispose: typeof dispose === "function" ? dispose : null });
+    delete statusFailures[id];
+    publishStatus();
+    return container;
+  } catch (error) {
+    statusFailures[id] = error instanceof Error ? error.message : String(error);
+    console.error(`[plugins] dock ${id} 装载失败:`, error);
+    publishStatus();
+    return null;
+  }
+}
 let bootRelease: string | null = null;
 let warnedRelease: string | null = null;
 
@@ -179,9 +214,8 @@ export function syntaxPackRef(): SyntaxPackRef | null {
   };
 }
 
-async function mount(entry: GraphEntry): Promise<void> {
+async function mount(entry: GraphEntry, container: HTMLElement): Promise<void> {
   const url = `app://localhost/plugins/${entry.id}/${entry.entry}?rev=${entry.rev}`;
-  const container = makeContainer(entry.id, entry.slot);
   const mod = (await import(/* @vite-ignore */ url)) as { default?: PluginModule };
   const plugin = mod.default;
   if (plugin == null || typeof plugin.mount !== "function") {
@@ -215,7 +249,20 @@ async function reconcile(graph: Graph): Promise<void> {
   }
   // 只有 overlay 走 JS mount;theme/syntax-theme 是纯资产,各自走 link/fetch。
   const desired = new Map(graph.entries.filter((entry) => entry.slot === "overlay").map((entry) => [entry.id, entry]));
+  // dock 目录整帧刷新:图里消失的插件随 teardown 出局,rev 推进在下次打开时重挂。
+  dockDesired.clear();
+  for (const entry of graph.entries) {
+    if (entry.slot !== "dock") continue;
+    dockDesired.set(entry.id, entry);
+  }
+  setDockPlugins([...dockDesired.values()].map((entry) => ({ id: entry.id, name: entry.name, icon: entry.icon ?? entry.name, rev: entry.rev })));
   for (const [id, state] of [...loaded]) {
+    if (dockDesired.has(id)) {
+      // dock 生命周期独立管理:rev 失配立即 teardown(下次打开重挂)。
+      const next = dockDesired.get(id);
+      if (next == null || next.rev !== state.rev) teardown(id);
+      continue;
+    }
     const next = desired.get(id);
     if (next != null && next.rev === state.rev) {
       desired.delete(id);
@@ -225,7 +272,7 @@ async function reconcile(graph: Graph): Promise<void> {
   }
   for (const entry of desired.values()) {
     try {
-      await mount(entry);
+      await mount(entry, makeContainer(entry.id, entry.slot));
       delete statusFailures[entry.id];
     } catch (error) {
       statusFailures[entry.id] = error instanceof Error ? error.message : String(error);
@@ -259,7 +306,11 @@ export function startPluginHost(): void {
   host.listen("plugins://graph", (payload) => {
     reconcile(payload as Graph);
   });
+  // 注册后主动拉一次当前图:did-finish-load 的强发早于异步启动序列(入口门闩
+  // +动态 import)的监听注册,漏帧后 stat-poll 因图未变化不再重发,纯事件流
+  // 会永远拿不到图。拉取+推送双通道闭环。
+  void requireDesktopHost().invoke<Graph>("plugins_graph").then((graph) => reconcile(graph)).catch(() => {});
 }
 
 /** 当前图里可用的主题包/语法主题包目录(设置页消费);pluginStatus = 装载器自述状态(工具页消费)。 */
-export { themePacks, themePackSelection, pluginStatus, syntaxThemes, syntaxPackSelection };
+export { themePacks, themePackSelection, pluginStatus, syntaxThemes, syntaxPackSelection, dockPlugins };

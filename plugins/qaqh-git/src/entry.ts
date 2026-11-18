@@ -1,10 +1,10 @@
 /**
- * QAQ 插件：Git 工作区状态（只读）。
+ * QAQ 插件：Git 工作区状态（只读）——dock 槽。
  *
  * 取数只经宿主 facade 的 gitStatus（capability "git-status"）：main 侧解析活动
  * 会话的工作区 cwd 并跑只读 git，插件不碰会话注册表、不碰 .git 内部文件。
  * 纯 DOM，无框架依赖；配色走壳 token，主题包换色即跟随。
- * 左下角徽标常显分支/脏态/未 push，点开看逐文件与未 push 提交。
+ * 面板内容渲染进 dock 容器，开合由宿主 PluginDock 负责；不可见时降频轮询。
  */
 import type { GitStatusView } from "../../../webui/src/lib/git-status.js";
 
@@ -12,7 +12,6 @@ interface PluginHost {
   gitStatus?: () => Promise<GitStatusView>;
 }
 
-const OPEN_KEY = "qaqh.git.open";
 const OPEN_MS = 4000;
 const IDLE_MS = 15000;
 
@@ -31,19 +30,6 @@ export default {
   mount(container: HTMLElement, host: PluginHost): () => void {
     const style = document.createElement("style");
     style.textContent = `
-      .qaqh-git-badge{position:fixed;left:16px;bottom:16px;pointer-events:auto;z-index:1;display:flex;align-items:center;gap:8px;
-        height:34px;padding:0 12px;border-radius:10px;border:1px solid var(--border,#373b42);
-        background:var(--surface,#202226);color:var(--text,#edeef0);font:12px/1 ui-sans-serif,system-ui;
-        cursor:pointer;user-select:none;box-shadow:0 6px 24px rgba(0,0,0,.28);}
-      .qaqh-git-badge:hover{background:var(--surface-2,#292c31);}
-      .qaqh-git-badge .dirty{color:var(--warn,#f5c36d);}
-      .qaqh-git-badge .sync{color:var(--accent,#8ab4ff);}
-      .qaqh-git-panel{position:fixed;left:16px;bottom:58px;pointer-events:auto;z-index:1;width:400px;
-        max-width:calc(100vw - 32px);max-height:min(560px,calc(100vh - 96px));overflow:auto;padding:12px;
-        border-radius:12px;border:1px solid var(--border,#373b42);background:var(--surface,#202226);
-        color:var(--text,#edeef0);font:12px/1.6 ui-sans-serif,system-ui;display:none;
-        box-shadow:0 12px 40px rgba(0,0,0,.45);}
-      .qaqh-git-panel.open{display:block;}
       .qaqh-git-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;}
       .qaqh-git-repo{font-weight:600;font-size:13px;}
       .qaqh-git-path{color:var(--muted,#abb0b8);font-size:11px;word-break:break-all;margin-bottom:8px;}
@@ -66,15 +52,6 @@ export default {
     `;
     document.head.append(style);
 
-    const badge = el("button", "qaqh-git-badge");
-    badge.type = "button";
-    badge.title = "Git 工作区状态";
-    const badgeBranch = el("span", "", "⎇ …");
-    const badgeDirty = el("span", "dirty");
-    const badgeSync = el("span", "sync");
-    badge.append(badgeBranch, badgeDirty, badgeSync);
-
-    const panel = el("div", "qaqh-git-panel");
     const head = el("div", "qaqh-git-head");
     const repoTitle = el("span", "qaqh-git-repo", "Git");
     const branchLine = el("span", "");
@@ -92,12 +69,10 @@ export default {
     const unpushedSec = el("div", "qaqh-git-sec", "未 push 提交");
     const unpushedList = el("ul", "qaqh-git-list");
     const foot = el("div", "qaqh-git-foot");
-    panel.append(head, pathLine, counts, syncLine, stateLine, filesSec, filesList, unpushedSec, unpushedList, foot);
-    container.append(badge, panel);
+    container.append(head, pathLine, counts, syncLine, stateLine, filesSec, filesList, unpushedSec, unpushedList, foot);
 
-    let open = false;
-    try { open = localStorage.getItem(OPEN_KEY) === "1"; } catch { /* 隐私模式下读不到就当收起 */ }
-    panel.classList.toggle("open", open);
+    // dock 面板合上时容器离 DOM,轮询降频(打开态 4s,后台态 15s)。
+    const visible = (): boolean => container.offsetParent != null;
 
     let disposed = false;
     let timer: number | null = null;
@@ -105,9 +80,6 @@ export default {
     function render(view: GitStatusView): void {
       stateLine.textContent = "";
       if (view.kind !== "repo") {
-        badgeBranch.textContent = view.kind === "no-workspace" ? "⎇ 无工作区" : view.kind === "not-repo" ? "⎇ 非仓库" : "⎇ git 错误";
-        badgeDirty.textContent = "";
-        badgeSync.textContent = "";
         repoTitle.textContent = "Git";
         branchLine.textContent = "";
         pathLine.textContent = view.kind === "no-workspace" ? "没有活动会话，或该会话未绑定工作区" : view.workspace;
@@ -123,12 +95,6 @@ export default {
       }
       const detached = view.branch === "(detached)";
       const label = detached ? `${view.head.slice(0, 7)} (detached)` : view.branch;
-      const dirty = view.staged + view.unstaged + view.untracked;
-      badgeBranch.textContent = `⎇ ${label}`;
-      badgeDirty.textContent = dirty > 0 ? `●${dirty}` : "✓";
-      badgeSync.textContent = view.ahead == null ? "" : `↑${view.ahead}${(view.behind ?? 0) > 0 ? `↓${view.behind}` : ""}`;
-      badge.title = view.repoRoot;
-
       repoTitle.textContent = repoName(view.repoRoot);
       branchLine.textContent = detached ? label : `⎇ ${view.branch}`;
       pathLine.textContent = view.repoRoot;
@@ -176,20 +142,10 @@ export default {
     function schedule(): void {
       if (disposed) return;
       if (timer != null) clearTimeout(timer);
-      timer = window.setTimeout(() => { void refresh().then(schedule); }, open ? OPEN_MS : IDLE_MS);
+      timer = window.setTimeout(() => { void refresh().then(schedule); }, visible() ? OPEN_MS : IDLE_MS);
     }
 
-    function setOpen(next: boolean): void {
-      open = next;
-      panel.classList.toggle("open", open);
-      try { localStorage.setItem(OPEN_KEY, open ? "1" : "0"); } catch { /* 存不下不影响本次开合 */ }
-      if (open) void refresh();
-      schedule();
-    }
-
-    const onBadge = (): void => setOpen(!open);
     const onFocus = (): void => { void refresh(); };
-    badge.addEventListener("click", onBadge);
     window.addEventListener("focus", onFocus);
 
     void refresh().then(schedule);
@@ -198,7 +154,6 @@ export default {
       disposed = true;
       if (timer != null) clearTimeout(timer);
       window.removeEventListener("focus", onFocus);
-      badge.removeEventListener("click", onBadge);
       style.remove();
       container.textContent = "";
     };

@@ -3,6 +3,9 @@
   "name": "手柄映射图",
   "version": "0.1.0",
   "entry": "dist/entry.js",
-  "slot": "overlay",
-  "capabilities": ["gamepad-raw"]
+  "slot": "dock",
+  "capabilities": [
+    "gamepad-raw"
+  ],
+  "icon": "🎮"
 }

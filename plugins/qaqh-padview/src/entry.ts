@@ -1,16 +1,16 @@
 /**
- * QAQ 插件 #3：手柄映射图（live gamepad diagram）。
+ * QAQ 插件 #3：手柄映射图（live gamepad diagram）——dock 槽。
  *
  * 纯 DOM + SVG，无框架、无外部 import（plugins-watch 不做 bundle）。输入走宿主
  * facade 的 gamepadRaw——每帧把 buttons/axes 直接写进 SVG 元素属性，无中间状态。
  * 布局按 W3C standard mapping 编号：0=A/底部、12-15=D-pad、6/7=扳机(按 value 缩放)。
- * 键帽字形按手柄族切换(xbox: A/B/X/Y，playstation: ✕◯□△)，与核心的 prompt 分族同判据。
+ * 键帽字形按手柄族切换(xbox: A/B/X/Y，playstation: ✕◯□△)，与核心的 prompt 分族
+ * 同判据。面板开合由宿主 PluginDock 负责，本插件只渲染内容。
  */
 interface PluginHost {
   gamepadRaw?: (onFrame: (pad: Gamepad | null) => void) => () => void;
 }
 
-const OPEN_KEY = "qaqh.padview.open";
 const GLYPHS: Record<string, string[]> = {
   xbox: ["A", "B", "X", "Y"],
   playstation: ["✕", "◯", "□", "△"],
@@ -55,11 +55,7 @@ const SVG = `
 </svg>`;
 
 const CSS = `
-[data-qaqh-plugin="qaqh-padview"] .pv-fab{position:fixed;right:14px;bottom:14px;pointer-events:auto;width:34px;height:34px;border-radius:50%;border:1px solid var(--surface-2,#333);background:var(--surface-1,#1b1b1f);color:var(--muted,#888);font-size:15px;cursor:pointer;z-index:2147483001;}
-[data-qaqh-plugin="qaqh-padview"] .pv-fab.on{color:var(--accent,#7aa2f7);border-color:var(--accent,#7aa2f7);}
-[data-qaqh-plugin="qaqh-padview"] .pv-card{position:fixed;right:14px;bottom:56px;pointer-events:none;width:340px;padding:10px 12px 8px;border-radius:12px;border:1px solid var(--surface-2,#333);background:color-mix(in srgb, var(--surface-1,#1b1b1f) 88%, transparent);box-shadow:0 8px 28px rgba(0,0,0,.35);}
-[data-qaqh-plugin="qaqh-padview"] .pv-card[hidden]{display:none;}
-[data-qaqh-plugin="qaqh-padview"] .pv-meta{font:11px system-ui;color:var(--muted,#888);display:flex;justify-content:space-between;gap:8px;}
+[data-qaqh-plugin="qaqh-padview"] .pv-meta{font:11px system-ui;color:var(--muted,#888);display:flex;justify-content:space-between;gap:8px;margin-bottom:6px;}
 [data-qaqh-plugin="qaqh-padview"] .pv-meta b{color:var(--fg,#ddd);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 [data-qaqh-plugin="qaqh-padview"] svg{width:100%;display:block;color:var(--fg,#ddd);}
 [data-qaqh-plugin="qaqh-padview"] .body{fill:none;stroke:currentColor;stroke-width:2;opacity:.55;}
@@ -82,35 +78,13 @@ export default {
     style.textContent = CSS;
     document.head.append(style);
 
-    const fab = document.createElement("button");
-    fab.type = "button";
-    fab.className = "pv-fab";
-    fab.title = "手柄映射图";
-    fab.textContent = "🎮";
-    const card = document.createElement("div");
-    card.className = "pv-card";
-    card.innerHTML = `<div class="pv-meta"><b data-el="name">未连接手柄</b><span data-el="map"></span></div>${SVG}`;
-    container.append(fab, card);
-
-    let open = false;
-    try { open = localStorage.getItem(OPEN_KEY) === "1"; } catch { /* 存不下就用默认关 */ }
-    const applyOpen = (): void => {
-      card.hidden = !open;
-      fab.classList.toggle("on", open);
-    };
-    applyOpen();
-    const onFab = (): void => {
-      open = !open;
-      applyOpen();
-      try { localStorage.setItem(OPEN_KEY, open ? "1" : "0"); } catch { /* 同上 */ }
-    };
-    fab.addEventListener("click", onFab);
+    container.innerHTML = `<div class="pv-meta"><b data-el="name">未连接手柄</b><span data-el="map"></span></div>${SVG}`;
 
     const els = new Map<string, SVGElement>();
-    for (const el of card.querySelectorAll<SVGElement>("[data-el]")) els.set(el.getAttribute("data-el") ?? "", el);
-    const nameEl = card.querySelector<HTMLElement>("[data-el=name]");
-    const mapEl = card.querySelector<HTMLElement>("[data-el=map]");
-    const svg = card.querySelector("svg");
+    for (const el of container.querySelectorAll<SVGElement>("[data-el]")) els.set(el.getAttribute("data-el") ?? "", el);
+    const nameEl = container.querySelector<HTMLElement>("[data-el=name]");
+    const mapEl = container.querySelector<HTMLElement>("[data-el=map]");
+    const svg = container.querySelector("svg");
     const triggers = { lb: els.get("btn4"), rb: els.get("btn5"), lt: els.get("btn6"), rt: els.get("btn7") };
     let faceFamily = "";
 
@@ -132,7 +106,7 @@ export default {
         faceFamily = family;
         const glyphs = GLYPHS[family] ?? GLYPHS.generic;
         // FACE 顺序 0,1,2,3 = 底/右/左/上 = A/B/X/Y
-        for (const label of card.querySelectorAll<SVGTextElement>("[data-glyph]")) {
+        for (const label of container.querySelectorAll<SVGTextElement>("[data-glyph]")) {
           label.textContent = glyphs[Number(label.getAttribute("data-glyph"))] ?? "";
         }
         if (nameEl != null) nameEl.textContent = pad.id.slice(0, 42);
@@ -142,11 +116,11 @@ export default {
         setDown(`btn${i}`, pad.buttons[i]!.pressed);
       }
       const axis = (i: number): number => pad.axes[i] ?? 0;
-      const move = (key: string, x: number, y: number): void => {
-        els.get(key)?.setAttribute("transform", `translate(${(x * 16).toFixed(1)},${(y * 16).toFixed(1)})`);
+      const move = (key: string, x: string, y: string): void => {
+        els.get(key)?.setAttribute("transform", `translate(${x},${y})`);
       };
-      move("ls", axis(0), axis(1));
-      move("rs", axis(2), axis(3));
+      move("ls", (axis(0) * 16).toFixed(1), (axis(1) * 16).toFixed(1));
+      move("rs", (axis(2) * 16).toFixed(1), (axis(3) * 16).toFixed(1));
       const scale = (el: SVGElement | undefined, value: number, x: number): void => {
         if (el == null) return;
         const h = 4 + value * 14;
@@ -161,10 +135,8 @@ export default {
 
     return () => {
       unsub();
-      fab.removeEventListener("click", onFab);
-      card.remove();
-      fab.remove();
       style.remove();
+      container.textContent = "";
     };
   },
 };
