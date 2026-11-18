@@ -29,7 +29,7 @@
   "devDependencies": {
     "@iconify-json/lucide": "^1.2.68",
     "@solidjs/vite-plugin": "3.0.0-next.50",
-    "@types/node": "^22.13.0",
+    "@types/node": "^26.6.6",
     "@types/qrcode": "^1.5.6",
     "happy-dom": "^20.14.5",
     "typescript": "^7.0.2",
