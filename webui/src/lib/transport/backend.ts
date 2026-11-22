@@ -28,6 +28,59 @@ export type { CommandPrecondition, CommandTarget, RingingCommand };
 export type RendererRingingCommand = Exclude<RingingCommand, { type: "conversation.send_message" }>
   | ({ type: "conversation.send_message" } & Omit<ConversationSendMessage, "as_system" | "inter_agent" | "subagent_terminal">);
 
+// ── gitx 读模型（ADR-0041,wire `qaqh.ringing.gitx/v1`,snake_case ringing 域）──
+// 手工镜像后端 `qaqh-ringing-contract::gitx` 的 ts(export) 形状;v4.2 金标准
+// 重切跑完 exporter 后,由 sdk-sync 生成的正式产物替换（届时本块并入生成面）。
+
+/** `gitx.snapshot` 结果：源工作区的 branch/head/dirty 一眼快照。 */
+export interface GitSnapshot {
+  schema: string;
+  source_root: string;
+  /** null = detached HEAD 或无提交。 */
+  branch: string | null;
+  head_sha: string | null;
+  detached: boolean;
+  /** `git status --porcelain` 非空（含未跟踪）。 */
+  dirty: boolean;
+}
+
+/** `gitx.worktree_list` 条目：一条 managed worktree（missing_dir = 失效态,引导 prune）。 */
+export interface WorktreeView {
+  schema: string;
+  id: string;
+  branch: string;
+  slug: string;
+  path: string;
+  /** `.qaqh` 工件锚点（双锚点,ADR-0041 决策 3）。 */
+  source_root: string;
+  head_sha: string;
+  /** null = 空闲可绑定。 */
+  owner_session_id: string | null;
+  created_at_ms: number;
+  missing_dir: boolean;
+}
+
+/** 绑定结果读模型：worktree 代码路径 ↔ source_root 工件锚点。 */
+export interface WorktreeBindingView {
+  worktree_root: string;
+  source_root: string;
+  branch: string;
+  head_sha: string;
+  owner_session_id: string;
+}
+
+export interface GitxWorktreeListResult {
+  worktrees: WorktreeView[];
+  /** 手工 `git worktree add` 等绕过工具的产物（unmanaged,不享受自动放行）。 */
+  unmanaged_paths: string[];
+}
+
+export interface GitxWorktreeCreateResult {
+  worktree: WorktreeView;
+  /** attach = true 时必有。 */
+  binding: WorktreeBindingView | null;
+}
+
 /** Public service methods not yet present in the current generated ServiceMap. */
 export type ElectronServiceMap = SdkServiceMap & {
   "config.load": { params: Record<never, never>; result: ConfigDto };
@@ -38,6 +91,20 @@ export type ElectronServiceMap = SdkServiceMap & {
   "todo.list": { params: { session_id: string; [key: string]: unknown }; result: Record<string, unknown> };
   "plan.read": { params: { session_id: string }; result: unknown };
   "diagnostics.memory.snapshot": { params: { after_sequence?: number }; result: unknown };
+  // gitx 域（ADR-0041）：scope_session_id 缺省 = daemon cwd；活动会话视角传 session seed,
+  // 绑定生效时读面视图即落 worktree 根（与模型工具视图同源）。
+  "gitx.snapshot": { params: { scope_session_id?: string }; result: GitSnapshot };
+  "gitx.worktree_list": { params: { scope_session_id?: string }; result: GitxWorktreeListResult };
+  "gitx.worktree_create": {
+    params: { scope_session_id?: string; branch_name: string; base_ref?: string; attach: boolean };
+    result: GitxWorktreeCreateResult;
+  };
+  "gitx.worktree_remove": {
+    params: { scope_session_id?: string; worktree_id: string; force: boolean };
+    result: { removed: boolean };
+  };
+  "gitx.worktree_bind": { params: { session_id: string; worktree_id: string }; result: WorktreeBindingView };
+  "gitx.worktree_unbind": { params: { session_id: string }; result: { unbound: boolean } };
 };
 
 export type ServiceMethod = keyof ElectronServiceMap;

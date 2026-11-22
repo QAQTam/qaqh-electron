@@ -19,6 +19,11 @@ import {
   type StreamHandlers,
   type TodoItemWire,
   type TransportBackend,
+  type GitSnapshot,
+  type WorktreeView,
+  type WorktreeBindingView,
+  type GitxWorktreeListResult,
+  type GitxWorktreeCreateResult,
 } from "./backend";
 
 export const transport: TransportBackend = new ElectronTransport();
@@ -41,4 +46,9 @@ export type {
   StreamHandlers,
   TodoItemWire,
   TransportBackend,
+  GitSnapshot,
+  WorktreeView,
+  WorktreeBindingView,
+  GitxWorktreeListResult,
+  GitxWorktreeCreateResult,
 };

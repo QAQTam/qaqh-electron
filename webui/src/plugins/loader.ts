@@ -8,8 +8,34 @@
  */
 import { desktopHost, requireDesktopHost } from "../lib/desktop-host.js";
 import type { GitStatusView } from "../lib/git-status.js";
+import type {
+  GitSnapshot,
+  GitxWorktreeCreateResult,
+  GitxWorktreeListResult,
+  WorktreeBindingView,
+} from "../lib/transport/index.js";
+import { transport } from "../lib/transport/index.js";
 import { startGamepadRawFeed } from "../lib/gamepad.js";
 import { createSignal } from "solid-js";
+
+/**
+ * gitx facade（ADR-0041）：worktree 读/写面经 transport 直达 daemon,形状与
+ * ringing 契约同源（snake_case,零转换层）。快照/worktree 清单的
+ * `scope_session_id` 由调用方决定视角;缺省 = daemon cwd。
+ */
+export interface PluginGitxFacade {
+  snapshot(params?: { scope_session_id?: string }): Promise<GitSnapshot>;
+  worktreeList(params?: { scope_session_id?: string }): Promise<GitxWorktreeListResult>;
+  worktreeCreate(params: {
+    scope_session_id?: string;
+    branch_name: string;
+    base_ref?: string;
+    attach: boolean;
+  }): Promise<GitxWorktreeCreateResult>;
+  worktreeRemove(params: { scope_session_id?: string; worktree_id: string; force: boolean }): Promise<{ removed: boolean }>;
+  worktreeBind(params: { session_id: string; worktree_id: string }): Promise<WorktreeBindingView>;
+  worktreeUnbind(params: { session_id: string }): Promise<{ unbound: boolean }>;
+}
 
 /** 插件宿主 facade：manifest 声明的 capability 决定拿到哪些键。 */
 export interface PluginHost {
@@ -17,6 +43,8 @@ export interface PluginHost {
   gamepadRaw?: (onFrame: (pad: Gamepad | null) => void) => () => void;
   /** 活动会话工作区的只读 git 状态；main 侧解析 cwd 并跑 git，插件不碰会话注册表。 */
   gitStatus?: () => Promise<GitStatusView>;
+  /** gitx 面（ADR-0041）：git 快照 + managed/unmanaged worktree 清单与变更操作。 */
+  gitx?: PluginGitxFacade;
 }
 
 /** 插件模块形状：default 导出，mount 返回可选 dispose。 */
@@ -134,6 +162,16 @@ function facadeFor(entry: GraphEntry): PluginHost {
   if (entry.capabilities.includes("gamepad-raw")) facade.gamepadRaw = startGamepadRawFeed;
   if (entry.capabilities.includes("git-status")) {
     facade.gitStatus = () => requireDesktopHost().invoke<GitStatusView>("git_status");
+  }
+  if (entry.capabilities.includes("gitx")) {
+    facade.gitx = {
+      snapshot: (params) => transport.query("gitx.snapshot", params),
+      worktreeList: (params) => transport.query("gitx.worktree_list", params),
+      worktreeCreate: (params) => transport.query("gitx.worktree_create", params),
+      worktreeRemove: (params) => transport.query("gitx.worktree_remove", params),
+      worktreeBind: (params) => transport.query("gitx.worktree_bind", params),
+      worktreeUnbind: (params) => transport.query("gitx.worktree_unbind", params),
+    };
   }
   return facade;
 }

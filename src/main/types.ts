@@ -18,6 +18,14 @@ import type { ShellListResult } from "../../webui/src/api/qaqh/ShellListResult";
 import type { ShellOpenParams } from "../../webui/src/api/qaqh/ShellOpenParams";
 import type { ShellView } from "../../webui/src/api/qaqh/ShellView";
 import type { WorkspaceEntry } from "../../webui/src/api/qaqh/WorkspaceEntry";
+// gitx 读模型（ADR-0041）暂无生成产物（v4.2 重切后由 sdk-sync 落 api/qaqh），
+// 先复用 webui transport 里的手工镜像 DTO,维持「形状只有一份」的纪律。
+import type {
+  GitSnapshot,
+  GitxWorktreeCreateResult,
+  GitxWorktreeListResult,
+  WorktreeBindingView,
+} from "../../webui/src/lib/transport/backend";
 
 export type DaemonDiscovery = ContractDaemonDiscovery;
 
@@ -74,6 +82,24 @@ export type MainServiceMap = {
   "dsaccount.bonus.ack": { params: { order_id: string }; result: unknown };
   "dsaccount.models": { params: Record<never, never>; result: unknown };
   "dsaccount.verify": { params: Record<never, never>; result: unknown };
+  // gitx 域（ADR-0041）。读面两条走 QueryRequest 封闭枚举;写面四条经
+  // qaqh-client 账号外白名单透传,daemon TYPED_METHODS 做形状闸。
+  "gitx.snapshot": { params: { scope_session_id?: string }; result: GitSnapshot };
+  "gitx.worktree_list": { params: { scope_session_id?: string }; result: GitxWorktreeListResult };
+  "gitx.worktree_create": {
+    params: { scope_session_id?: string; branch_name: string; base_ref?: string; attach: boolean };
+    result: GitxWorktreeCreateResult;
+  };
+  "gitx.worktree_remove": {
+    params: { scope_session_id?: string; worktree_id: string; force: boolean };
+    result: { removed: boolean };
+  };
+  "gitx.worktree_bind": { params: { session_id: string; worktree_id: string }; result: WorktreeBindingView };
+  "gitx.worktree_unbind": { params: { session_id: string }; result: { unbound: boolean } };
+  // 沙箱启动自检面（ADR-0040）：补齐 addon 白名单的双向闸；结果形状由 daemon
+  // TYPED_METHODS 锁定,主进程只透传。
+  "sandbox.preflight.start": { params: Record<string, unknown>; result: unknown };
+  "sandbox.preflight.status": { params: Record<string, unknown>; result: unknown };
 };
 
 export type MainServiceMethod = keyof MainServiceMap;
@@ -90,6 +116,9 @@ export const MAIN_SERVICE_METHODS: readonly MainServiceMethod[] = [
   "dsaccount.sign_in.start", "dsaccount.sign_in.status", "dsaccount.sign_in.cancel",
   "dsaccount.sign_out", "dsaccount.bonus.ack", "dsaccount.models", "dsaccount.verify",
   "shell.open", "shell.close", "shell.list",
+  "sandbox.preflight.start", "sandbox.preflight.status",
+  "gitx.snapshot", "gitx.worktree_list",
+  "gitx.worktree_create", "gitx.worktree_remove", "gitx.worktree_bind", "gitx.worktree_unbind",
 ];
 
 /**

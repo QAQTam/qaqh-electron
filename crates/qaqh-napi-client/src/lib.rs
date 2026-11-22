@@ -694,5 +694,7 @@ pub fn service_methods() -> Vec<String> {
         .map(|m| m.to_string())
         .chain(qaqh_client::SERVICE_METHODS.iter().map(|m| m.to_string()))
         .chain(qaqh_client::service::SHELL_METHODS.iter().map(|m| m.to_string()))
+        .chain(qaqh_client::service::SANDBOX_METHODS.iter().map(|m| m.to_string()))
+        .chain(qaqh_client::service::GITX_METHODS.iter().map(|m| m.to_string()))
         .collect()
 }
