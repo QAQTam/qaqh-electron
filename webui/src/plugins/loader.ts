@@ -10,6 +10,7 @@ import { desktopHost, requireDesktopHost } from "../lib/desktop-host.js";
 import type { GitStatusView } from "../lib/git-status.js";
 import type {
   GitSnapshot,
+  GitStatusSnapshot,
   GitxWorktreeCreateResult,
   GitxWorktreeListResult,
   WorktreeBindingView,
@@ -25,6 +26,8 @@ import { createSignal } from "solid-js";
  */
 export interface PluginGitxFacade {
   snapshot(params?: { scope_session_id?: string }): Promise<GitSnapshot>;
+  /** 完整 git 状态(逐文件/同步态/未推送;与 snapshot 一眼快照分层)。 */
+  status(params?: { scope_session_id?: string }): Promise<GitStatusSnapshot>;
   worktreeList(params?: { scope_session_id?: string }): Promise<GitxWorktreeListResult>;
   worktreeCreate(params: {
     scope_session_id?: string;
@@ -166,6 +169,7 @@ function facadeFor(entry: GraphEntry): PluginHost {
   if (entry.capabilities.includes("gitx")) {
     facade.gitx = {
       snapshot: (params) => transport.query("gitx.snapshot", params),
+      status: (params) => transport.query("gitx.status", params),
       worktreeList: (params) => transport.query("gitx.worktree_list", params),
       worktreeCreate: (params) => transport.query("gitx.worktree_create", params),
       worktreeRemove: (params) => transport.query("gitx.worktree_remove", params),

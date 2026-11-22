@@ -22,6 +22,7 @@ import type { WorkspaceEntry } from "../../webui/src/api/qaqh/WorkspaceEntry";
 // 先复用 webui transport 里的手工镜像 DTO,维持「形状只有一份」的纪律。
 import type {
   GitSnapshot,
+  GitStatusSnapshot,
   GitxWorktreeCreateResult,
   GitxWorktreeListResult,
   WorktreeBindingView,
@@ -85,6 +86,7 @@ export type MainServiceMap = {
   // gitx 域（ADR-0041）。读面两条走 QueryRequest 封闭枚举;写面四条经
   // qaqh-client 账号外白名单透传,daemon TYPED_METHODS 做形状闸。
   "gitx.snapshot": { params: { scope_session_id?: string }; result: GitSnapshot };
+  "gitx.status": { params: { scope_session_id?: string }; result: GitStatusSnapshot };
   "gitx.worktree_list": { params: { scope_session_id?: string }; result: GitxWorktreeListResult };
   "gitx.worktree_create": {
     params: { scope_session_id?: string; branch_name: string; base_ref?: string; attach: boolean };

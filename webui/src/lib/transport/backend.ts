@@ -81,6 +81,36 @@ export interface GitxWorktreeCreateResult {
   binding: WorktreeBindingView | null;
 }
 
+/** porcelain v2 的 XY 双码：index = 暂存区态,worktree = 工作区态;未跟踪为 "?"。 */
+export interface GitFileStatus {
+  path: string;
+  index: string;
+  worktree: string;
+}
+
+/** 一条未推送提交(`%h%x09%s`)。 */
+export interface GitUnpushedCommit {
+  hash: string;
+  subject: string;
+}
+
+/** `gitx.status` 结果：完整 git 状态(与 `gitx.snapshot` 一眼快照分层,逐文件/同步态只进壳)。 */
+export interface GitStatusSnapshot {
+  schema: string;
+  source_root: string;
+  branch: string | null;
+  head_sha: string | null;
+  detached: boolean;
+  /** null = 没有跟踪,无从比较。 */
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  /** dirty = files 非空(porcelain 含未跟踪)。 */
+  files: GitFileStatus[];
+  /** 上游存在且 ahead>0 时的未推送提交(最新在前,上限 50)。 */
+  unpushed: GitUnpushedCommit[];
+}
+
 /** Public service methods not yet present in the current generated ServiceMap. */
 export type ElectronServiceMap = SdkServiceMap & {
   "config.load": { params: Record<never, never>; result: ConfigDto };
@@ -94,6 +124,7 @@ export type ElectronServiceMap = SdkServiceMap & {
   // gitx 域（ADR-0041）：scope_session_id 缺省 = daemon cwd；活动会话视角传 session seed,
   // 绑定生效时读面视图即落 worktree 根（与模型工具视图同源）。
   "gitx.snapshot": { params: { scope_session_id?: string }; result: GitSnapshot };
+  "gitx.status": { params: { scope_session_id?: string }; result: GitStatusSnapshot };
   "gitx.worktree_list": { params: { scope_session_id?: string }; result: GitxWorktreeListResult };
   "gitx.worktree_create": {
     params: { scope_session_id?: string; branch_name: string; base_ref?: string; attach: boolean };
