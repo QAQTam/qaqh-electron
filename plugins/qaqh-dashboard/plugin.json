@@ -5,7 +5,7 @@
   "entry": "dist/entry.js",
   "slot": "panel",
   "capabilities": [
-    "git-status"
+    "gitx"
   ],
   "icon": "📊"
 }

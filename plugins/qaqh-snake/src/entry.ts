@@ -120,7 +120,9 @@ export default {
         if (DIRS[pendingDir].x !== -DIRS[dir].x || DIRS[pendingDir].y !== -DIRS[dir].y) dir = pendingDir;
         pendingDir = null;
       }
-      const head = { x: snake[0].x + DIRS[dir].x, y: snake[0].y + DIRS[dir].y };
+      const current = snake[0];
+      if (current == null) return;
+      const head = { x: current.x + DIRS[dir].x, y: current.y + DIRS[dir].y };
       const hitWall = head.x < 0 || head.y < 0 || head.x >= GRID || head.y >= GRID;
       const hitSelf = snake.some((s) => s.x === head.x && s.y === head.y);
       if (hitWall || hitSelf) {

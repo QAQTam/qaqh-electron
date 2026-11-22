@@ -1,15 +1,17 @@
 /**
  * QAQ 插件：Git 工作区状态（只读）——dock 槽。
  *
- * 取数只经宿主 facade 的 gitStatus（capability "git-status"）：main 侧解析活动
- * 会话的工作区 cwd 并跑只读 git，插件不碰会话注册表、不碰 .git 内部文件。
- * 纯 DOM，无框架依赖；配色走壳 token，主题包换色即跟随。
- * 面板内容渲染进 dock 容器，开合由宿主 PluginDock 负责；不可见时降频轮询。
+ * 取数只经宿主 facade 的 gitx.status（capability "gitx"）：daemon 侧解析活动
+ * 会话的生效工作区（绑定生效时落到 worktree 根）跑只读 git，插件不碰会话
+ * 注册表、不碰 .git 内部文件。纯 DOM，无框架依赖；配色走壳 token，主题包
+ * 换色即跟随。面板内容渲染进 dock 容器，开合由宿主 PluginDock 负责；
+ * 不可见时降频轮询。
  */
-import type { GitStatusView } from "../../../webui/src/lib/git-status.js";
+import type { GitStatusSnapshot } from "../../../webui/src/lib/transport/index.js";
+import type { PluginGitxFacade } from "../../../webui/src/plugins/loader.js";
 
 interface PluginHost {
-  gitStatus?: () => Promise<GitStatusView>;
+  gitx?: Pick<PluginGitxFacade, "status">;
 }
 
 const OPEN_MS = 4000;
@@ -24,6 +26,19 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 
 function repoName(root: string): string {
   return root.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).at(-1) ?? root;
+}
+
+/** porcelain v2 XY 码 → 三类计数（与 daemon 解析同口径：未跟踪 = index "?"）。 */
+function stagedCount(view: GitStatusSnapshot): number {
+  return view.files.filter((file) => file.index !== "." && file.index !== "?").length;
+}
+
+function unstagedCount(view: GitStatusSnapshot): number {
+  return view.files.filter((file) => file.worktree !== "." && file.worktree !== "?").length;
+}
+
+function untrackedCount(view: GitStatusSnapshot): number {
+  return view.files.filter((file) => file.index === "?").length;
 }
 
 export default {
@@ -77,38 +92,25 @@ export default {
     let disposed = false;
     let timer: number | null = null;
 
-    function render(view: GitStatusView): void {
+    function render(view: GitStatusSnapshot): void {
       stateLine.textContent = "";
-      if (view.kind !== "repo") {
-        repoTitle.textContent = "Git";
-        branchLine.textContent = "";
-        pathLine.textContent = view.kind === "no-workspace" ? "没有活动会话，或该会话未绑定工作区" : view.workspace;
-        counts.style.display = "none";
-        syncLine.textContent = "";
-        filesSec.style.display = "none";
-        filesList.replaceChildren();
-        unpushedSec.style.display = "none";
-        unpushedList.replaceChildren();
-        stateLine.textContent = view.kind === "error" ? view.message : view.kind === "not-repo" ? "该工作区不是 git 仓库" : "";
-        foot.textContent = "";
-        return;
-      }
-      const detached = view.branch === "(detached)";
-      const label = detached ? `${view.head.slice(0, 7)} (detached)` : view.branch;
-      repoTitle.textContent = repoName(view.repoRoot);
-      branchLine.textContent = detached ? label : `⎇ ${view.branch}`;
-      pathLine.textContent = view.repoRoot;
+      const branchLabel = view.branch != null
+        ? `⎇ ${view.branch}`
+        : view.detached ? `${view.head_sha?.slice(0, 7) ?? "—"} (detached)` : "⎇ (空仓库)";
+      repoTitle.textContent = repoName(view.source_root);
+      branchLine.textContent = branchLabel;
+      pathLine.textContent = view.source_root;
       counts.style.display = "";
-      stagedChip.textContent = `暂存 ${view.staged}`;
-      unstagedChip.textContent = `未暂存 ${view.unstaged}`;
-      untrackedChip.textContent = `未跟踪 ${view.untracked}`;
+      stagedChip.textContent = `暂存 ${stagedCount(view)}`;
+      unstagedChip.textContent = `未暂存 ${unstagedCount(view)}`;
+      untrackedChip.textContent = `未跟踪 ${untrackedCount(view)}`;
       syncLine.textContent = view.upstream == null
         ? "无上游分支——未 push 无从比较（git push -u 建立跟踪）"
         : `上游 ${view.upstream} · 领先 ${view.ahead ?? 0} · 落后 ${view.behind ?? 0}`;
 
       filesSec.style.display = "";
       filesList.replaceChildren(...view.files.map((file) => {
-        const li = el("li");
+        const li = el("li", "");
         const untracked = file.index === "?";
         const cls = untracked ? "" : file.index !== "." ? "staged" : "unstaged";
         li.append(el("span", "qaqh-git-xy", untracked ? "?" : `${file.index}${file.worktree}`), el("span", `qaqh-git-file ${cls}`, file.path));
@@ -119,23 +121,38 @@ export default {
       const showUnpushed = view.upstream != null && (view.ahead ?? 0) > 0;
       unpushedSec.style.display = showUnpushed ? "" : "none";
       unpushedList.replaceChildren(...view.unpushed.map((commit) => {
-        const li = el("li");
+        const li = el("li", "");
         li.append(el("span", "qaqh-git-hash", commit.hash), el("span", "qaqh-git-file", commit.subject));
         return li;
       }));
       foot.textContent = `更新于 ${new Date().toLocaleTimeString()} · 只读，不会改动仓库`;
     }
 
+    /** 失败态：无活动会话（facade 哨兵）/非仓库/RPC 错误都落这条，消息即原因。 */
+    function renderError(message: string): void {
+      repoTitle.textContent = "Git";
+      branchLine.textContent = "";
+      pathLine.textContent = "";
+      counts.style.display = "none";
+      syncLine.textContent = "";
+      filesSec.style.display = "none";
+      filesList.replaceChildren();
+      unpushedSec.style.display = "none";
+      unpushedList.replaceChildren();
+      stateLine.textContent = message;
+      foot.textContent = "";
+    }
+
     async function refresh(): Promise<void> {
-      const read = host.gitStatus;
+      const read = host.gitx?.status;
       if (read == null) {
-        render({ kind: "error", workspace: "", message: "宿主未发放 git-status 能力（检查 manifest.capabilities）" });
+        renderError("宿主未发放 gitx 能力（检查 manifest.capabilities）");
         return;
       }
       try {
         render(await read());
       } catch (error) {
-        render({ kind: "error", workspace: "", message: error instanceof Error ? error.message : String(error) });
+        renderError(error instanceof Error ? error.message : String(error));
       }
     }
 

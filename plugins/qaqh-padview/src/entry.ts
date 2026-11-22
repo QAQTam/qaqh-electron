@@ -104,7 +104,7 @@ export default {
       const family = familyOf(pad.id);
       if (faceFamily !== family) {
         faceFamily = family;
-        const glyphs = GLYPHS[family] ?? GLYPHS.generic;
+        const glyphs = GLYPHS[family] ?? GLYPHS.generic ?? [];
         // FACE 顺序 0,1,2,3 = 底/右/左/上 = A/B/X/Y
         for (const label of container.querySelectorAll<SVGTextElement>("[data-glyph]")) {
           label.textContent = glyphs[Number(label.getAttribute("data-glyph"))] ?? "";

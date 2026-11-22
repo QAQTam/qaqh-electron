@@ -21,8 +21,12 @@ import { createSignal } from "solid-js";
 
 /**
  * gitx facade（ADR-0041）：worktree 读/写面经 transport 直达 daemon,形状与
- * ringing 契约同源（snake_case,零转换层）。快照/worktree 清单的
- * `scope_session_id` 由调用方决定视角;缺省 = daemon cwd。
+ * ringing 契约同源（snake_case,零转换层）。缺省视角 = 活动会话：调用方未指名
+ * `scope_session_id` 时由壳注入活动标签的 seed（插件因此不需要知道会话注册表）,
+ * 壳没有活动会话时抛出 [`PluginScopeUnavailableError`]——绝不静默落到 daemon cwd。
+ * 读面视角是会话的**生效工作区**（绑定生效时落 worktree 根）;写面视角是
+ * **源工作区**（注册表所在地）,`attach=true` 的 scope 由注入满足。bind/unbind
+ * 的 `session_id` 是显式参数,不做注入。
  */
 export interface PluginGitxFacade {
   snapshot(params?: { scope_session_id?: string }): Promise<GitSnapshot>;
@@ -38,6 +42,25 @@ export interface PluginGitxFacade {
   worktreeRemove(params: { scope_session_id?: string; worktree_id: string; force: boolean }): Promise<{ removed: boolean }>;
   worktreeBind(params: { session_id: string; worktree_id: string }): Promise<WorktreeBindingView>;
   worktreeUnbind(params: { session_id: string }): Promise<{ unbound: boolean }>;
+}
+
+/** 缺省视角缺失的哨兵：插件据此渲染「没有活动会话」,与 RPC 错误区分。 */
+export class PluginScopeUnavailableError extends Error {
+  constructor() {
+    super("没有活动会话，或该会话未绑定工作区");
+    this.name = "PluginScopeUnavailableError";
+  }
+}
+
+/** `scope_session_id` 未显式指名（缺省/空白）时注入活动会话 seed。
+ * tabs/store 经 toast → ~icons 的链在测试环境（server 构建）import 即炸,
+ * 因此动态 import——只有 gitx facade 真被调用时才进这条链。 */
+async function withScope<P extends { scope_session_id?: string }>(params: P | undefined): Promise<P> {
+  if (params?.scope_session_id?.trim()) return params as P;
+  const { activeTab } = await import("../tabs/store.js");
+  const seed = activeTab()?.seed ?? null;
+  if (seed == null) throw new PluginScopeUnavailableError();
+  return { ...params, scope_session_id: seed } as P;
 }
 
 /** 插件宿主 facade：manifest 声明的 capability 决定拿到哪些键。 */
@@ -168,11 +191,11 @@ function facadeFor(entry: GraphEntry): PluginHost {
   }
   if (entry.capabilities.includes("gitx")) {
     facade.gitx = {
-      snapshot: (params) => transport.query("gitx.snapshot", params),
-      status: (params) => transport.query("gitx.status", params),
-      worktreeList: (params) => transport.query("gitx.worktree_list", params),
-      worktreeCreate: (params) => transport.query("gitx.worktree_create", params),
-      worktreeRemove: (params) => transport.query("gitx.worktree_remove", params),
+      snapshot: async (params) => transport.query("gitx.snapshot", await withScope(params)),
+      status: async (params) => transport.query("gitx.status", await withScope(params)),
+      worktreeList: async (params) => transport.query("gitx.worktree_list", await withScope(params)),
+      worktreeCreate: async (params) => transport.query("gitx.worktree_create", await withScope(params)),
+      worktreeRemove: async (params) => transport.query("gitx.worktree_remove", await withScope(params)),
       worktreeBind: (params) => transport.query("gitx.worktree_bind", params),
       worktreeUnbind: (params) => transport.query("gitx.worktree_unbind", params),
     };

@@ -1,15 +1,17 @@
 /**
  * QAQ 插件:项目仪表盘——panel 槽(右栏工作区卡)的首个试点。
  *
- * 数据只经宿主 facade 的 gitStatus(capability "git-status"):main 侧解析活动
- * 会话的工作区 cwd 并跑只读 git。与 dock 槽的 qaqh-git(逐文件清单)不同,
- * 这里做一眼可读的总览:分支/同步态/未提交规模的判读卡。纯 DOM 无框架依赖,
- * 配色走壳 token;右栏收起时卡片随宿主卸下(offsetParent=null → 降频轮询)。
+ * 数据只经宿主 facade 的 gitx.status(capability "gitx"):daemon 侧解析活动
+ * 会话的生效工作区(绑定生效时落 worktree 根)跑只读 git。与 dock 槽的
+ * qaqh-git(逐文件清单)不同,这里做一眼可读的总览:分支/同步态/未提交规模
+ * 的判读卡。纯 DOM 无框架依赖,配色走壳 token;右栏收起时卡片随宿主卸下
+ * (offsetParent=null → 降频轮询)。
  */
-import type { GitStatusView } from "../../../webui/src/lib/git-status.js";
+import type { GitStatusSnapshot } from "../../../webui/src/lib/transport/index.js";
+import type { PluginGitxFacade } from "../../../webui/src/plugins/loader.js";
 
 interface PluginHost {
-  gitStatus?: () => Promise<GitStatusView>;
+  gitx?: Pick<PluginGitxFacade, "status">;
 }
 
 const OPEN_MS = 4000;
@@ -24,6 +26,19 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 
 function repoName(root: string): string {
   return root.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).at(-1) ?? root;
+}
+
+/** porcelain v2 XY 码 → 三类计数（与 daemon 解析同口径：未跟踪 = index "?"）。 */
+function stagedCount(view: GitStatusSnapshot): number {
+  return view.files.filter((file) => file.index !== "." && file.index !== "?").length;
+}
+
+function unstagedCount(view: GitStatusSnapshot): number {
+  return view.files.filter((file) => file.worktree !== "." && file.worktree !== "?").length;
+}
+
+function untrackedCount(view: GitStatusSnapshot): number {
+  return view.files.filter((file) => file.index === "?").length;
 }
 
 export default {
@@ -66,26 +81,19 @@ export default {
       chips.append(el("span", `qaqh-dash-chip ${cls}`.trimEnd(), text));
     }
 
-    function render(view: GitStatusView): void {
+    function render(view: GitStatusSnapshot): void {
       chips.replaceChildren();
       head.textContent = "";
       foot.textContent = "";
-      if (view.kind !== "repo") {
-        repo.textContent = "仪表盘";
-        branch.textContent = "";
-        verdict.className = "qaqh-dash-verdict bad";
-        verdict.textContent = view.kind === "no-workspace"
-          ? "没有活动会话，或该会话未绑定工作区"
-          : view.kind === "not-repo"
-            ? `${view.workspace} 不是 git 仓库`
-            : view.message;
-        return;
-      }
-      const detached = view.branch === "(detached)";
-      repo.textContent = repoName(view.repoRoot);
-      branch.textContent = detached ? view.head.slice(0, 7) : `⎇ ${view.branch}`;
+      const staged = stagedCount(view);
+      const unstaged = unstagedCount(view);
+      const untracked = untrackedCount(view);
+      repo.textContent = repoName(view.source_root);
+      branch.textContent = view.branch != null
+        ? `⎇ ${view.branch}`
+        : view.detached ? view.head_sha?.slice(0, 7) ?? "—" : "⎇ (空仓库)";
 
-      const dirty = view.staged + view.unstaged + view.untracked;
+      const dirty = staged + unstaged + untracked;
       if (dirty === 0) {
         verdict.className = "qaqh-dash-verdict ok";
         verdict.textContent = "工作区干净";
@@ -93,9 +101,9 @@ export default {
         verdict.className = "qaqh-dash-verdict dirty";
         verdict.textContent = `有 ${dirty} 处未提交改动`;
       }
-      if (view.staged > 0) chip(`暂存 ${view.staged}`);
-      if (view.unstaged > 0) chip(`未暂存 ${view.unstaged}`);
-      if (view.untracked > 0) chip(`未跟踪 ${view.untracked}`);
+      if (staged > 0) chip(`暂存 ${staged}`);
+      if (unstaged > 0) chip(`未暂存 ${unstaged}`);
+      if (untracked > 0) chip(`未跟踪 ${untracked}`);
       if (view.upstream == null) {
         chip("无上游分支", "sync-warn");
       } else {
@@ -103,20 +111,31 @@ export default {
         if ((view.behind ?? 0) > 0) chip(`落后 ${view.behind}`, "sync-behind");
         if ((view.ahead ?? 0) === 0 && (view.behind ?? 0) === 0) chip(`与 ${view.upstream} 同步`);
       }
-      head.textContent = `HEAD ${view.head.slice(0, 7)}`;
+      head.textContent = `HEAD ${view.head_sha?.slice(0, 7) ?? "—"}`;
       foot.textContent = `更新于 ${new Date().toLocaleTimeString()} · 只读`;
     }
 
+    /** 失败态：无活动会话（facade 哨兵）/非仓库/RPC 错误都落这条，消息即原因。 */
+    function renderError(message: string): void {
+      chips.replaceChildren();
+      head.textContent = "";
+      foot.textContent = "";
+      repo.textContent = "仪表盘";
+      branch.textContent = "";
+      verdict.className = "qaqh-dash-verdict bad";
+      verdict.textContent = message;
+    }
+
     async function refresh(): Promise<void> {
-      const read = host.gitStatus;
+      const read = host.gitx?.status;
       if (read == null) {
-        render({ kind: "error", workspace: "", message: "宿主未发放 git-status 能力（检查 manifest.capabilities）" });
+        renderError("宿主未发放 gitx 能力（检查 manifest.capabilities）");
         return;
       }
       try {
         render(await read());
       } catch (error) {
-        render({ kind: "error", workspace: "", message: error instanceof Error ? error.message : String(error) });
+        renderError(error instanceof Error ? error.message : String(error));
       }
     }
 
