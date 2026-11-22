@@ -25,7 +25,7 @@ import { createSignal } from "solid-js";
  * 壳没有活动会话时抛出 [`PluginScopeUnavailableError`]——绝不静默落到 daemon cwd。
  * 读面视角是会话的**生效工作区**（绑定生效时落 worktree 根）;写面视角是
  * **源工作区**（注册表所在地）,`attach=true` 的 scope 由注入满足。bind/unbind
- * 的 `session_id` 是显式参数,不做注入。
+ * 的 `session_id` 同规则:缺省注入活动会话,显式指名时透传。
  */
 export interface PluginGitxFacade {
   snapshot(params?: { scope_session_id?: string }): Promise<GitSnapshot>;
@@ -39,8 +39,10 @@ export interface PluginGitxFacade {
     attach: boolean;
   }): Promise<GitxWorktreeCreateResult>;
   worktreeRemove(params: { scope_session_id?: string; worktree_id: string; force: boolean }): Promise<{ removed: boolean }>;
-  worktreeBind(params: { session_id: string; worktree_id: string }): Promise<WorktreeBindingView>;
-  worktreeUnbind(params: { session_id: string }): Promise<{ unbound: boolean }>;
+  worktreeBind(params: { session_id?: string; worktree_id: string }): Promise<WorktreeBindingView>;
+  worktreeUnbind(params?: { session_id?: string }): Promise<{ unbound: boolean }>;
+  /** 活动会话 seed（壳侧解析,只读）：绑定归属判定/会话级动作显式传参用;无活动会话为 null。 */
+  activeSessionId(): Promise<string | null>;
 }
 
 /** 缺省视角缺失的哨兵：插件据此渲染「没有活动会话」,与 RPC 错误区分。 */
@@ -51,15 +53,28 @@ export class PluginScopeUnavailableError extends Error {
   }
 }
 
-/** `scope_session_id` 未显式指名（缺省/空白）时注入活动会话 seed。
- * tabs/store 经 toast → ~icons 的链在测试环境（server 构建）import 即炸,
- * 因此动态 import——只有 gitx facade 真被调用时才进这条链。 */
+/** 活动会话 seed(壳侧解析,插件不碰会话注册表)。tabs/store 经 toast → ~icons
+ * 的链在测试环境(server 构建)import 即炸,动态 import——只有 gitx facade
+ * 真被调用时才进这条链。 */
+async function activeSeed(): Promise<string | null> {
+  const { activeTab } = await import("../tabs/store.js");
+  return activeTab()?.seed ?? null;
+}
+
+/** `scope_session_id` 未显式指名（缺省/空白）时注入活动会话 seed。 */
 async function withScope<P extends { scope_session_id?: string }>(params: P | undefined): Promise<P> {
   if (params?.scope_session_id?.trim()) return params as P;
-  const { activeTab } = await import("../tabs/store.js");
-  const seed = activeTab()?.seed ?? null;
+  const seed = await activeSeed();
   if (seed == null) throw new PluginScopeUnavailableError();
   return { ...params, scope_session_id: seed } as P;
+}
+
+/** `session_id`(bind/unbind)未显式指名时注入活动会话;与写面 scope 同规则。 */
+async function withSession<P extends { session_id?: string }>(params: P): Promise<P & { session_id: string }> {
+  if (params.session_id?.trim()) return params as P & { session_id: string };
+  const seed = await activeSeed();
+  if (seed == null) throw new PluginScopeUnavailableError();
+  return { ...params, session_id: seed };
 }
 
 /** 插件宿主 facade：manifest 声明的 capability 决定拿到哪些键。 */
@@ -190,8 +205,9 @@ function facadeFor(entry: GraphEntry): PluginHost {
       worktreeList: async (params) => transport.query("gitx.worktree_list", await withScope(params)),
       worktreeCreate: async (params) => transport.query("gitx.worktree_create", await withScope(params)),
       worktreeRemove: async (params) => transport.query("gitx.worktree_remove", await withScope(params)),
-      worktreeBind: (params) => transport.query("gitx.worktree_bind", params),
-      worktreeUnbind: (params) => transport.query("gitx.worktree_unbind", params),
+      worktreeBind: async (params) => transport.query("gitx.worktree_bind", await withSession(params)),
+      worktreeUnbind: async (params) => transport.query("gitx.worktree_unbind", await withSession(params ?? {})),
+      activeSessionId: async () => activeSeed(),
     };
   }
   return facade;

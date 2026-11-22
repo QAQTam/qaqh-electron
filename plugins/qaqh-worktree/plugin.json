@@ -1,0 +1,11 @@
+{
+  "id": "qaqh-worktree",
+  "name": "Worktree 管理",
+  "version": "0.1.0",
+  "entry": "dist/entry.js",
+  "slot": "dock",
+  "capabilities": [
+    "gitx"
+  ],
+  "icon": "🪴"
+}
