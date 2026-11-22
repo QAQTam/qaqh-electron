@@ -22,7 +22,6 @@ export type HostCommand =
   | "shell_detach"
   | "shell_stdin"
   | "shell_resize"
-  | "git_status"
   | "session_bootstrap"
   | "content_read_text"
   | "content_read_cancel"

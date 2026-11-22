@@ -7,7 +7,6 @@
  * release 墙：装载器只应用与首帧同 release 的图，换版本须整页 reload。
  */
 import { desktopHost, requireDesktopHost } from "../lib/desktop-host.js";
-import type { GitStatusView } from "../lib/git-status.js";
 import type {
   GitSnapshot,
   GitStatusSnapshot,
@@ -67,8 +66,6 @@ async function withScope<P extends { scope_session_id?: string }>(params: P | un
 export interface PluginHost {
   /** 原生手柄原始帧（Gamepad API 直读，无导航节流）。 */
   gamepadRaw?: (onFrame: (pad: Gamepad | null) => void) => () => void;
-  /** 活动会话工作区的只读 git 状态；main 侧解析 cwd 并跑 git，插件不碰会话注册表。 */
-  gitStatus?: () => Promise<GitStatusView>;
   /** gitx 面（ADR-0041）：git 快照 + managed/unmanaged worktree 清单与变更操作。 */
   gitx?: PluginGitxFacade;
 }
@@ -186,9 +183,6 @@ function publishStatus(): void {
 function facadeFor(entry: GraphEntry): PluginHost {
   const facade: PluginHost = {};
   if (entry.capabilities.includes("gamepad-raw")) facade.gamepadRaw = startGamepadRawFeed;
-  if (entry.capabilities.includes("git-status")) {
-    facade.gitStatus = () => requireDesktopHost().invoke<GitStatusView>("git_status");
-  }
   if (entry.capabilities.includes("gitx")) {
     facade.gitx = {
       snapshot: async (params) => transport.query("gitx.snapshot", await withScope(params)),

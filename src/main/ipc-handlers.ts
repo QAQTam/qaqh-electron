@@ -8,7 +8,6 @@ import { globalCommandTarget, loadNativeAddon, sessionCommandTarget } from "./na
 import { isAlive } from "./daemon.js";
 import { pluginsRoot, notifyPluginsChanged } from "./plugins.js";
 import { importPlugin, listManagedPlugins, removePlugin, setPluginEnabled } from "./frontend-plugins.js";
-import { readGitStatus } from "./git-status.js";
 import type { RingingCommand } from "../../webui/src/api/qaqh/RingingCommand";
 import type { CommandTarget } from "../../webui/src/api/qaqh/CommandTarget";
 import type { CommandPrecondition } from "../../webui/src/api/qaqh/CommandPrecondition";
@@ -534,19 +533,6 @@ async function handleCommand(
         throw new Error("shell_resize requires integer cols/rows");
       }
       return client.shellResize(requireId(args.shell_id, "shell_id"), args.cols, args.rows);
-    }
-
-    /* ── 工作区 git 状态(只读,插件 capability "git-status" 的唯一取数面)──────
-       不传 path 就解析活动会话的工作区:main 持有 activeSeed,daemon 的
-       workspace.get 给出 cwd。插件因此不需要知道会话/工作区注册表。 */
-    case "git_status": {
-      const explicit = typeof args.path === "string" && args.path !== "" ? args.path : null;
-      if (explicit != null) return readGitStatus(explicit);
-      const seed = client.getActiveSeed();
-      if (seed == null) return { kind: "no-workspace" };
-      const cwd = await client.serviceCall("workspace.get", { session_id: seed });
-      if (typeof cwd !== "string" || cwd === "") return { kind: "no-workspace" };
-      return readGitStatus(cwd);
     }
 
     case "exit_app": {
