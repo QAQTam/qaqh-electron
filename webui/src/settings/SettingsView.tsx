@@ -10,10 +10,7 @@ import {
   performanceMode,
   refreshShellGpuPref,
   setPerformanceMode,
-  sessionMaterial,
-  setSessionMaterial,
   type PerformanceMode,
-  type SessionMaterial,
 } from "../lib/visual";
 import { desktopHost } from "../lib/desktop-host";
 import { applyTheme, applyThemePreset, storedTheme, themePreset, THEME_PRESET_OPTIONS, type ThemePreset } from "../lib/theme";
@@ -93,11 +90,6 @@ const PERF_SEGMENTS: readonly SegmentedOption<PerformanceMode>[] = [
   { value: "auto", label: "自动" },
   { value: "low", label: "性能" },
   { value: "quality", label: "画质" },
-];
-
-const MATERIAL_SEGMENTS: readonly SegmentedOption<SessionMaterial>[] = [
-  { value: "glass", label: "通透" },
-  { value: "solid", label: "实色" },
 ];
 
 const FontNotices: Component = () => {
@@ -235,21 +227,13 @@ const LocalSettings: Component<{
             </SettingRow>
           </SettingGroup>
 
-          <SettingGroup title="渲染与材质">
+          <SettingGroup title="渲染与性能">
             <SettingRow label="性能模式" desc="低配硬件建议选择「性能」以减少模糊与动画">
               <SegmentedControl
                 aria-label="性能模式"
                 options={PERF_SEGMENTS}
                 value={performanceMode()}
                 onChange={(value) => setPerformanceMode(value)}
-              />
-            </SettingRow>
-            <SettingRow label="标签页材质" desc="切换会话顶栏的通透或实色风格">
-              <SegmentedControl
-                aria-label="标签页材质"
-                options={MATERIAL_SEGMENTS}
-                value={sessionMaterial()}
-                onChange={(value) => setSessionMaterial(value)}
               />
             </SettingRow>
             <Show when={gpuRestartPending()}>
