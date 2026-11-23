@@ -1,129 +1,150 @@
-/* 工具模式卡(composer 会话级选择器):与 effort-card 同一份 `.composer-menu`
-   容器样式,这里只补档位行与 custom 编辑面的自身样式。 */
+/* 极简工具模式菜单样式（对齐 Antigravity Local Permissions 浮层规范） */
+
 @layer components {
-  .toolmode-card {
-    min-width: 320px;
-    max-width: 400px;
+  .toolmode-trigger {
+    color: var(--text-secondary);
+    background: var(--surface-hover);
+    border-color: transparent;
+    border-radius: var(--radius-pill);
+    padding: 0 10px;
+    height: 30px;
+    min-height: 30px;
+    font-size: var(--fs-xs);
+    font-weight: 500;
+  }
+  .toolmode-trigger:hover,
+  .toolmode-trigger[aria-expanded="true"] {
+    color: var(--text);
+    background: var(--surface-active);
+    border-color: transparent;
   }
 
-  .toolmode-card__head {
+  .composer-menu.toolmode-popover {
+    width: 268px;
+    max-width: min(280px, 84vw);
+    max-height: min(60vh, 360px);
+    overflow-y: auto;
+    padding: 6px;
+    gap: 0;
+    border-radius: 12px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    box-shadow: var(--shadow-panel);
+  }
+
+  .toolmode-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    padding: 2px 10px 8px;
-    border-bottom: 1px solid var(--border);
   }
-
-  .toolmode-card__head strong {
-    font-size: var(--fs-sm);
-  }
-
-  .toolmode-card__head small {
-    color: var(--muted);
-    font-size: var(--fs-xs);
-  }
-
-  .toolmode-row {
+  .toolmode-option {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     width: 100%;
-    padding: 7px 10px;
-    border: none;
-    border-radius: var(--radius-control);
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 8px;
     background: transparent;
-    color: inherit;
+    color: var(--text);
     text-align: left;
     cursor: pointer;
+    transition: background-color var(--dur-fast) var(--ease);
   }
-
-  .toolmode-row:hover:not(:disabled) {
-    background: var(--hover, rgb(127 127 127 / 12%));
+  .toolmode-option:hover {
+    background: var(--surface-hover);
   }
-
-  .toolmode-row:disabled {
-    cursor: default;
-    opacity: 0.55;
+  .toolmode-option.selected {
+    background: var(--surface-hover);
   }
-
-  .toolmode-row.is-unavailable {
-    cursor: default;
-    opacity: 0.45;
-  }
-
-  .toolmode-row.selected {
-    background: var(--accent-soft, rgb(120 120 255 / 16%));
-  }
-
-  .toolmode-dot {
+  .toolmode-option-icon {
+    display: grid;
+    place-items: center;
     flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    border: 1.5px solid var(--muted);
+    width: 18px;
+    height: 18px;
+    color: var(--text-secondary);
   }
-
-  .toolmode-row.selected .toolmode-dot {
-    border-color: var(--accent);
-    background: var(--accent);
+  .toolmode-option-icon svg {
+    width: 16px;
+    height: 16px;
   }
-
-  .toolmode-name {
-    flex: none;
+  .toolmode-option-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .toolmode-option-title {
     font-size: var(--fs-sm);
-    font-weight: 500;
+    font-weight: 550;
+    color: var(--text);
+    line-height: 1.3;
   }
-
-  .toolmode-hint {
-    flex: 1;
-    overflow: hidden;
+  .toolmode-option-desc {
+    font-size: 11px;
     color: var(--muted);
-    font-size: var(--fs-xs);
+    line-height: 1.35;
+    overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
-  .toolmode-count {
+  .toolmode-option-check {
+    width: 14px;
+    height: 14px;
     flex: none;
-    color: var(--muted);
-    font-size: var(--fs-xs);
+    color: var(--text);
   }
 
-  .toolmode-custom {
+  .toolmode-custom-view {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin: 4px 10px 8px;
-    padding: 8px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
+    gap: 8px;
+    padding: 4px;
   }
-
-  .toolmode-custom small {
-    color: var(--muted);
-    font-size: var(--fs-xs);
+  .toolmode-custom-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
-
-  .toolmode-custom textarea {
-    width: 100%;
-    resize: vertical;
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-  }
-
-  .toolmode-apply {
-    align-self: flex-end;
-    padding: 4px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
+  .toolmode-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    border: 0;
+    border-radius: 6px;
     background: transparent;
-    color: var(--accent);
-    cursor: pointer;
+    color: var(--text-secondary);
     font-size: var(--fs-xs);
+    cursor: pointer;
   }
-
-  .toolmode-apply:disabled {
-    cursor: default;
-    opacity: 0.5;
+  .toolmode-back:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+  .toolmode-back svg {
+    width: 13px;
+    height: 13px;
+  }
+  .toolmode-textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font: 12px/1.5 var(--font-code);
+    resize: vertical;
+  }
+  .toolmode-textarea:focus {
+    outline: none;
+    border-color: var(--focus-ring);
+  }
+  .toolmode-custom-foot {
+    display: flex;
+    justify-content: flex-end;
   }
 }

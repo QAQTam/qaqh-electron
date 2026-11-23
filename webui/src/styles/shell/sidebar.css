@@ -224,18 +224,24 @@
   .message-workspace-toggle > svg.collapsed { transform: rotate(-90deg); }
   .message-workspace-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .message-workspace-count { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 500; }
-  .message-workspace-create {
+  .message-workspace-create,
+  .message-workspace-more {
     display: grid; place-items: center; flex: none;
     width: 24px; height: 24px; border-radius: var(--r-sm);
     color: var(--muted); opacity: 0;
     transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
   }
-  .message-workspace-create svg { width: 14px; height: 14px; }
+  .message-workspace-create svg,
+  .message-workspace-more svg { width: 14px; height: 14px; }
   .message-workspace-row:hover .message-workspace-create,
-  .message-workspace-create:focus-visible { opacity: 1; }
-  .message-workspace-create:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
-  /* 禁用态仍然露出来(而不是消失):「这里能建会话,只是现在不行」比"根本没这个入口"诚实。 */
+  .message-workspace-row:hover .message-workspace-more,
+  .message-workspace-create:focus-visible,
+  .message-workspace-more:focus-visible { opacity: 1; }
+  .message-workspace-create:hover:not(:disabled),
+  .message-workspace-more:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
   .message-workspace-row:hover .message-workspace-create:disabled { opacity: .45; }
+  .message-session-row.is-archived { opacity: .62; }
+  .message-session-row.is-archived:hover { opacity: .9; }
   /* 嵌套缩进 18→8:整行左移、行宽变长,标题能多显示几个字(悬停胶囊/选中条随行左缘,不受影响)。 */
   /* 行间净间距全部交给 .message-session-item 的垂直内边距(各 3px),这里不再
      叠一层 gap:否则 6px 要拆成 padding+gap 两个旋钮,字体缩放后还对不上。 */
@@ -250,28 +256,19 @@
        不再用 min-height:32px 居中挤留白:那样 34px 按钮配 20px 文字,相邻两行
        字之间空出 14px(消息一多扫读就散)。padding 显式定义后净间距恒为 6px,
        且与字号/--font-scale 无关。 */
-    min-width: 0; padding: 2px 8px 2px 6px;
-    border: 1px solid transparent; border-radius: var(--r-sm);
-    color: var(--muted); text-align: left; font-size: var(--fs-xs);
+    min-width: 0; padding: 5px 8px;
+    border: 1px solid transparent; border-radius: var(--radius-control);
+    color: var(--text-secondary); text-align: left; font-size: var(--fs-sm);
     transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
   }
-  .message-session-item::before {
-    content: "";
-    position: absolute; left: 0; top: 50%;
-    width: 3px; height: 0; border-radius: var(--radius-pill);
-    background: var(--accent);
-    opacity: 0; transform: translateY(-50%);
-    transition: height var(--dur-enter) var(--ease), opacity var(--dur-fast) var(--ease);
-  }
-  .message-session-item:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
-  .message-session-item:active { background: var(--accent-soft); }
+  .message-session-item:hover { color: var(--text); background: var(--surface-hover); }
+  .message-session-item:active { background: var(--surface-active); }
   .message-session-item.active {
-    color: var(--text); background: var(--accent-soft); border-color: transparent;
+    color: var(--text);
+    background: var(--surface-active);
+    border-color: var(--border);
+    font-weight: 550;
   }
-  .message-session-item.active::before { height: 16px; opacity: 1; }
-  /* WinUI 3 式选中指示器(单个共享 pill,由 app/selection-pill.ts 驱动):
-     基础主题继续用上面的 per-item ::before 过渡;Windows/Fluent 覆盖层里
-     隐藏 ::before、改用会滑动的共享 pill(见 fluent.css)。 */
   .message-session-pill { display: none; }
   .message-session-item:focus-visible { outline-offset: 1px; }
   .message-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -291,16 +288,17 @@
   }
   .message-session-item:has(.message-session-toolmode) .message-session-dot { margin-left: 6px; }
   /* fork 交接对话徽标(血缘来自本地交接账本,后端没有 parent 字段可读)。 */
-  .message-session-fork {
+  /* fork 血缘极简分叉图标（替代 [custom] / [fork] 文字胶囊，释放标题空间） */
+  .message-session-fork-icon {
+    display: inline-grid;
+    place-items: center;
     flex: none;
-    margin-left: 6px;
-    padding: 1px 6px;
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-pill);
-    color: var(--accent);
-    font-size: 10px;
-    line-height: 1.4;
-    white-space: nowrap;
+    color: var(--muted);
+    opacity: 0.78;
+  }
+  .message-session-fork-icon svg {
+    width: 13px;
+    height: 13px;
   }
   .message-session-item:has(.message-session-fork) .message-session-dot { margin-left: 6px; }
   /* 会话状态点(六态,词表见 tabs/store.ts SessionDotKind):

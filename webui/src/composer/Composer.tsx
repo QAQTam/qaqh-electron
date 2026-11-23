@@ -1,4 +1,3 @@
-import { registry } from "../settings/registry";
 /**
  * 输入区(spec §12):1–8 行自动增高,Enter 发送 / Shift+Enter 换行,
  * 输入法组合态(isComposing / keyCode 229)不发送;
@@ -308,36 +307,15 @@ export const Composer: Component<{
                 <IconCamera />
               </button>
             </Show>
-            <Show when={props.onSelection != null}>
-              <div class="composer-control-wrap composer-profile-wrap">
-                <button type="button" class="composer-tool-button composer-profile-button"
-                  aria-expanded={openMenu() === "profile" ? "true" : "false"}
-                  onClick={() => setOpenMenu(openMenu() === "profile" ? null : "profile")}>
-                  <span>{props.profileView?.().effective != null ? `${props.profileView?.().effective} · ` : ""}{props.modelView?.() ?? "选择服务商和模型"}</span><IconChevronDown />
-                </button>
-                <Show when={openMenu() === "profile"}>
-                  <div class="composer-menu composer-profile-menu" role="menu">
-                    <strong>选择服务商和模型</strong>
-                    <For each={registry()?.providers ?? []}>{(provider) => <>
-                      <small>{provider.name}</small>
-                      <For each={provider.models.filter((model) => model.definition.enabled)}>{(model) =>
-                        <button type="button" role="menuitem" onClick={() => {
-                          props.onSelection?.(provider.id, model.id); setOpenMenu(null);
-                        }}>{model.definition.display_name || model.id}</button>
-                      }</For>
-                    </>}</For>
-                    <button type="button" onClick={() => { setOpenMenu(null); props.onManageProfiles?.(); }}>管理服务商和模型…</button>
-                  </div>
-                </Show>
-              </div>
-            </Show>
-            {/* 强度与模型（全局）：与 profile/workspace 共用一个菜单位，同时只开一个。 */}
+            {/* 统一模型与推理强度菜单（单一入口，二级浮层选强度） */}
             <EffortCard
               open={openMenu() === "effort"}
               onToggle={() => setOpenMenu(openMenu() === "effort" ? null : "effort")}
               model={props.modelView}
               modelOverridden={props.modelOverridden}
               onModel={props.onModel}
+              onSelection={props.onSelection}
+              onManageProfiles={props.onManageProfiles}
               providerKind={props.providerKind}
               effort={props.effortView}
               effortOverridden={props.effortOverridden}
@@ -345,15 +323,6 @@ export const Composer: Component<{
               maxTokens={props.maxTokensView}
               onMaxTokens={props.onMaxTokens}
             />
-            {/* 工具模式（会话级）：同一条菜单位规则；触发器由 ToolModeCard 自带。 */}
-            <Show when={props.onToolMode != null && props.toolModeView != null}>
-              <ToolModeCard
-                open={openMenu() === "toolmode"}
-                onToggle={() => setOpenMenu(openMenu() === "toolmode" ? null : "toolmode")}
-                view={props.toolModeView}
-                onMode={props.onToolMode}
-              />
-            </Show>
             <Show when={props.onWorkspace != null}>
               <div class="composer-control-wrap">
                 <button
@@ -389,6 +358,14 @@ export const Composer: Component<{
             </div>
           </div>
           <div class="composer-submit-area">
+            <Show when={props.onToolMode != null && props.toolModeView != null}>
+              <ToolModeCard
+                open={openMenu() === "toolmode"}
+                onToggle={() => setOpenMenu(openMenu() === "toolmode" ? null : "toolmode")}
+                view={props.toolModeView}
+                onMode={props.onToolMode}
+              />
+            </Show>
             <Show
               when={props.running()}
               fallback={

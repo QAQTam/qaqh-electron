@@ -64,6 +64,7 @@ import { Select } from "../ui/Select";
 import { SettingGroup, SettingRow } from "../ui/SettingGroup";
 import { PairingSection } from "./PairingSection";
 import { AboutSection } from "./AboutSection";
+import { ArchivedSection } from "./ArchivedSection";
 import { HostSection } from "./HostSection";
 import { ProvidersSection } from "./ProvidersSection";
 import { SandboxSection } from "./SandboxSection";
@@ -77,6 +78,7 @@ const REGISTRY_SECTIONS: ReadonlySet<string> = new Set([
 
 const LOCAL_SECTIONS: ReadonlySet<string> = new Set([
   "section-host",
+  "section-archived",
   "section-appearance",
   "section-about",
 ]);
@@ -175,6 +177,10 @@ const LocalSettings: Component<{
     <>
       <Show when={props.activeSection() === "section-host"}>
         <HostSection onOpenPairing={() => props.onSelect("section-pairing")} />
+      </Show>
+
+      <Show when={props.activeSection() === "section-archived"}>
+        <ArchivedSection />
       </Show>
 
       <Show when={props.activeSection() === "section-appearance"}>

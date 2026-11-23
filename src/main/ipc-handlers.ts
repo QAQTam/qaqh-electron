@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from "electron";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -89,7 +89,7 @@ const RINGING_COMMAND_TYPES: ReadonlySet<RingingCommand["type"]> = new Set([
   "provider.model.upsert", "provider.model.delete",
   "model.selection.set_default", "config.save", "config.set_permission_level", "workspace.set",
   "workspace.create", "workspace.rename", "workspace.delete", "workspace.move_session", "workspace.detach",
-  "subagent.spawn", "todo.set", "todo.cancel", "plan.action", "diagnostics.memory.start", "diagnostics.memory.stop",
+  "todo.set", "todo.cancel", "plan.action", "diagnostics.memory.start", "diagnostics.memory.stop",
   "exec_session.interrupt", "exec_session.terminate",
 ]);
 
@@ -195,6 +195,49 @@ export function registerQuitIpcHandler(getClient: () => RingingClient | null): v
       if (status === "unsupported") throw new Error("当前 daemon 不支持安全停止");
     }
     app.quit();
+  });
+
+  type NativeMenuSpec =
+    | { type: "separator" }
+    | { id: string; label: string; enabled?: boolean; checked?: boolean; submenu?: NativeMenuSpec[] };
+
+  ipcMain.handle("qaqh:popup-menu", async (event, args: { items?: NativeMenuSpec[]; x?: number; y?: number } = {}) => {
+    if (event.senderFrame !== event.sender.mainFrame || !isTrustedRenderer(event.senderFrame?.url ?? "")) {
+      throw new Error("IPC sender is not the application renderer");
+    }
+    const items = Array.isArray(args.items) ? args.items : [];
+    if (items.length === 0) return null;
+    const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    return await new Promise<string | null>((resolve) => {
+      let picked: string | null = null;
+      const toTemplate = (nodes: NativeMenuSpec[]): MenuItemConstructorOptions[] =>
+        nodes.map((node) => {
+          if ("type" in node && node.type === "separator") {
+            return { type: "separator" };
+          }
+          const action = node as Exclude<NativeMenuSpec, { type: "separator" }>;
+          if (Array.isArray(action.submenu) && action.submenu.length > 0) {
+            return {
+              label: action.label,
+              enabled: action.enabled !== false,
+              submenu: toTemplate(action.submenu),
+            };
+          }
+          return {
+            label: action.label,
+            enabled: action.enabled !== false,
+            ...(action.checked != null ? { type: "checkbox" as const, checked: action.checked } : {}),
+            click: () => { picked = action.id; },
+          };
+        });
+      const menu = Menu.buildFromTemplate(toTemplate(items));
+      menu.popup({
+        window: win,
+        ...(typeof args.x === "number" ? { x: Math.round(args.x) } : {}),
+        ...(typeof args.y === "number" ? { y: Math.round(args.y) } : {}),
+        callback: () => resolve(picked),
+      });
+    });
   });
 }
 

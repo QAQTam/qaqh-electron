@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld("qaqhHost", {
     set: (key: string, value: string | null) => ipcRenderer.invoke("qaqh:prefs-set", { key, value }) as Promise<void>,
   },
   relaunch: () => ipcRenderer.invoke("qaqh:relaunch"),
+  popupMenu: (items: unknown[], pos?: { x?: number; y?: number }) =>
+    ipcRenderer.invoke("qaqh:popup-menu", { items, ...(pos ?? {}) }) as Promise<string | null>,
   updates: {
     check: () => ipcRenderer.invoke("qaqh:update-check"),
     stage: () => ipcRenderer.invoke("qaqh:update-stage"),

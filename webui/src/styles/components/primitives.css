@@ -336,4 +336,44 @@
     opacity: 0.48;
     cursor: not-allowed;
   }
+
+  /* ── BYOK 多模型与能力胶囊（Lite 紧凑表单） ─────────────────── */
+  .byok-live-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .byok-advanced-bar {
+    display: flex;
+    align-items: center;
+    margin-top: 2px;
+  }
+  .byok-cap-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .byok-cap-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 12px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text-secondary);
+    font: 500 var(--fs-xs)/1 var(--font-ui);
+    cursor: pointer;
+    transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .byok-cap-chip svg { width: 13px; height: 13px; flex: none; }
+  .byok-cap-chip:hover { background: var(--surface-hover); color: var(--text); }
+  .byok-cap-chip.active {
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    color: var(--accent);
+  }
 }

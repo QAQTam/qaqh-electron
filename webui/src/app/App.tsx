@@ -40,6 +40,7 @@ import {
   closeTab,
   createSession,
   creating,
+  archiveSession,
   deleteSession,
   draftOf,
   focusToken,
@@ -1022,6 +1023,7 @@ const App: Component = () => {
         creating={creating()}
         canCreate={hostIncompatible() == null}
         onRename={renameSession}
+        onArchive={archiveSession}
         onDelete={deleteSession}
       />
       <div class="workspace">
@@ -1271,7 +1273,9 @@ const App: Component = () => {
       <CodePreviewDrawer />
       <ContextMenuHost />
       <ToastHost />
-      <PluginDock />
+      <Show when={section() === "messages" && !isStartup() && !settingsOpen()}>
+        <PluginDock />
+      </Show>
       <Show when={isDesktop}>
         <BrowserPane />
       </Show>

@@ -793,6 +793,27 @@ export async function deleteSession(seed: string): Promise<void> {
   }
 }
 
+export async function archiveSession(seed: string): Promise<void> {
+  try {
+    await transport.command({ type: "session.archive" }, sessionTarget(seed));
+    await dropSession(seed);
+    await pollSessions();
+    toast("已归档会话", "ok", { durationMs: 1800 });
+  } catch (error) {
+    toast("归档失败：" + (error instanceof Error ? error.message : String(error)), "err");
+  }
+}
+
+export async function unarchiveSession(seed: string): Promise<void> {
+  try {
+    await transport.command({ type: "session.unarchive" }, sessionTarget(seed));
+    await pollSessions();
+    toast("已恢复会话", "ok", { durationMs: 1800 });
+  } catch (error) {
+    toast("恢复失败：" + (error instanceof Error ? error.message : String(error)), "err");
+  }
+}
+
 /** 启动:只装载会话目录并落主页——冷启动不再自动 attach 会话(产品决策 2026-11-14,
  *  首屏让给主页卖点);恢复入口 = 主页「最近的工作」卡与侧栏列表。 */
 export async function boot(): Promise<void> {

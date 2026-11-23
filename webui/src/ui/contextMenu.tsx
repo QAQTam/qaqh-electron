@@ -15,6 +15,7 @@
  */
 import { createEffect, createSignal, For, Show, type Component } from "solid-js";
 import { Portal } from "@solidjs/web";
+import { desktopHost, type NativeMenuItem } from "../lib/desktop-host";
 import { STR } from "../lib/strings";
 import { toast } from "./toast";
 
@@ -36,6 +37,23 @@ const [request, setRequest] = createSignal<ContextMenuRequest | null>(null);
 const [position, setPosition] = createSignal<{ left: number; top: number } | null>(null);
 
 export function openContextMenu(next: ContextMenuRequest): void {
+  const popup = desktopHost()?.popupMenu;
+  if (popup != null) {
+    const handlers = new Map<string, () => void>();
+    const nativeItems: NativeMenuItem[] = next.items.map((item, index) => {
+      if (item.kind === "separator") return { type: "separator" };
+      const id = `ctx-${index}`;
+      handlers.set(id, item.onSelect);
+      return {
+        id,
+        label: item.hint ? `${item.label}（${item.hint}）` : item.label,
+      };
+    });
+    void popup(nativeItems, { x: next.x, y: next.y }).then((picked) => {
+      if (picked != null) handlers.get(picked)?.();
+    });
+    return;
+  }
   setPosition(null);
   setRequest(next);
 }

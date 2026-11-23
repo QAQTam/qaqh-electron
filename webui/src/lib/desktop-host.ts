@@ -205,6 +205,10 @@ export interface DesktopPrefsBridge {
   set(key: string, value: string | null): Promise<void>;
 }
 
+export type NativeMenuItem =
+  | { type: "separator" }
+  | { id: string; label: string; enabled?: boolean; checked?: boolean; submenu?: NativeMenuItem[] };
+
 export interface DesktopHostBridge {
   readonly platform: "electron";
   invoke<T = unknown>(command: HostCommand, args?: Record<string, unknown>): Promise<T>;
@@ -218,6 +222,7 @@ export interface DesktopHostBridge {
   powerBlocker?: PowerBlockerBridge;
   gpuPref?: GpuPrefBridge;
   relaunch?(): Promise<void>;
+  popupMenu?(items: NativeMenuItem[], pos?: { x?: number; y?: number }): Promise<string | null>;
   updates?: UpdatesBridge;
   requestQuit(options: { stopDaemon: boolean; stopActiveWork: boolean }): Promise<void>;
 }

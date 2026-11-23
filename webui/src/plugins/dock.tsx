@@ -1,18 +1,14 @@
 /**
- * PluginDock：右下角插件坞——dock 槽插件的统一收口。
+ * PluginDock：仅在对话页右下角显示的纵向可收折插件坞（向上展开，不横向遮挡 Composer）。
  *
- * 图标条常驻右下角（自 qaqh-snake/qaqh-padview 的自管按钮让位而来），点图标
- * 向上弹出该插件的渲染窗；同一时刻至多开一个面板。容器由 loader 的
- * ensureDockMounted 懒挂载，打开后常驻（切走再切回不丢插件状态）。
- *
- * Solid 2 严格模式纪律：面板开合信号提升到模块级（Esc 监听器注册一次随页面
- * 生命周期），关停失效插件用 createMemo 纯派生——组件作用域内不写信号、不挂
- * onCleanup（rc.15 的 CLEANUP/REACTIVE_WRITE 双闸门）。
+ * Solid 2 严格模式纪律：面板与坞条开合信号提升到模块级，关停失效插件用 createMemo 纯派生。
  */
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import IconChevronDown from "~icons/lucide/chevron-down";
+import IconPuzzle from "~icons/lucide/puzzle";
+import IconX from "~icons/lucide/x";
 import { ASSET_ICON, dockPlugins, ensureDockMounted } from "./loader";
 import { prefGet, prefSet } from "../lib/prefs";
-import { STR } from "../lib/strings";
 
 const OPEN_KEY = "qaqh.plugin-dock.open";
 
@@ -21,12 +17,15 @@ function readOpen(): string | null {
   return v == null || v === "" ? null : v;
 }
 
-/** 打开的插件 id；null = 收起。模块级:Esc 监听与本偏好同生命周期。 */
 const [openId, setOpenIdRaw] = createSignal<string | null>(readOpen());
+const [barExpanded, setBarExpanded] = createSignal<boolean>(openId() != null);
+
 function setOpen(id: string | null): void {
   setOpenIdRaw(id);
   prefSet(OPEN_KEY, id ?? "");
+  if (id != null) setBarExpanded(true);
 }
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && openId() != null) setOpen(null);
 });
@@ -34,7 +33,6 @@ document.addEventListener("keydown", (event) => {
 export function PluginDock() {
   const [bodyEl, setBodyEl] = createSignal<HTMLElement | null>(null);
 
-  // 生效的打开项:指向的插件从图里消失(被删/禁用)时派生为收起,不回写信号。
   const activeId = createMemo(() => {
     const id = openId();
     const list = dockPlugins();
@@ -42,8 +40,6 @@ export function PluginDock() {
     return id;
   });
 
-  // 面板体就绪且 activeId 有效 → 懒挂载并把容器搬进面板（切插件=搬节点，状态不丢）。
-  // deps 含 dockPlugins：graph 帧到达/rev 推进时对已开面板自动重试挂载。
   createEffect(
     () => [activeId(), bodyEl(), dockPlugins()] as const,
     ([id, body]) => {
@@ -55,30 +51,62 @@ export function PluginDock() {
     },
   );
 
+  const toggleBar = (): void => {
+    if (barExpanded()) {
+      setOpen(null);
+      setBarExpanded(false);
+    } else {
+      setBarExpanded(true);
+    }
+  };
+
   return (
-    <div class="plugin-dock">
-      <Show when={activeId() != null}>
-        <div class="plugin-dock-panel">
-          <div class="plugin-dock-head">
-            <span class="plugin-dock-title">{dockPlugins().find((entry) => entry.id === activeId())?.name ?? ""}</span>
-            <button type="button" class="ghost-mini" onClick={() => setOpen(null)}>{STR.close}</button>
+    <Show when={dockPlugins().length > 0}>
+      <div class="plugin-dock">
+        <Show when={activeId() != null}>
+          <div class="plugin-dock-panel">
+            <div class="plugin-dock-head">
+              <span class="plugin-dock-title">{dockPlugins().find((entry) => entry.id === activeId())?.name ?? ""}</span>
+              <button type="button" class="plugin-dock-close" aria-label="关闭插件面板" onClick={() => setOpen(null)}>
+                <IconX />
+              </button>
+            </div>
+            <div class="plugin-dock-body" ref={setBodyEl} />
           </div>
-          <div class="plugin-dock-body" ref={setBodyEl} />
-        </div>
-      </Show>
-      <div class="plugin-dock-bar">
-        <For each={dockPlugins()}>{(entry) => (
-          <button type="button" class={"plugin-dock-btn" + (activeId() === entry.id ? " active" : "")} title={entry.name}
-            onClick={() => setOpen(activeId() === entry.id ? null : entry.id)}>
-            <Show when={ASSET_ICON.test(entry.icon)} fallback={<span class="plugin-dock-emoji">{entry.icon}</span>}>
-              <img class="plugin-dock-img" src={`app://localhost/plugins/${entry.id}/${entry.icon}?rev=${entry.rev}`} alt={entry.name} />
+        </Show>
+
+        <div class={{ "plugin-dock-rail": true, "is-expanded": barExpanded() }}>
+          <Show when={barExpanded()}>
+            <div class="plugin-dock-stack">
+              <For each={dockPlugins()}>
+                {(entry) => (
+                  <button
+                    type="button"
+                    class={"plugin-dock-btn" + (activeId() === entry.id ? " active" : "")}
+                    title={entry.name}
+                    onClick={() => setOpen(activeId() === entry.id ? null : entry.id)}
+                  >
+                    <Show when={ASSET_ICON.test(entry.icon)} fallback={<span class="plugin-dock-emoji">{entry.icon}</span>}>
+                      <img class="plugin-dock-img" src={`app://localhost/plugins/${entry.id}/${entry.icon}?rev=${entry.rev}`} alt={entry.name} />
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+          <button
+            type="button"
+            class="plugin-dock-toggle"
+            aria-expanded={barExpanded() ? "true" : "false"}
+            title={barExpanded() ? "收起插件坞" : `展开插件坞 (${dockPlugins().length})`}
+            onClick={toggleBar}
+          >
+            <Show when={barExpanded()} fallback={<IconPuzzle />}>
+              <IconChevronDown />
             </Show>
           </button>
-        )}</For>
-        <Show when={dockPlugins().length === 0}>
-          <span class="plugin-dock-empty">无插件</span>
-        </Show>
+        </div>
       </div>
-    </div>
+    </Show>
   );
 }

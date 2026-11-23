@@ -55,6 +55,7 @@ export const Sidebar: Component<{
   creating?: boolean;
   canCreate?: boolean;
   onRename?: (seed: string, title: string) => Promise<void>;
+  onArchive?: (seed: string) => Promise<void>;
   onDelete?: (seed: string) => Promise<void>;
   /** 拖拽调宽:当前宽度(null = 默认,吃 --sidebar-width token)。App 持久化。 */
   width?: number | null;
@@ -219,6 +220,7 @@ export const Sidebar: Component<{
         creating={props.creating}
         canCreate={props.canCreate}
         onRename={props.onRename}
+        onArchive={props.onArchive}
         onDelete={props.onDelete}
       />
     </Show>

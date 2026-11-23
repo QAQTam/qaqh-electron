@@ -1,11 +1,15 @@
 import { createMemo, createSignal, For, onSettled, Show, type Component } from "solid-js";
 import IconChevronDown from "~icons/lucide/chevron-down";
 import IconFolder from "~icons/lucide/folder";
+import IconGitFork from "~icons/lucide/git-fork";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
+import IconMoreVertical from "~icons/lucide/more-vertical";
 import IconPlus from "~icons/lucide/plus";
+import { desktopHost, type NativeMenuItem } from "../lib/desktop-host";
 import { STR, truncateDisplayColumns } from "../lib/strings";
 import type { ApprovalView } from "../lib/transport";
-import { sessionCatalog, sessionDot, workspaceCatalog, type SidebarSession, type SidebarWorkspace } from "../tabs/store";
+import { sessionCatalog, sessionDot, unarchiveSession, workspaceCatalog, type SidebarSession, type SidebarWorkspace } from "../tabs/store";
+import { copyText } from "../ui/contextMenu";
 import { parentSessionOf } from "../session/handoff-journal";
 import { Collapse } from "../ui/Collapse";
 import { SessionPendingCard } from "./SessionPendingCard";
@@ -39,7 +43,7 @@ const sessionName = (session: SidebarSession): string =>
 
 /** 会话标题展示上限(显示列宽):20 列 ≈ 10 个汉字/20 个英文字符,超出补「…」。
  *  只截**显示**;悬停 tooltip、右键菜单、重命名草稿一律取完整标题(sessionName)。 */
-const TITLE_MAX_COLUMNS = 20;
+const TITLE_MAX_COLUMNS = 36;
 const displayTitle = (session: SidebarSession): string =>
   truncateDisplayColumns(sessionName(session), TITLE_MAX_COLUMNS);
 
@@ -73,6 +77,7 @@ export const MessageSidebar: Component<{
   creating?: boolean;
   canCreate?: boolean;
   onRename?: (seed: string, title: string) => Promise<void>;
+  onArchive?: (seed: string) => Promise<void>;
   onDelete?: (seed: string) => Promise<void>;
 }> = (props) => {
   const [collapsed, setCollapsedSignal] = createSignal<Set<string>>(readStoredCollapsed());
@@ -82,6 +87,15 @@ export const MessageSidebar: Component<{
   };
   /** 展开行菜单的会话 seed(null = 全部收起);同时只开一个。 */
   const [menuSeed, setMenuSeed] = createSignal<string | null>(null);
+  const [showArchived, setShowArchived] = createSignal<Set<string>>(new Set());
+  const toggleWorkspaceArchived = (id: string): void => {
+    setShowArchived((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const allSessions = () => props.sessions ?? sessionCatalog();
   const allWorkspaces = () => props.workspaces ?? workspaceCatalog();
 
@@ -92,10 +106,10 @@ export const MessageSidebar: Component<{
       if (ord !== 0) return ord;
       return (a.title || "").localeCompare(b.title || "");
     });
-    const sessions = allSessions().filter((item) => !item.archived);
+    const activeAll = allSessions().filter((item) => !item.archived);
+    const archivedAll = allSessions().filter((item) => item.archived === true);
+    const archivedOpen = showArchived();
 
-    // 同一分组内会话的绝对确定性排序：主键 updated_at 降序，决胜键 session_id 字典序
-    // 杜绝相等时间戳在 15s 轮询时由于后端返回数组随机顺序造成的抽搐跳动。
     const sortSessions = (list: SidebarSession[]): SidebarSession[] =>
       [...list].sort((a, b) => {
         const timeDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);
@@ -103,22 +117,30 @@ export const MessageSidebar: Component<{
         return a.session_id.localeCompare(b.session_id);
       });
 
-    const grouped = workspaces.map((workspace) => ({
-      id: workspace.id,
-      title: workspace.title || pathName(workspace.path),
-      path: workspace.path,
-      /** 目录已不存在:仍列出(里面的历史会话得看得见),但不给「在此新建会话」。 */
-      missingDir: workspace.missing_dir === true,
-      sessions: sortSessions(sessions.filter((session) => sessionBelongsToWorkspace(session, workspace))),
-    }));
-    const ungrouped = sessions.filter((session) => !workspaces.some((workspace) => sessionBelongsToWorkspace(session, workspace)));
-    if (ungrouped.length > 0) {
+    const grouped = workspaces.map((workspace) => {
+      const activeList = sortSessions(activeAll.filter((session) => sessionBelongsToWorkspace(session, workspace)));
+      const archivedList = sortSessions(archivedAll.filter((session) => sessionBelongsToWorkspace(session, workspace)));
+      return {
+        id: workspace.id,
+        title: workspace.title || pathName(workspace.path),
+        path: workspace.path,
+        missingDir: workspace.missing_dir === true,
+        activeCount: activeList.length,
+        archivedCount: archivedList.length,
+        sessions: archivedOpen.has(workspace.id) ? [...activeList, ...archivedList] : activeList,
+      };
+    });
+    const ungroupedActive = sortSessions(activeAll.filter((session) => !workspaces.some((workspace) => sessionBelongsToWorkspace(session, workspace))));
+    const ungroupedArchived = sortSessions(archivedAll.filter((session) => !workspaces.some((workspace) => sessionBelongsToWorkspace(session, workspace))));
+    if (ungroupedActive.length > 0 || ungroupedArchived.length > 0) {
       grouped.push({
         id: "__ungrouped",
         title: "未分组",
         path: "",
         missingDir: false,
-        sessions: sortSessions(ungrouped),
+        activeCount: ungroupedActive.length,
+        archivedCount: ungroupedArchived.length,
+        sessions: archivedOpen.has("__ungrouped") ? [...ungroupedActive, ...ungroupedArchived] : ungroupedActive,
       });
     }
     /* 零会话的工作区**也列出**。此前这里过滤掉了空组,于是「给一个还没开过会话的
@@ -205,7 +227,38 @@ export const MessageSidebar: Component<{
               {/* 工作区行 = 折叠钮 + 「在此工作区新建会话」。动作钮常占位、悬停/聚焦才显形
                   (与会话行的「…」同一条规则,见 sidebar.css):hover 只改表面不改布局,
                   否则目录名会在鼠标经过时整段左右抖。 */}
-              <div class="message-workspace-row">
+              <div
+                class="message-workspace-row"
+                onContextMenu={(e) => {
+                  const popup = desktopHost()?.popupMenu;
+                  if (popup == null) return;
+                  e.preventDefault();
+                  const g = group();
+                  const isShowing = showArchived().has(g.id);
+                  const items: NativeMenuItem[] = [
+                    {
+                      id: "toggle-archived",
+                      label: g.archivedCount > 0 ? `显示已归档会话 (${g.archivedCount})` : "显示已归档会话",
+                      checked: isShowing,
+                      enabled: g.archivedCount > 0 || isShowing,
+                    },
+                  ];
+                  if (g.path) items.push({ id: "copy-path", label: "复制工作区路径" });
+                  if (canCreateIn(g)) {
+                    items.push({ type: "separator" }, { id: "new-session", label: "在此新建会话" });
+                  }
+                  void popup(items, { x: e.clientX, y: e.clientY }).then((picked) => {
+                    if (picked === "toggle-archived") {
+                      toggleWorkspaceArchived(g.id);
+                      if (collapsed().has(g.id)) toggle(g.id);
+                    } else if (picked === "copy-path" && g.path) {
+                      copyText(g.path);
+                    } else if (picked === "new-session" && canCreateIn(g)) {
+                      props.onCreateIn?.(g.path);
+                    }
+                  });
+                }}
+              >
                 <button
                   class="message-workspace-toggle"
                   type="button"
@@ -218,14 +271,54 @@ export const MessageSidebar: Component<{
                   <IconChevronDown class={{ collapsed: collapsed().has(group().id) }} />
                   <Show when={group().id !== "__ungrouped"}><IconFolder /></Show>
                   <span class="message-workspace-title">{group().title}</span>
-                  <span class="message-workspace-count">{group().sessions.length}</span>
+                  <span class="message-workspace-count">{group().activeCount}</span>
+                </button>
+                <button
+                  type="button"
+                  class="message-workspace-more"
+                  aria-label={`${group().title} 更多操作`}
+                  title="工作区选项（含已归档会话）"
+                  onClick={(e) => {
+                    const g = group();
+                    const popup = desktopHost()?.popupMenu;
+                    const isShowing = showArchived().has(g.id);
+                    if (popup == null) {
+                      toggleWorkspaceArchived(g.id);
+                      if (collapsed().has(g.id)) toggle(g.id);
+                      return;
+                    }
+                    const items: NativeMenuItem[] = [
+                      {
+                        id: "toggle-archived",
+                        label: g.archivedCount > 0 ? `显示已归档会话 (${g.archivedCount})` : "显示已归档会话",
+                        checked: isShowing,
+                        enabled: g.archivedCount > 0 || isShowing,
+                      },
+                    ];
+                    if (g.path) items.push({ id: "copy-path", label: "复制工作区路径" });
+                    if (canCreateIn(g)) {
+                      items.push({ type: "separator" }, { id: "new-session", label: "在此新建会话" });
+                    }
+                    void popup(items, { x: e.clientX, y: e.clientY }).then((picked) => {
+                      if (picked === "toggle-archived") {
+                        toggleWorkspaceArchived(g.id);
+                        if (collapsed().has(g.id)) toggle(g.id);
+                      } else if (picked === "copy-path" && g.path) {
+                        copyText(g.path);
+                      } else if (picked === "new-session" && canCreateIn(g)) {
+                        props.onCreateIn?.(g.path);
+                      }
+                    });
+                  }}
+                >
+                  <IconMoreVertical />
                 </button>
                 <Show when={canCreateIn(group())}>
                   <button
                     type="button"
                     class="message-workspace-create"
                     aria-label={`在 ${group().title} 新建会话`}
-                    title={`在 ${group().title} 新建会话${group().sessions.length === 0 ? "（该工作区还没有会话）" : ""}`}
+                    title={`在 ${group().title} 新建会话${group().activeCount === 0 ? "（该工作区还没有会话）" : ""}`}
                     disabled={props.creating === true || props.canCreate === false}
                     onClick={() => props.onCreateIn?.(group().path)}
                   >
@@ -259,7 +352,37 @@ export const MessageSidebar: Component<{
                       setEditing(false);
                       setConfirmDelete(false);
                     };
-                    const openMenu = (): void => {
+                    const openMenu = (pos?: { x?: number; y?: number }): void => {
+                      const popup = desktopHost()?.popupMenu;
+                      if (popup != null) {
+                        const items: NativeMenuItem[] = [];
+                        if (props.onRename != null) items.push({ id: "rename", label: STR.renameSession });
+                        if (session().archived === true) {
+                          items.push({ id: "unarchive", label: "取消归档" });
+                        } else if (props.onArchive != null) {
+                          items.push({ id: "archive", label: "归档" });
+                        }
+                        if (props.onDelete != null) {
+                          if (items.length > 0) items.push({ type: "separator" });
+                          items.push({ id: "delete", label: STR.deleteSession });
+                        }
+                        if (items.length === 0) return;
+                        void popup(items, pos).then((picked) => {
+                          if (picked === "rename") {
+                            setMenuSeed(session().session_id);
+                            beginRename();
+                          } else if (picked === "unarchive") {
+                            void unarchiveSession(session().session_id);
+                          } else if (picked === "archive") {
+                            void props.onArchive?.(session().session_id);
+                          } else if (picked === "delete") {
+                            setMenuSeed(session().session_id);
+                            setEditing(false);
+                            setConfirmDelete(true);
+                          }
+                        });
+                        return;
+                      }
                       setEditing(false);
                       setConfirmDelete(false);
                       setMenuSeed(session().session_id);
@@ -296,13 +419,13 @@ export const MessageSidebar: Component<{
                     return (
                       <>
                         <div
-                          class={{ "message-session-row": true, active: active() }}
+                          class={{ "message-session-row": true, active: active(), "is-archived": session().archived === true }}
                           // 飞箱落点锚(box-fly 按会话 id 找行,见 ui/box-fly.ts)。
                           data-session-id={session().session_id}
                           onContextMenu={(e) => {
                             e.preventDefault();
-                            if (props.onRename != null || props.onDelete != null) {
-                              openMenu();
+                            if (props.onRename != null || props.onArchive != null || props.onDelete != null) {
+                              openMenu({ x: e.clientX, y: e.clientY });
                             }
                           }}
                         >
@@ -316,14 +439,14 @@ export const MessageSidebar: Component<{
                             onClick={() => props.onSelect(session().session_id)}
                             title={session().title || session().cwd || session().session_id}
                           >
-                            <span class="message-session-title">{displayTitle(session())}</span>
-                            <Show when={session().tool_mode != null && session().tool_mode !== "standard"}>
-                              <span class="message-session-toolmode" title={`工具模式：${session().tool_mode}`}>{session().tool_mode}</span>
-                            </Show>
-                            {/* fork 交接对话徽标(本地账本现算,理由见 forkLineage)。 */}
                             <Show when={forkLineage(session().session_id, allSessions())}>
-                              {(lineage) => <span class="message-session-fork" title={lineage()}>{STR.forkBadge}</span>}
+                              {(lineage) => (
+                                <span class="message-session-fork-icon" title={lineage()} aria-label={lineage()}>
+                                  <IconGitFork />
+                                </span>
+                              )}
                             </Show>
+                            <span class="message-session-title">{displayTitle(session())}</span>
                             {/* 六态点:蓝=工作中/脉动=等你回应/灰=取消中;终态绿红灰只在
                                 本次壳生命周期目击过权威 outcome 时点亮(冷启动无点)。 */}
                             <Show when={sessionDot(session().session_id, session().status)}>
@@ -341,7 +464,7 @@ export const MessageSidebar: Component<{
                               aria-label={`${STR.sessionActions}:${sessionName(session())}`}
                               aria-expanded={menuOpen() ? "true" : "false"}
                               title={STR.sessionActions}
-                              onClick={() => menuOpen() ? closeMenu() : openMenu()}
+                              onClick={(e) => menuOpen() ? closeMenu() : openMenu({ x: e.clientX, y: e.clientY })}
                             >
                               <IconMoreHorizontal />
                             </button>
@@ -355,6 +478,9 @@ export const MessageSidebar: Component<{
                                 <>
                                   <Show when={props.onRename != null}>
                                     <button type="button" role="menuitem" onClick={beginRename}>{STR.renameSession}</button>
+                                  </Show>
+                                  <Show when={props.onArchive != null}>
+                                    <button type="button" role="menuitem" onClick={() => { closeMenu(); void props.onArchive?.(session().session_id); }}>归档</button>
                                   </Show>
                                   <Show when={props.onDelete != null}>
                                     <button

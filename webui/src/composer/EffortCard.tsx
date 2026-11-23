@@ -1,63 +1,46 @@
 /**
- * 强度卡（对齐 Codex 桌面端那张）：档位名 + 档位图标 + `模型 ›` 行 + 可拖的分段
- * 轨道 + 重置，触发器是控制条上的一个 chip。
+ * 统一「模型 + 推理强度」快捷菜单（对齐 Antigravity Model + Thinking effort 二级浮层）。
  *
- * **读全局、写会话**：卡片显示的是本会话解析后的有效值（会话覆写 → 所选
- * Profile → 全局默认），写入走 `session.settings.patch`，因此改这一张卡不会
- * 影响别的会话。目录与可用档位按**本会话有效 Profile 的 provider 类别**计算
- * （`providerKind`），只使用用户登记或在线目录明确声明的档位。
- *
- * 复刻上的三处取舍，都写在明处：
- * - **档位图标**按 Codex 的"几档共用图标"来分（低档闪电 / 高档脑 / Ultra 星），
- *   但用的是我们自己图标集里语义最近的，不是抄它的 SVG；
- * - **配色只分两级**（普通 = 绿，Ultra = 紫），与截图一致；颜色不承担具体档位，
- *   档位名已经说清了；
- * - **轨道**是自定义可拖的（pointer + 键盘 ←/→），不是原生 range：截图里那根
- *   带刻度点的轨道原生控件做不出来。
+ * 单一入口同时完成：
+ *  1) 选择服务商与模型（按服务商轻分组）；
+ *  2) 对支持推理强度的模型，悬停/聚焦在右侧滑出极简强度二级卡片一键选定。
  */
-import { createEffect, createSignal, For, Match, onCleanup, Show, Switch, type Component } from "solid-js";
-import IconBrain from "~icons/lucide/brain";
+import { createMemo, createSignal, For, Show, type Component } from "solid-js";
+import IconCheck from "~icons/lucide/check";
 import IconChevronDown from "~icons/lucide/chevron-down";
-import IconRotateCcw from "~icons/lucide/rotate-ccw";
+import IconChevronRight from "~icons/lucide/chevron-right";
+import IconSettings from "~icons/lucide/settings";
 import IconSparkles from "~icons/lucide/sparkles";
-import IconZap from "~icons/lucide/zap";
 
 import type { ReasoningTier } from "../models/reasoning";
-import { STR } from "../lib/strings";
-import {
-  effortDisplayOf,
-  effortFillPercent,
-  stepTier,
-  tierIndexForPointer,
-  tierTone,
-  type EffortDisplay,
-} from "./effort-track";
+import { providerKindOfCredential, type ProviderKind } from "../oauth/mode";
+import { registry } from "../settings/registry";
 import {
   availableTiers,
-  catalogError,
-  catalogOptions,
-  configError,
-  configLoaded,
   currentEffort,
   currentModel,
   currentProviderKind,
   defaultTier,
-  loadCatalog,
-  modelMetadata,
-  refreshConfig,
 } from "./model-config";
-import { catalogKindOf } from "../oauth/model-catalog";
-import type { ProviderKind } from "../oauth/mode";
 
-/** 档位中文名：与 Codex 的中文词条一致（轻度 / 中 / 高 / 极高 / Ultra）。 */
-const TIER_LABEL: Record<ReasoningTier, string> = {
-  low: "轻度",
-  medium: "中",
-  high: "高",
-  xhigh: "极高",
-  max: "最大",
-  ultra: "Ultra",
-};
+/** 直接展示官方配置术语，不做中文映射。 */
+const KNOWN_TIERS: ReadonlySet<string> = new Set<ReasoningTier>([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+]);
+
+interface ModelEntry {
+  providerId: string;
+  providerName: string;
+  providerKind: ProviderKind;
+  modelId: string;
+  label: string;
+  tiers: readonly ReasoningTier[];
+}
 
 export const EffortCard: Component<{
   open: boolean;
@@ -65,7 +48,8 @@ export const EffortCard: Component<{
   model?: () => string | null;
   modelOverridden?: () => boolean;
   onModel?: (model: string | null) => Promise<void> | void;
-  /** 本会话有效 Profile 的 provider 类别；目录与档位特判按它算。 */
+  onSelection?: (providerId: string, modelId: string) => Promise<void> | void;
+  onManageProfiles?: () => void;
   providerKind?: () => ProviderKind;
   effort?: () => string | null;
   effortOverridden?: () => boolean;
@@ -73,377 +57,222 @@ export const EffortCard: Component<{
   maxTokens?: () => number | null;
   onMaxTokens?: (maxTokens: number | null) => Promise<void> | void;
 }> = (props) => {
-  const [pickingModel, setPickingModel] = createSignal(false);
-  const [customModel, setCustomModel] = createSignal("");
-  const [maxTokensDraft, setMaxTokensDraft] = createSignal("");
-  const [paramError, setParamError] = createSignal<string | null>(null);
-  const [dragging, setDragging] = createSignal(false);
-  /** 拖动中的**本地预览值**：不落盘，松手才写一次。 */
-  const [pending, setPending] = createSignal<ReasoningTier | null>(null);
-  let track: HTMLDivElement | undefined;
+  const [hoveredKey, setHoveredKey] = createSignal<string | null>(null);
+  const [busy, setBusy] = createSignal(false);
 
-  // 卡片本身能独立使用（夹具页），未注入会话上下文时退回全局活跃 provider。
-  const providerKind = (): ProviderKind => props.providerKind?.() ?? currentProviderKind();
-  const providerHasCatalog = (): boolean => catalogKindOf(providerKind()) != null;
-  const effectiveModel = (): string => props.model?.() ?? currentModel();
-
-  // 打开时读一次配置；账号额度模式（套餐或 DeepSeek 账号）再拉一次该家的模型目录。
-  // 同时跟踪 providerKind：配置晚到会让本会话的 provider 类别从兜底值纠正过来，
-  // 只跟踪 open 的话，纠正后目录永远不会补拉。
-  createEffect(
-    () => (props.open ? providerKind() : null),
-    (kind) => {
-      if (kind == null) return;
-      setPickingModel(false);
-      setCustomModel(effectiveModel());
-      setMaxTokensDraft(props.maxTokens?.() == null ? "" : String(props.maxTokens?.()));
-      setParamError(null);
-      void refreshConfig();
-      void loadCatalog(kind);
-    },
-  );
-
-  onCleanup(() => setDragging(false));
-
-  const tiers = (): readonly ReasoningTier[] => availableTiers(providerKind(), effectiveModel());
-  const modelRows = () => catalogOptions(providerKind(), effectiveModel());
-  const catalogErrorText = (): string | null => catalogError(providerKind());
-  const effectiveEffort = (): string => props.effort?.() ?? currentEffort();
-  /** 生产始终由 App 注入会话级写口；夹具只读展示，没有回调就什么都不写。 */
-  const writeEffort = async (tier: ReasoningTier | null): Promise<void> => {
-    await props.onEffort?.(tier);
-  };
-  const writeModel = async (model: string | null): Promise<void> => {
-    await props.onModel?.(model);
-  };
-  const commitParam = async (
-    raw: string,
-    current: number | null,
-    apply: ((value: number | null) => Promise<void> | void) | undefined,
-  ): Promise<void> => {
-    if (apply == null) return;
-    const trimmed = raw.trim();
-    if (trimmed === "") {
-      setParamError(null);
-      if (current != null) await apply(null);
-      return;
+  const activeModelId = (): string => {
+    if (props.model != null) {
+      const m = props.model();
+      if (m != null && m !== "") return m;
     }
-    const next = Number(trimmed);
-    if (!Number.isSafeInteger(next) || next <= 0) {
-      setParamError("最大输出必须是正整数");
-      return;
+    const def = registry()?.defaultSelection?.model_id;
+    return def ?? currentModel() ?? "";
+  };
+
+  const activeProviderKind = (): ProviderKind =>
+    props.providerKind?.() ?? currentProviderKind();
+
+  const activeEffort = (): ReasoningTier | null => {
+    const raw = props.effort != null ? props.effort() : currentEffort();
+    if (raw != null && KNOWN_TIERS.has(raw)) return raw as ReasoningTier;
+    const mid = activeModelId();
+    return mid ? defaultTier(activeProviderKind(), mid) : null;
+  };
+
+  const providerGroups = createMemo(() => {
+    const reg = registry();
+    if (!reg) return [];
+    return reg.providers
+      .map((provider) => {
+        const kind = providerKindOfCredential(provider.credential);
+        const models: ModelEntry[] = provider.models
+          .filter((m) => m.definition.enabled)
+          .map((m) => ({
+            providerId: provider.id,
+            providerName: provider.name,
+            providerKind: kind,
+            modelId: m.id,
+            label: m.definition.display_name || m.id,
+            tiers: availableTiers(kind, m.id),
+          }));
+        return { id: provider.id, name: provider.name, models };
+      })
+      .filter((g) => g.models.length > 0);
+  });
+
+  const activeModelDisplay = createMemo(() => {
+    const mid = activeModelId();
+    if (!mid) return "选择模型";
+    for (const g of providerGroups()) {
+      const found = g.models.find((m) => m.modelId === mid);
+      if (found) return found.label;
     }
-    const limit = modelMetadata(providerKind(), effectiveModel())?.maxOutputTokens;
-    if (limit != null && next > limit) {
-      setParamError(`最大输出不能超过模型上限 ${limit.toLocaleString()}`);
-      return;
+    return mid;
+  });
+
+  const activeTiers = createMemo(() => {
+    const mid = activeModelId();
+    return mid ? availableTiers(activeProviderKind(), mid) : [];
+  });
+
+  const hoveredEntry = createMemo<ModelEntry | null>(() => {
+    const key = hoveredKey();
+    if (!key) return null;
+    for (const g of providerGroups()) {
+      const found = g.models.find((m) => `${m.providerId}:${m.modelId}` === key);
+      if (found && found.tiers.length > 0) return found;
     }
-    setParamError(null);
-    if (next !== current) await apply(next);
-  };
+    return null;
+  });
 
-  /**
-   * 后端真值的三态判定（`effortDisplayOf`）。
-   */
-  const display = (): EffortDisplay => effortDisplayOf(effectiveEffort(), tiers(), props.effort != null || configLoaded());
-  const metadata = () => modelMetadata(providerKind(), effectiveModel());
-  const tone = () => pending() == null && display().kind === "offLadder" ? "warning" : tierTone(trackTier());
-
-  /** chip 上的字：预览值 > 后端真值 > 三态里那句老实话（不认识的值原样显示，不冒充第一档）。 */
-  const chipLabel = (): string => {
-    const preview = pending();
-    if (preview != null) return TIER_LABEL[preview];
-    const state = display();
-    if (state.kind === "tier") return TIER_LABEL[state.tier];
-    if (state.kind === "offLadder") return state.raw;
-    return state.kind === "unset" ? STR.effortUnset : STR.effortPending;
-  };
-
-  /**
-   * 轨道指向的档。轨道是**控件**，总得有个位置：没读到/越表时停到首档，
-   * 拖动或按方向键都会写出一个真实合法值。显示用 `chipLabel`，两者刻意不同。
-   */
-  const trackTier = (): ReasoningTier => {
-    const preview = pending();
-    if (preview != null) return preview;
-    const state = display();
-    if (state.kind === "tier") return state.tier;
-    return tiers()[0] ?? "medium";
-  };
-
-  const index = (): number => Math.max(0, tiers().indexOf(trackTier()));
-  const fill = (): number => effortFillPercent(index(), tiers().length);
-
-  const modelLabel = (): string => {
-    const model = effectiveModel();
-    if (model === "") return "未设置模型";
-    return model;
-  };
-
-  /**
-   * 指针位置 → 档位。拖动期间**只改本地预览**：一次拖拽可能跨好几档，每跨一档
-   * 就发一次 `config.save` 会连发多次落盘 + 热载广播（而且中途的档位用户根本没
-   * 打算用）。松手时 `commitPending` 写一次。
-   */
-  const applyPointer = (clientX: number): void => {
-    const node = track;
-    if (node == null) return;
-    const rect = node.getBoundingClientRect();
-    const next = tiers()[tierIndexForPointer(clientX, rect, tiers().length)];
-    if (next != null) setPending(next);
-  };
-
-  /** 松手落盘。写成功之后再清预览，避免闪回旧值。 */
-  const commitPending = async (): Promise<void> => {
-    const next = pending();
-    if (next == null) return;
-    await writeEffort(next);
-    setPending(null);
+  const pickModelAndEffort = async (entry: ModelEntry, tier?: ReasoningTier): Promise<void> => {
+    if (busy()) return;
+    setBusy(true);
+    try {
+      const changedModel = entry.modelId !== activeModelId();
+      if (changedModel) {
+        if (props.onSelection != null) {
+          await props.onSelection(entry.providerId, entry.modelId);
+        } else {
+          await props.onModel?.(entry.modelId);
+        }
+      }
+      if (tier != null) {
+        await props.onEffort?.(tier);
+      }
+      setHoveredKey(null);
+      props.onToggle();
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <div class="composer-control-wrap">
+    <div class="composer-control-wrap model-effort-wrap">
       <button
         type="button"
-        class="composer-tool-button effort-trigger"
+        class="composer-tool-button model-effort-trigger"
         aria-expanded={props.open ? "true" : "false"}
-        title={display().kind === "offLadder" ? "本会话强度未获当前模型目录支持" : "本会话的推理强度与模型"}
-        onClick={() => props.onToggle()}
+        title="切换模型与推理强度"
+        onClick={() => {
+          setHoveredKey(null);
+          props.onToggle();
+        }}
       >
-        <span class={`effort-tone-${tone()}`}>{chipLabel()}{display().kind === "offLadder" ? " ⚠" : ""}</span>
+        <IconSparkles />
+        <span class="model-effort-name">{activeModelDisplay()}</span>
+        <Show when={activeTiers().length > 0 && activeEffort() != null}>
+          <span class="model-effort-tier">{activeEffort()!}</span>
+        </Show>
         <IconChevronDown />
       </button>
 
       <Show when={props.open}>
-        <div class="composer-menu effort-card" role="dialog" aria-label="推理强度与模型">
-          <div class="effort-card__head">
-            <span class="effort-card__tier-icon" aria-hidden="true">
-              <Switch>
-                <Match when={trackTier() === "ultra"}>
-                  <IconSparkles />
-                </Match>
-                <Match when={trackTier() === "low" || trackTier() === "medium"}>
-                  <IconZap />
-                </Match>
-                <Match when={true}>
-                  <IconBrain />
-                </Match>
-              </Switch>
-            </span>
-            <strong class={`effort-card__tier effort-tone-${tone()}`}>
-              {chipLabel()}
-            </strong>
-            <button
-              type="button"
-              class="icon-btn effort-card__reset"
-              title="重置为该模型的默认档"
-              disabled={defaultTier(providerKind(), effectiveModel()) == null}
-              onClick={() => void writeEffort(defaultTier(providerKind(), effectiveModel()))}
+        <div
+          class="composer-menu model-effort-popover"
+          role="menu"
+          aria-label="选择模型与推理强度"
+          onMouseLeave={() => setHoveredKey(null)}
+        >
+          <div class="composer-popover-title">模型</div>
+          <div class="model-effort-list">
+            <Show
+              when={providerGroups().length > 0}
+              fallback={
+                <div class="composer-popover-empty">暂无可用模型，请先在设置中配置服务商。</div>
+              }
             >
-              <IconRotateCcw />
-            </button>
-          </div>
-
-          <p class="effort-card__note">
-            本会话 · 模型{props.modelOverridden?.() ? "单独设置" : "跟随存档"} · 强度{props.effortOverridden?.() ? "单独设置" : "跟随模型默认"}
-          </p>
-
-          <Show when={props.effortOverridden?.()}>
-            <button
-              type="button"
-              class="ghost-mini effort-card__inherit"
-              onClick={() => void writeEffort(null)}
-            >
-              强度跟随模型默认
-            </button>
-          </Show>
-
-          <div class="effort-card__model-row">
-            <button
-              type="button"
-              class="effort-card__model"
-              aria-expanded={pickingModel() ? "true" : "false"}
-              onClick={() => setPickingModel(!pickingModel())}
-            >
-              <span>{modelLabel()}</span>
-              <IconChevronDown />
-            </button>
-            <Show when={props.modelOverridden?.()}>
-              <button
-                type="button"
-                class="ghost-mini"
-                title="清除本会话的选择，落回全局默认的服务商和模型（后端写 Inherit 清列）"
-                onClick={() => void writeModel(null)}
-              >
-                跟随存档
-              </button>
-            </Show>
-          </div>
-
-          <Show when={pickingModel()}>
-            <div class="effort-card__models" role="menu">
-              <div class="effort-card__custom">
-                <input class="field-input" value={customModel()} placeholder="输入模型 ID"
-                  onInput={(event) => setCustomModel(event.currentTarget.value)} />
-                <button type="button" class="ghost-mini" disabled={customModel().trim() === ""}
-                  onClick={() => void writeModel(customModel().trim()).then(() => setPickingModel(false))}>
-                  使用
-                </button>
-              </div>
-              <Show
-                when={providerHasCatalog() && modelRows().length > 0}
-                fallback={
-                  <>
-                    {/*
-                      账号额度（套餐 / DeepSeek 账号）下目录没到位：说**真原因**
-                      （catalogError 才是这次拉取为什么失败的权威），并且仍然留一条
-                      手填的路 —— 只能看着的空列表等于把推理堵死。BYOK 本来就没有
-                      账户级目录，直接进手填。
-                    */}
-                    <Show when={providerHasCatalog()}>
-                      <small class="effort-card__note">
-                        {catalogErrorText() ??
-                          configError() ??
-                          "模型目录为空：完成登录或到接入页「刷新目录」后重试；也可以直接填模型 id。"}
-                      </small>
-                    </Show>
-                  </>
-                }
-              >
-                <For each={modelRows()}>
-                  {(entry) => (
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={entry.slug === effectiveModel() ? "true" : "false"}
-                      class={entry.slug === effectiveModel() ? "selected" : undefined}
-                      onClick={() => {
-                        void writeModel(entry.slug).then(() => setPickingModel(false));
+              <For each={providerGroups()}>
+                {(group) => (
+                  <div class="model-effort-group">
+                    <div class="model-effort-group-label">{group.name}</div>
+                    <For each={group.models}>
+                      {(entry) => {
+                        const rowKey = `${entry.providerId}:${entry.modelId}`;
+                        const isSelected = () => entry.modelId === activeModelId();
+                        const hasTiers = entry.tiers.length > 0;
+                        return (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            class={{
+                              "model-effort-item": true,
+                              selected: isSelected(),
+                              "is-hovered": hoveredKey() === rowKey,
+                            }}
+                            disabled={busy()}
+                            onMouseEnter={() => setHoveredKey(hasTiers ? rowKey : null)}
+                            onFocus={() => setHoveredKey(hasTiers ? rowKey : null)}
+                            onClick={() => void pickModelAndEffort(entry)}
+                          >
+                            <span class="model-effort-item-main">
+                              <span class="model-effort-item-name">{entry.label}</span>
+                              <Show when={isSelected() && hasTiers && activeEffort() != null}>
+                                <span class="model-effort-item-tier">{activeEffort()!}</span>
+                              </Show>
+                            </span>
+                            <span class="model-effort-item-end">
+                              <Show when={isSelected()}>
+                                <IconCheck class="model-effort-check" />
+                              </Show>
+                              <Show when={hasTiers}>
+                                <IconChevronRight class="model-effort-arrow" />
+                              </Show>
+                            </span>
+                          </button>
+                        );
                       }}
-                    >
-                      <span>{entry.displayName}</span>
-                      <small>{entry.slug}</small>
-                    </button>
-                  )}
-                </For>
-              </Show>
-            </div>
-          </Show>
-
-          <Show when={props.onMaxTokens != null}>
-            <div class="effort-card__params">
-              <Show when={props.onMaxTokens != null}>
-                <label>
-                  <span>本会话最大输出</span>
-                  <input
-                    class="field-input"
-                    inputmode="numeric"
-                    placeholder={props.maxTokens?.() == null ? "跟随模型默认" : String(props.maxTokens?.())}
-                    value={maxTokensDraft()}
-                    onInput={(event) => setMaxTokensDraft(event.currentTarget.value)}
-                    onBlur={() =>
-                      void commitParam(maxTokensDraft(), props.maxTokens?.() ?? null, props.onMaxTokens)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        event.currentTarget.blur();
-                      }
-                    }}
-                  />
-                </label>
-              </Show>
-            </div>
-            <small class="effort-card__note">
-              仅影响本会话；留空 = 跟随该模型的默认上限。
-            </small>
-            <Show when={metadata()?.maxOutputTokens != null}>
-              <small class="effort-card__note">模型输出上限：{metadata()?.maxOutputTokens?.toLocaleString()} tokens</small>
-            </Show>
-          </Show>
-
-          <Show when={tiers().length > 0} fallback={
-            <div class="effort-card__note">
-              <p>{metadata()?.reasoningLevels?.length === 0 ? "模型目录未提供可选的推理档位。"
-                : catalogErrorText() != null ? "推理档位获取失败，请刷新模型目录。" : "尚未获取该模型的推理档位。"}</p>
-              <Show when={providerHasCatalog()}>
-                <button type="button" class="ghost-mini" onClick={() => void loadCatalog(providerKind())}>刷新模型目录</button>
-              </Show>
-            </div>
-          }>
-            <div
-              ref={(node) => {
-                track = node;
-              }}
-              class={`effort-track effort-tone-${tierTone(trackTier())}${dragging() ? " is-dragging" : ""}`}
-              role="slider"
-              tabindex="0"
-              aria-valuemin={0}
-              aria-valuemax={tiers().length - 1}
-              aria-valuenow={index()}
-              aria-valuetext={chipLabel()}
-              onPointerDown={(event) => {
-                setDragging(true);
-                event.currentTarget.setPointerCapture(event.pointerId);
-                applyPointer(event.clientX);
-              }}
-              onPointerMove={(event) => {
-                if (dragging()) applyPointer(event.clientX);
-              }}
-              onPointerUp={(event) => {
-                setDragging(false);
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                  event.currentTarget.releasePointerCapture(event.pointerId);
-                }
-                void commitPending();
-              }}
-              onPointerCancel={() => {
-                setDragging(false);
-                setPending(null);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-                event.preventDefault();
-                const delta = event.key === "ArrowRight" ? 1 : -1;
-                void writeEffort(stepTier(tiers(), trackTier(), delta));
-              }}
-            >
-              <span class="effort-track__fill" style={{ width: `${fill()}%` }} />
-              <For each={tiers()}>
-                {(_, at) => (
-                  <span
-                    class="effort-track__dot"
-                    style={{ left: `${effortFillPercent(at(), tiers().length)}%` }}
-                    aria-hidden="true"
-                  />
+                    </For>
+                  </div>
                 )}
               </For>
-              <span class="effort-track__thumb" style={{ left: `${fill()}%` }} />
+            </Show>
+          </div>
+
+          <Show when={props.onManageProfiles != null}>
+            <div class="composer-popover-foot">
+              <button
+                type="button"
+                class="model-effort-manage"
+                onClick={() => {
+                  props.onToggle();
+                  props.onManageProfiles?.();
+                }}
+              >
+                <IconSettings />
+                <span>管理服务商与模型…</span>
+              </button>
             </div>
-
           </Show>
 
-          {/*
-            三态里那两种"不是后端真值"的状态必须在卡面上交代：chip 的字已经诚实了，
-            但轨道停在首档会让人觉得"后端就是轻度"——那正是这次要修的错觉。
-          */}
-          <Show when={display().kind === "offLadder"}>
-            <p class="effort-card__note is-error">{STR.effortOffLadder(effectiveEffort())}</p>
-          </Show>
-          <Show when={display().kind === "pending" || display().kind === "unset"}>
-            <p class="effort-card__note">
-              {display().kind === "pending" ? STR.effortPendingHint : STR.effortUnsetHint}
-            </p>
-          </Show>
-
-          <Show when={tiers().length > 0}>
-            <p class="effort-card__note">拖动或按 ←/→ 选择；松手后应用到本会话。</p>
-          </Show>
-          <Show when={configError()}>
-            {(message) => <p class="effort-card__note is-error">{message()}</p>}
-          </Show>
-          <Show when={paramError()}>
-            {(message) => <p class="effort-card__note is-error">{message()}</p>}
+          {/* 右侧二级浮层：Thinking effort */}
+          <Show when={hoveredEntry()}>
+            {(entry) => (
+              <div class="model-effort-sub" role="menu" aria-label="推理强度">
+                <div class="composer-popover-title">推理强度</div>
+                <For each={entry().tiers}>
+                  {(tier) => {
+                    const checked = () =>
+                      entry().modelId === activeModelId() && activeEffort() === tier;
+                    return (
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={checked() ? "true" : "false"}
+                        class={{ "model-effort-sub-item": true, selected: checked() }}
+                        disabled={busy()}
+                        onClick={() => void pickModelAndEffort(entry(), tier)}
+                      >
+                        <span>{tier}</span>
+                        <Show when={checked()}>
+                          <IconCheck class="model-effort-check" />
+                        </Show>
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+            )}
           </Show>
         </div>
       </Show>

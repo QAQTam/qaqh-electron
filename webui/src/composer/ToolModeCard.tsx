@@ -1,40 +1,36 @@
 /**
- * 工具模式卡:composer 控制条上的会话级工具面切换器(结构与 EffortCard 同构:
- * chip 触发器 + `.composer-menu` 弹卡)。
+ * 极简工具模式菜单（对齐 Antigravity Local Permissions 卡片风格）。
  *
- * 读写的是**会话级** `session.set_tool_mode`(daemon 落 meta.json 后通知
- * worker 换工具面);与全局 effort/profile 卡的「config 单写口」不同,这里
- * 每个 seed 一份真值,来自 `session.meta.tool_mode`。
- *
- * 档位表是 `qaqh-types/src/tool_mode.rs` 预置表的**展示镜像**(名字/数量),
- * 后端仍是唯一真相:未知模式名原样显示不冒充;ptc 在后端接入 KNOWN_MODES
- * 之前置灰。custom 展开多行输入(每行一个注册名),提交走同一命令。
+ * 严格控制弹窗高度，移除未接入占位与常驻大文本框：
+ *  - 默认态：5 条紧凑行（左 16px 图标 + 标题 + 1 行短说明 + 右侧对勾）；
+ *  - 自定义白名单：点「自定义」后在菜单内切换为紧凑编辑子视图，绝不顶穿视口。
  */
 import { createEffect, createSignal, For, Show, type Component } from "solid-js";
+import IconArrowLeft from "~icons/lucide/arrow-left";
+import IconCheck from "~icons/lucide/check";
 import IconChevronDown from "~icons/lucide/chevron-down";
+import IconLayers from "~icons/lucide/layers";
+import IconMinimize2 from "~icons/lucide/minimize-2";
+import IconSlidersHorizontal from "~icons/lucide/sliders-horizontal";
 import IconWrench from "~icons/lucide/wrench";
 
 import type { SessionToolModeView } from "../session/store";
+import { Button } from "../ui/Button";
 
-/** 展示镜像:与后端 `qaqh_types::tool_mode` 预置表对拍(名字必须逐字一致)。 */
-const MODE_ROWS: Array<{ mode: string; label: string; hint: string; count?: number }> = [
-  { mode: "standard", label: "standard", hint: "全部工具", count: 22 },
-  { mode: "minimal", label: "minimal", hint: "exec · write · edit · read · glob · grep · confirm_apply", count: 7 },
-  { mode: "minimal:b", label: "minimal:b", hint: "exec · edit · glob · grep · read · confirm_apply", count: 6 },
-  { mode: "minimal:c", label: "minimal:c", hint: "exec · edit · glob · confirm_apply", count: 4 },
-  { mode: "custom", label: "custom", hint: "自选工具白名单" },
-  { mode: "ptc", label: "ptc", hint: "code mode · 只暴露 run_code", count: undefined },
+const MODE_ROWS: Array<{ mode: string; label: string; desc: string; icon: "full" | "mini" | "custom" }> = [
+  { mode: "standard", label: "标准", desc: "完整开发工具集", icon: "full" },
+  { mode: "minimal", label: "精简", desc: "核心读写、搜索与终端", icon: "mini" },
+  { mode: "minimal:b", label: "精简 B", desc: "编辑、搜索与终端（无整文件写）", icon: "mini" },
+  { mode: "minimal:c", label: "精简 C", desc: "极简编辑、检索与终端", icon: "mini" },
+  { mode: "custom", label: "自定义", desc: "按白名单启用指定工具", icon: "custom" },
 ];
 
-/** 后端尚未收录的档位(置灰展示,不可选)。 */
-const UNAVAILABLE = new Set(["ptc"]);
-
-const MODE_LABEL: Record<string, string> = {
-  standard: "standard",
-  minimal: "minimal",
-  "minimal:b": "minimal:b",
-  "minimal:c": "minimal:c",
-  custom: "custom",
+const MODE_SHORT: Record<string, string> = {
+  standard: "标准",
+  minimal: "精简",
+  "minimal:b": "精简 B",
+  "minimal:c": "精简 C",
+  custom: "自定义",
 };
 
 export const ToolModeCard: Component<{
@@ -43,46 +39,44 @@ export const ToolModeCard: Component<{
   view?: () => SessionToolModeView;
   onMode?: (mode: string, customTools: string[]) => Promise<void> | void;
 }> = (props) => {
-  const [customOpen, setCustomOpen] = createSignal(false);
+  const [editingCustom, setEditingCustom] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [busy, setBusy] = createSignal(false);
 
-  // 打开时把 custom 草稿对齐到当前真值;关闭时收起编辑面。
   createEffect(
     () => props.open,
     (open) => {
       if (open) {
-        setCustomOpen(props.view?.().mode === "custom");
+        setEditingCustom(false);
         setDraft(props.view?.().customTools.join("\n") ?? "");
       } else {
-        setCustomOpen(false);
+        setEditingCustom(false);
       }
     },
   );
 
   const current = (): string => props.view?.().mode ?? "standard";
-  /** chip 上的字:认识的中文名;不认识的原样(后端新档先于前端更新的容错)。 */
+
   const chipLabel = (): string => {
     const mode = current();
-    if (mode === "standard") return "全部工具";
     if (mode === "custom") {
       const count = props.view?.().customTools.length ?? 0;
-      return `custom · ${count}`;
+      return `自定义 · ${count}`;
     }
-    return MODE_LABEL[mode] ?? mode;
+    return MODE_SHORT[mode] ?? mode;
   };
 
   const pick = async (mode: string): Promise<void> => {
-    if (UNAVAILABLE.has(mode) || busy()) return;
+    if (busy()) return;
     if (mode === "custom") {
-      // 进入编辑面而不是立刻提交:白名单为空在后端是 400。
-      if (current() !== "custom") setDraft(props.view?.().customTools.join("\n") ?? "");
-      setCustomOpen(!customOpen());
+      setDraft(props.view?.().customTools.join("\n") ?? "");
+      setEditingCustom(true);
       return;
     }
     setBusy(true);
     try {
       await props.onMode?.(mode, []);
+      props.onToggle();
     } finally {
       setBusy(false);
     }
@@ -97,9 +91,17 @@ export const ToolModeCard: Component<{
     setBusy(true);
     try {
       await props.onMode?.("custom", tools);
+      setEditingCustom(false);
+      props.onToggle();
     } finally {
       setBusy(false);
     }
+  };
+
+  const renderIcon = (kind: "full" | "mini" | "custom") => {
+    if (kind === "full") return <IconLayers />;
+    if (kind === "custom") return <IconSlidersHorizontal />;
+    return <IconMinimize2 />;
   };
 
   return (
@@ -108,7 +110,7 @@ export const ToolModeCard: Component<{
         type="button"
         class="composer-tool-button toolmode-trigger"
         aria-expanded={props.open ? "true" : "false"}
-        title="工具模式(本会话生效)"
+        title="切换本会话工具模式"
         onClick={() => props.onToggle()}
       >
         <IconWrench />
@@ -117,62 +119,73 @@ export const ToolModeCard: Component<{
       </button>
 
       <Show when={props.open}>
-        <div class="composer-menu toolmode-card" role="dialog" aria-label="工具模式">
-          <div class="toolmode-card__head">
-            <strong>工具模式</strong>
-            <small>本会话生效 · 切换写入会话 meta</small>
-          </div>
-          <For each={MODE_ROWS}>
-            {(row) => (
-              <Show
-                when={!UNAVAILABLE.has(row.mode)}
-                fallback={
-                  <div class="toolmode-row is-unavailable" title="后端尚未接入该档">
-                    <span class="toolmode-dot" aria-hidden="true" />
-                    <span class="toolmode-name">{row.label}</span>
-                    <span class="toolmode-hint">{row.hint}</span>
-                    <small class="toolmode-count">未接入</small>
-                  </div>
-                }
-              >
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={current() === row.mode ? "true" : "false"}
-                  class={{ "toolmode-row": true, selected: current() === row.mode }}
-                  disabled={busy()}
-                  onClick={() => void pick(row.mode)}
-                >
-                  <span class="toolmode-dot" aria-hidden="true" />
-                  <span class="toolmode-name">{row.label}</span>
-                  <span class="toolmode-hint">{row.hint}</span>
-                  <Show when={row.count != null}>
-                    <small class="toolmode-count">{row.count}</small>
-                  </Show>
-                </button>
-              </Show>
-            )}
-          </For>
-          <Show when={customOpen()}>
-            <div class="toolmode-custom">
-              <small>白名单工具名,每行一个(按注册名,如 read / exec / grep):</small>
-              <textarea
-                rows={5}
-                spellcheck={false}
-                value={draft()}
-                onInput={(e) => setDraft(e.currentTarget.value)}
-              />
-              <button
-                type="button"
-                class="toolmode-apply"
-                disabled={busy() || draft().trim() === ""}
-                onClick={() => void applyCustom()}
-              >
-                应用白名单
-              </button>
+        <div class="composer-menu composer-menu-right toolmode-popover" role="dialog" aria-label="工具模式">
+          <Show
+            when={!editingCustom()}
+            fallback={
+              <div class="toolmode-custom-view">
+                <div class="toolmode-custom-head">
+                  <button
+                    type="button"
+                    class="toolmode-back"
+                    onClick={() => setEditingCustom(false)}
+                  >
+                    <IconArrowLeft />
+                    <span>返回</span>
+                  </button>
+                  <span class="composer-popover-title" style={{ padding: 0 }}>自定义白名单</span>
+                </div>
+                <textarea
+                  class="toolmode-textarea"
+                  rows={5}
+                  spellcheck={false}
+                  placeholder="每行一个工具名，如 read / exec_command"
+                  value={draft()}
+                  onInput={(e) => setDraft(e.currentTarget.value)}
+                />
+                <div class="toolmode-custom-foot">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={busy() || draft().trim() === ""}
+                    onClick={() => void applyCustom()}
+                  >
+                    应用白名单
+                  </Button>
+                </div>
+              </div>
+            }
+          >
+            <div class="composer-popover-title">工具模式</div>
+            <div class="toolmode-list">
+              <For each={MODE_ROWS}>
+                {(row) => {
+                  const selected = () => current() === row.mode;
+                  return (
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={selected() ? "true" : "false"}
+                      class={{ "toolmode-option": true, selected: selected() }}
+                      disabled={busy()}
+                      onClick={() => void pick(row.mode)}
+                    >
+                      <span class="toolmode-option-icon" aria-hidden="true">
+                        {renderIcon(row.icon)}
+                      </span>
+                      <span class="toolmode-option-copy">
+                        <span class="toolmode-option-title">{row.label}</span>
+                        <span class="toolmode-option-desc">{row.desc}</span>
+                      </span>
+                      <Show when={selected()}>
+                        <IconCheck class="toolmode-option-check" />
+                      </Show>
+                    </button>
+                  );
+                }}
+              </For>
             </div>
           </Show>
-          <small class="composer-menu-note">切换立即生效于下一次模型请求;进行中的回合不受影响</small>
         </div>
       </Show>
     </div>

@@ -6,7 +6,6 @@ import type { ModelSelection } from "../api/contract";
 import { createSignal, For, Show, type Component } from "solid-js";
 import IconFolder from "~icons/lucide/folder";
 import IconChevronDown from "~icons/lucide/chevron-down";
-import IconSparkles from "~icons/lucide/sparkles";
 import IconGitBranch from "~icons/lucide/git-branch";
 import IconBug from "~icons/lucide/bug";
 import IconGauge from "~icons/lucide/gauge";
@@ -68,7 +67,7 @@ export const StartupView: Component<{
   onSubmitted?: () => void;
 }> = (props) => {
   const [draftText, setDraftText] = createSignal("");
-  const [openMenu, setOpenMenu] = createSignal<"workspace" | "profile" | null>(null);
+  const [openMenu, setOpenMenu] = createSignal<"workspace" | null>(null);
   queueMicrotask(() => { void refreshRegistry(); });
 
   const workspaceLabel = (): string => {
@@ -86,22 +85,6 @@ export const StartupView: Component<{
     const provider = current?.providers.find((item) => item.id === providerId);
     return providerKindOfCredential(provider?.credential);
   };
-
-  const modelLabel = (): string => {
-    const selected = preflightSelection();
-    const describe = (selection: ModelSelection): string => {
-      const provider = registry()?.providers.find((item) => item.id === selection.provider_id);
-      const model = provider?.models.find((item) => item.id === selection.model_id);
-      return `${provider?.name ?? selection.provider_id} · ${model?.definition.display_name ?? selection.model_id}`;
-    };
-    if (selected != null) return describe(selected);
-    const archiveDefault = registry()?.defaultSelection ?? null;
-    if (archiveDefault == null) return "跟随存档默认（未设置）";
-    return `跟随存档默认 · ${describe(archiveDefault)}`;
-  };
-
-  const effectiveSelection = (): ModelSelection | null =>
-    preflightSelection() ?? registry()?.defaultSelection ?? null;
 
   const handlePickAttachments = async (): Promise<void> => {
     try {
@@ -213,58 +196,6 @@ export const StartupView: Component<{
               />
             </Show>
           </div>
-
-          <div class="composer-control-wrap composer-profile-wrap">
-            <button
-              type="button"
-              class="composer-tool-button composer-profile-button"
-              aria-expanded={openMenu() === "profile" ? "true" : "false"}
-              onClick={() => setOpenMenu(openMenu() === "profile" ? null : "profile")}
-            >
-              <IconSparkles />
-              <span>{modelLabel()}</span>
-              <IconChevronDown />
-            </button>
-            <Show when={openMenu() === "profile"}>
-              <div class="composer-menu composer-profile-menu" role="menu">
-                <strong>选择服务商和模型</strong>
-                <For each={registry()?.providers ?? []}>{(provider) => <>
-                  <small>{provider.name}</small>
-                  <For each={provider.models.filter((model) => model.definition.enabled)}>{(model) =>
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={effectiveSelection()?.provider_id === provider.id && effectiveSelection()?.model_id === model.id ? "true" : "false"}
-                      onClick={() => {
-                        runPreflightWrite(() => ({
-                          ...startupPreflight(),
-                          modelSelection: { provider_id: provider.id, model_id: model.id, options: {} },
-                        }));
-                        setOpenMenu(null);
-                      }}
-                    >
-                      {model.definition.display_name || model.id}
-                    </button>
-                  }</For>
-                </>}</For>
-                <Show when={preflightSelection() != null}>
-                  <button
-                    type="button"
-                    title="清除预检，回到「跟随存档默认」(发送时省略 model_selection)"
-                    onClick={() => {
-                      runPreflightWrite(() => ({ ...startupPreflight(), modelSelection: null }));
-                      setOpenMenu(null);
-                    }}
-                  >
-                    跟随存档默认
-                  </button>
-                </Show>
-                <button type="button" onClick={() => { setOpenMenu(null); props.onManageProfiles?.(); }}>
-                  管理服务商和模型…
-                </button>
-              </div>
-            </Show>
-          </div>
         </div>
 
         <Composer
@@ -281,6 +212,13 @@ export const StartupView: Component<{
           attachments={startupAttachments}
           onRemoveAttachment={(id) => removeStartupAttachment(id)}
           onScreenshot={props.onScreenshot}
+          onManageProfiles={props.onManageProfiles}
+          onSelection={(providerId, modelId) => {
+            runPreflightWrite(() => ({
+              ...startupPreflight(),
+              modelSelection: { provider_id: providerId, model_id: modelId, options: {} },
+            }));
+          }}
           modelView={() => preflightSelection()?.model_id ?? null}
           modelOverridden={() => preflightSelection() != null}
           onModel={(model) => { runPreflightWrite(() => writePreflightModel(startupPreflight(), registry(), model)); }}
