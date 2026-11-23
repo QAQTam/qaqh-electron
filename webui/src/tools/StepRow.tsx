@@ -67,19 +67,38 @@ export const ToolDetail: Component<{ step: ToolStep; loadOutput?: (ref: string) 
   const args = createMemo(() => clipText(prettyArgs(step().argsJson), ARGS_MAX_CHARS));
   // exec 的输入/输出都归命令摘要与抽屉,展开区只有 error 一种事实(文件头口径)。
   const showArgs = () => !shell() && kind() !== "handoff" && step().status !== "declared" && args().text !== "";
+  const errorText = () => step().error?.trim() || undefined;
+  const shownDiff = () => (step().status === "finished" ? step().output?.diffText : undefined);
   const result = createMemo(() => {
     const text = step().output?.text;
-    return text == null || shell() ? null : clipText(text, DETAIL_MAX_CHARS);
+    if (text == null || shell()) return null;
+    const trimmed = text.trim();
+    if (errorText() && trimmed === errorText()) return null;
+    const diff = shownDiff();
+    if (diff && trimmed === diff.trim()) return null;
+    return clipText(text, DETAIL_MAX_CHARS);
   });
   // 懒水合:外置正文(>32 KiB)未拉取时这里给占位/失败重试,不静默空段。
   const pending = () => !shell() && step().outputRef != null && step().output?.text == null;
   const pendingStatus = () => (step().outputRef != null ? props.contentStatus?.[step().outputRef!] : undefined);
-  const stderr = () => (!shell() ? step().output?.stderr : undefined);
+  const stderr = () => {
+    if (shell()) return undefined;
+    const text = step().output?.stderr;
+    if (!text) return undefined;
+    if (errorText() && text.trim() === errorText()) return undefined;
+    return text;
+  };
+  const errorBody = createMemo(() => {
+    const text = step().error;
+    return text ? clipText(text, DETAIL_MAX_CHARS) : null;
+  });
   const omitLine = (omitted: number) => <Show when={omitted > 0}><span class="tool-omit">{STR.resultCharsOmitted(omitted)}</span></Show>;
   return <div class="tool-detail">
-    <Show when={step().status === "finished" && step().output?.diffText}>
-      <div class="tool-detail-label">修改结果<span class="spacer" /><CopyButton text={() => step().output?.diffText ?? ""} /></div>
-      <DiffList diffText={step().output!.diffText!} hideSingleFilePath />
+    <Show when={shownDiff()}>
+      {(diff) => <>
+        <div class="tool-detail-label">修改结果<span class="spacer" /><CopyButton text={() => diff()} /></div>
+        <DiffList diffText={diff()} hideSingleFilePath />
+      </>}
     </Show>
     <Show when={showArgs()}>
       <div class="tool-detail-label">{STR.toolSectionInput}<span class="spacer" /><CopyButton text={() => args().text} /></div>
@@ -106,11 +125,20 @@ export const ToolDetail: Component<{ step: ToolStep; loadOutput?: (ref: string) 
     </Show>
     <Show when={stderr()}>
       {(text) => <>
-        <div class="tool-detail-label">{STR.toolSectionStderr}</div>
+        <div class="tool-detail-label">{STR.toolSectionStderr}<span class="spacer" /><CopyButton text={() => text()} /></div>
         <pre class="tool-text tool-error">{text()}</pre>
       </>}
     </Show>
-    <Show when={step().error}><pre class="tool-text tool-error">{step().error}</pre></Show>
+    <Show when={errorBody()}>
+      {(body) => <>
+        <div class="tool-detail-label">
+          错误
+          <Show when={step().output?.truncated === true && !result()}><span class="tool-omit">{STR.truncatedNotice}</span></Show>
+          <span class="spacer" /><CopyButton text={() => body().text} />
+        </div>
+        <pre class="tool-text tool-error">{body().text}{omitLine(body().omitted)}</pre>
+      </>}
+    </Show>
   </div>;
 };
 
