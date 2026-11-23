@@ -116,7 +116,7 @@
 }
 
 @layer utilities {
-  .spin { animation: qaqh-spin 1s linear infinite; }
+  .spin { animation: qaqh-spin 1s linear infinite; will-change: transform; }
   @keyframes qaqh-spin { to { transform: rotate(360deg); } }
 
   @media (prefers-reduced-motion: reduce) {

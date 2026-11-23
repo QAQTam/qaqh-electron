@@ -319,7 +319,6 @@ if (isVisualPreview) {
       ],
     },
     lsp: { enabled: false, idleShutdownSecs: 300, servers: [] },
-    tokenizerPath: null,
   };
   // skills 视觉夹具直接复用 daemon `skills.catalog` 的输出形状；发现、解析和遮蔽
   // 由 catalog 负责，浏览器夹具只提供可展示的条目元数据。
@@ -1572,7 +1571,7 @@ render(
         </div>
           </>
         }>
-          <SettingsView initialSection={previewSettingsSection()} sectionNonce={previewSettingsNonce()} onSectionChange={setPreviewSettingsSection} showSectionPicker={fixtureCols() === 1 || sidebarCollapsed()} />
+          <SettingsView modal initialSection={previewSettingsSection()} sectionNonce={previewSettingsNonce()} onSectionChange={setPreviewSettingsSection} onClose={() => setCurrentView("messages")} />
         </Show>
       </div>
       {/* 与 App 同位(spec §6.3):任务右栏 ≥1280 为第三列,<1280 抽屉按参数预设。 */}

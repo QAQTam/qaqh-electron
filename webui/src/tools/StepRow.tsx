@@ -146,8 +146,9 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
   };
   const isShimmer = createMemo(() => {
     if (props.isShimmer !== undefined) return props.isShimmer;
+    if (props.turn != null && props.turn.status !== "running") return false;
     const st = step().status;
-    if (st === "failed" || st === "cancelled" || st === "interrupted") return false;
+    if (st === "finished" || st === "failed" || st === "cancelled" || st === "interrupted") return false;
     const active = (isLatest() && !yielded()) || st === "running" || st === "declared" || st === "awaiting_permission" || st === "cancelling";
     return Boolean(active && (summary() || commandIcon()));
   });
@@ -181,7 +182,7 @@ export const StepRow: Component<{ step: ToolStep; turn: Turn; expandable?: boole
     <Switch fallback={<div data-tool-call-id={step().id} class={{ "step-row": true, tool: true, [`st-${step().status}`]: true, "is-latest": isLatest() }}>
     <button type="button" class="tool-head" disabled={!hasDetails() && !execTarget()} aria-expanded={hasDetails() ? open() ? "true" : "false" : undefined} onClick={(event) => { if (hasDetails()) { setOverride(!open()); return; } openExecDrawer(event); }}>
       <Switch>
-        <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running" || step().status === "cancelling"}><span class="tool-icon spin"><IconLoader /></span></Match>
+        <Match when={step().status === "declared" || step().status === "awaiting_permission" || step().status === "running" || step().status === "cancelling"}><span class="tool-icon muted"><IconLoader /></span></Match>
         <Match when={step().status === "finished"}><span class="tool-icon muted" title={execBadge()?.label ?? (kind() === "handoff" ? STR.handoffSealed : "已完成")}><Switch fallback={<IconWrench />}>
           <Match when={kind() === "shell"}><IconTerminal /></Match><Match when={kind() === "read" || kind() === "skill"}><IconFile /></Match><Match when={kind() === "edit"}><IconEdit /></Match><Match when={kind() === "search"}><IconSearch /></Match>
           {/* 交接工具在 minimal/custom 档也会被后端声明(控制面工具不吃 allowlist),

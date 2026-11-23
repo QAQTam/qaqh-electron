@@ -111,6 +111,7 @@ import { toast, ToastHost } from "../ui/toast";
 import { buildContextMenu, ContextMenuHost, openContextMenu, type ContextMenuItem } from "../ui/contextMenu";
 import { DiffReviewDrawer } from "../diff/DiffReviewDrawer";
 import { ExecSessionDrawer } from "../exec/ExecSessionDrawer";
+import { CodePreviewDrawer } from "../workspace/CodePreviewDrawer";
 import { execPanelStore } from "../exec/panel-store";
 import { ShellDock } from "../exec/ShellDock";
 import BrowserPane from "../browser/BrowserPane";
@@ -906,7 +907,7 @@ const App: Component = () => {
             <IconMenu />
           </button>
           {/* 主页是根页,不出现「返回」;返回目标永远是消息页。 */}
-          <Show when={settingsOpen() || (section() !== "messages" && section() !== "home")}>
+          <Show when={section() !== "messages" && section() !== "home"}>
             <button type="button" class="titlebar-back" aria-label="返回消息" title="返回消息" onClick={() => navigateSection("messages")}>
               <IconArrowLeft />
             </button>
@@ -915,10 +916,10 @@ const App: Component = () => {
         </div>
         <div class="topbar-center">
           <Show
-            when={section() === "messages" && !settingsOpen() && !isStartup() && activeTab() != null}
+            when={section() === "messages" && !isStartup() && activeTab() != null}
             fallback={
               <div class="titlebar-session-title">
-                {settingsOpen() ? "设置" : section() === "home" ? STR.productName : section() === "tools" ? "工具" : section() === "team" ? STR.teamTitle : section() === "oauth" ? "接入" : "新会话"}
+                {section() === "home" ? STR.productName : section() === "tools" ? "工具" : section() === "team" ? STR.teamTitle : section() === "oauth" ? "接入" : "新会话"}
               </div>
             }
           >
@@ -929,7 +930,7 @@ const App: Component = () => {
         <div class="topbar-right">
           {/* 功能区:会话级功能按钮组(终端/任务/手柄)。「更多」应用菜单保持独立。 */}
           <div class="topbar-function-zone" role="group" aria-label="功能区">
-            <Show when={section() === "messages" && !settingsOpen() && !isStartup() && activeTab() != null}>
+            <Show when={section() === "messages" && !isStartup() && activeTab() != null}>
               {/* 后台执行终端入口(功能区首位):运行计数徽章驱动,点击开/关后台执行抽屉。 */}
               <button
                 type="button"
@@ -998,10 +999,9 @@ const App: Component = () => {
         </div>
       </header>
       <Sidebar
-        section={settingsOpen() ? "settings" : section()}
+        section={section()}
+        settingsActive={settingsOpen()}
         onNavigate={navigateSection}
-        settingsSection={settingsSection()}
-        onSettingsSection={(id) => { setSettingsSection(id); setSettingsSectionNonce((value) => value + 1); if (appCols() === 1) setSidebarDrawerOpen(false); }}
         toolsTab={toolsTab()}
         onToolsTab={(id) => { setToolsTab(id as "skills" | "mcp" | "plugins"); if (appCols() === 1) setSidebarDrawerOpen(false); }}
         collapsed={sidebarCollapsed()}
@@ -1024,9 +1024,7 @@ const App: Component = () => {
         onRename={renameSession}
         onDelete={deleteSession}
       />
-      <div class={settingsOpen() ? "workspace workspace-settings" : "workspace"}>
-        <Show when={settingsOpen()} fallback={
-          <>
+      <div class="workspace">
         <div class="workspace-content">
         {/* Reserved for Goal. Do not render the old session capsule for now.
         <div class="session-tabs-region">
@@ -1160,21 +1158,21 @@ const App: Component = () => {
           <Show when={section() === "oauth"}><OAuthPage onOpenSettings={() => navigateSection("settings")} /></Show>
         </main>
         </div>
-          </>
-        }>
-          <SettingsView
-            initialSection={settingsSection()}
-            sectionNonce={settingsSectionNonce()}
-            onSectionChange={setSettingsSection}
-            showSectionPicker={appCols() === 1 || sidebarCollapsed()}
-            onOpenOAuth={() => navigateSection("oauth")}
-          />
-        </Show>
       </div>
+      <Show when={settingsOpen()}>
+        <SettingsView
+          modal
+          initialSection={settingsSection()}
+          sectionNonce={settingsSectionNonce()}
+          onSectionChange={setSettingsSection}
+          onClose={requestSettingsClose}
+          onOpenOAuth={() => { requestSettingsClose(); navigateSection("oauth"); }}
+        />
+      </Show>
       {/* 任务右栏(spec §6.3):≥1280 第三列(dock);<1280 常驻挂载为覆盖层抽屉。 */}
       {/* 抽屉面板常驻挂载(cols<3 时为覆盖层):开关由 class 驱动,
           关闭时滑出画面再 display:none(motion kit),退出动画播得出来。 */}
-      <Show when={!settingsOpen() && section() === "messages" && !isStartup() && activeTab() != null}>
+      <Show when={section() === "messages" && !isStartup() && activeTab() != null}>
         <WorkspacePanel store={activeTab()!.store} drawer={appCols() < 3} drawerOpen={railDrawerOpen()} manualOpen={railManual()} onManualToggle={setRailManual} />
       </Show>
       {/* 抽屉遮罩:盖 body 行,点击关闭;TopBar 不被盖住(关闭入口常在)。
@@ -1270,6 +1268,7 @@ const App: Component = () => {
       </Show>
       <DiffReviewDrawer />
       <ExecSessionDrawer />
+      <CodePreviewDrawer />
       <ContextMenuHost />
       <ToastHost />
       <PluginDock />

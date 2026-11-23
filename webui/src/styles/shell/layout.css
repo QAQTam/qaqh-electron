@@ -13,10 +13,10 @@
      (SessionHeader 入驻),右格 ⋯ 菜单;原生窗口控制由 WCO 画在右上角安全区。 */
   #top {
     grid-column: 1 / -1; grid-row: 1;
-    display: grid; grid-template-columns: var(--sidebar-width, 288px) minmax(0, 1fr) auto;
+    display: grid; grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr) auto;
     align-items: center; min-width: 0;
-    border-bottom: 1px solid var(--border);
-    /* 与 #app 同节奏:汉堡收展时中格(会话标题)随左轨一起滑,不与侧栏脱节。 */
+    border-bottom: 0;
+    background: var(--bg);
     transition: grid-template-columns var(--dur-layout) var(--ease);
   }
   .topbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 10px; }
@@ -121,8 +121,9 @@
      不跟 4/8px 控件圆角家族——层级越高的面圆角越大,圆角本身就是深度编码)。
      8px 缝透出底层 Mica/底色,overflow 把滚动条端头一并裁进圆角。 */
   .workspace-content {
-    margin: 8px;
-    border-radius: 16px;
+    margin: 0 8px 8px 0;
+    border-radius: 14px;
+    border: 1px solid var(--border);
     overflow: hidden;
   }
   /* 消息区主题岛:把通用表面 token 在本子树重映射到 --chat-* 暖纸色——区内

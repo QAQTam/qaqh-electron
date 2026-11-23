@@ -7,14 +7,16 @@
 /* 1. 字体声明与重置 */
 @import "./reset.css";
 
-/* 2. 设计规范与主题 Tokens */
+/* 2. 设计规范与主题 Tokens（全平台统一语义层） */
 @import "./tokens/base.css";
-@import "./tokens/fluent.css";
 
 /* 3. 全局基础规则 */
 @import "./base.css";
 
-/* 4. 应用外壳与桌面骨架 */
+/* 4. 原子组件基础样式（Primitives） */
+@import "./components/primitives.css";
+
+/* 5. 应用外壳与桌面骨架 */
 @import "./shell/layout.css";
 @import "./shell/sidebar.css";
 @import "./shell/tabs.css";
@@ -39,6 +41,7 @@
 @import "./components/feedback.css";
 @import "./components/deliverables.css";
 @import "./components/exec-drawer.css";
+@import "./components/code-preview.css";
 @import "./components/siwc.css";
 @import "./components/dsaccount.css";
 @import "./components/team.css";
@@ -46,9 +49,6 @@
 @import "./components/effort.css";
 @import "./components/toolmode.css";
 @import "./components/browser-pane.css";
-
-/* Windows 11 / Fluent 2 覆盖层（仅 data-platform="windows" 生效） */
-@import "./components/fluent.css";
 
 /* 6. 主题预设 */
 @import "./themes/lite.css";

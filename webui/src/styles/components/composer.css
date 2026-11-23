@@ -13,24 +13,22 @@
     width: min(var(--content-width), 100%); margin-inline: auto;
     display: flex; flex-direction: column;
     min-height: 96px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-input);
     background: var(--surface);
-    box-shadow: none;
+    box-shadow: var(--shadow-soft);
     transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
   }
-  /* Reading and writing surfaces stay solid; Mica belongs to the outer shell. */
   html.desktop .composer-surface {
     background: var(--surface);
-    border-color: var(--border);
-    box-shadow: none;
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-soft);
   }
-  .composer-surface:focus-within {
-    border-color: var(--focus-ring);
-    box-shadow: none;
+  .composer-surface:focus-within,
+  html.desktop .composer-surface:focus-within {
+    border-color: color-mix(in srgb, var(--text) 28%, var(--border-strong));
+    box-shadow: var(--shadow-glass);
   }
-  html.desktop .composer-surface:focus-within { border-color: var(--focus-ring); box-shadow: none; }
-  .composer-surface:has(textarea:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   #composer textarea {
     display: block; width: 100%; flex: 1 0 auto;
     /* 自适应高度改由布局引擎做(2026-11-10 性能修复):原先每键 JS 写 height=auto 再读
@@ -45,7 +43,7 @@
     font-size: var(--fs-md); line-height: 22px;
     outline: none;
   }
-  #composer textarea:focus-visible { outline: none; }
+  #composer textarea:focus-visible { outline: none; box-shadow: none; }
   .composer-toolbar {
     min-height: 42px;
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
@@ -96,8 +94,11 @@
   .composer-menu {
     position: absolute; z-index: 30; bottom: calc(100% + 8px); left: 0;
     display: grid; gap: 3px; width: 260px; max-width: min(280px, 80vw);
-    padding: 8px; border: 1px solid var(--border-strong); border-radius: var(--r-lg);
-    color: var(--text); background: var(--surface); box-shadow: var(--shadow-panel);
+    padding: 8px; border: 1px solid var(--stroke-control, var(--border-strong)); border-radius: var(--r-lg);
+    color: var(--text); background: var(--flyout-bg, var(--surface));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
   }
   /* 首页配置栏在页面中段:那里向上弹会顶出视口顶边、把首个条目裁掉,所以
      StartupView 的菜单改用向下展开。输入区贴着窗口底部,那边继续向上。 */
@@ -212,12 +213,16 @@
     color: var(--muted);
     transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
   }
-  #composer .icon-btn { width: 36px; height: 36px; }
-  #composer .icon-btn.send:not(:disabled) {
-    background: var(--accent); color: var(--on-accent);
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  #composer .icon-btn { width: 32px; height: 32px; border-radius: var(--radius-pill); }
+  #composer .icon-btn.send {
+    background: var(--text); color: var(--surface);
   }
-  #composer .icon-btn.send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); color: var(--on-accent); }
+  #composer .icon-btn.send:disabled {
+    background: var(--text); color: var(--surface); opacity: .22;
+  }
+  #composer .icon-btn.send:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text) 82%, var(--surface)); color: var(--surface);
+  }
   #composer .icon-btn.stop { background: var(--err-soft); color: var(--err); }
   .icon-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
   .icon-btn:active:not(:disabled) { background: var(--accent-soft); }
@@ -231,10 +236,12 @@
     z-index: 60;
     display: inline-flex; align-items: center; gap: 4px;
     padding: 4px 6px;
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--stroke-control, var(--border-strong));
     border-radius: var(--radius-panel);
-    background: var(--flyout-bg, var(--bg));
-    box-shadow: var(--shadow-panel);
+    background: var(--flyout-bg, var(--surface));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
   }
   .find-input {
     width: 220px; height: 26px; padding: 0 8px;
@@ -275,9 +282,12 @@
     transform: translateX(-50%);
     display: inline-flex; align-items: center; gap: 6px;
     min-height: 28px; padding: 0 10px;
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--stroke-control, var(--border-strong));
     border-radius: var(--r-md);
-    background: var(--bg);
+    background: var(--flyout-bg, var(--bg));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-soft);
     color: var(--text); font-size: var(--fs-xs);
     opacity: 0; visibility: hidden; pointer-events: none;
     transition: opacity var(--dur-out) var(--ease), visibility 0s var(--dur-out), background-color var(--dur-fast) var(--ease);

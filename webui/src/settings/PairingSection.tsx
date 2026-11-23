@@ -1,15 +1,13 @@
 /**
- * 设备配对 section:先开「局域网模式」(壳把 daemon 重启成 `server --bind` 实例),
- * 再签发一次性配对令牌(120s)→ 渲染二维码 → 手机扫 `lan_endpoint` 并按 TLS
- * 指纹 pinning 直连;下方管理已配对设备(吊销会强制断开其 SSE)。
- *
- * 安全语义:二维码只在用户显式点击「生成」时签发——桌面确认 = 发 token。
- * admin token 与 HTTP 都留在 Rust 壳,webview 只见端点/指纹/设备视图与 payload。
+ * 设备配对 section：分组左文右控布局（局域网模式 / 配对新设备 / 已配对设备）。
  */
 import { createEffect, createSignal, For, onCleanup, Show, type Component } from "solid-js";
 import IconQrCode from "~icons/lucide/qr-code";
 import IconRefreshCw from "~icons/lucide/refresh-cw";
-import IconRadioTower from "~icons/lucide/radio-tower";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { SegmentedControl, type SegmentedOption } from "../ui/SegmentedControl";
+import { SettingGroup, SettingRow } from "../ui/SettingGroup";
 import { toast } from "../ui/toast";
 import { isDesktopRuntime, desktopHostSurface, transport } from "../lib/transport";
 import {
@@ -25,15 +23,20 @@ import {
   type DeviceEntry,
   type PairingScope,
 } from "../lib/pairing";
-import { Field, Section, TextInput } from "./controls";
+import { Field, TextInput } from "./controls";
 
-const SCOPES: Array<{ id: PairingScope; label: string; desc: string }> = [
-  { id: "view", label: "view", desc: "只读:看会话与输出" },
-  { id: "interact", label: "interact", desc: "可交互:发送消息、响应授权" },
-  { id: "admin", label: "admin", desc: "管理员:含设备管理(慎选)" },
+const SCOPE_OPTIONS: readonly SegmentedOption<PairingScope>[] = [
+  { value: "view", label: "只读", title: "只读：查看会话与输出" },
+  { value: "interact", label: "可交互", title: "可交互：发送消息、响应授权" },
+  { value: "admin", label: "管理员", title: "管理员：含设备管理（慎选）" },
 ];
 
-/** 与壳侧 `lan::DEFAULT_LAN_PORT` 同调:固定端口是手机侧可预测地址的前提。 */
+const SCOPE_DESC: Record<PairingScope, string> = {
+  view: "仅可查看会话记录与实时输出",
+  interact: "可发送消息并响应审批授权（推荐）",
+  admin: "拥有完整控制与设备管理权限，请谨慎授予",
+};
+
 const DEFAULT_LAN_PORT = 64413;
 
 const relativeTime = (ms: number): string => {
@@ -46,7 +49,6 @@ const relativeTime = (ms: number): string => {
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 
-/** 指纹只展示前 8 位十六进制,完整值进 title 便于核对。 */
 const shortFingerprint = (fp: string | null): string | null => {
   if (fp == null || fp === "") return null;
   const hex = fp.startsWith("sha256:") ? fp.slice(7) : fp;
@@ -72,14 +74,12 @@ export const PairingSection: Component = () => {
   const [lanNote, setLanNote] = createSignal<string | null>(null);
   const [lanError, setLanError] = createSignal<string | null>(null);
   const [lanConfirm, setLanConfirm] = createSignal<"enable" | "disable" | "force" | null>(null);
-  /** Busy 之后「强制」要重试的是哪一条动作(开启/关闭),不能一律当成开启。 */
   const [forceAction, setForceAction] = createSignal<"enable" | "disable">("enable");
   const [bindIp, setBindIp] = createSignal("");
   const [portDraft, setPortDraft] = createSignal(String(DEFAULT_LAN_PORT));
 
   const lanActive = (): boolean => lan()?.active === true;
 
-  // 倒计时只在有活码时走:250ms 一跳只为进度条平滑,秒数文本按秒变。
   createEffect(
     () => [qrDataUrl() != null, expiresAt()],
     ([live]) => {
@@ -108,7 +108,6 @@ export const PairingSection: Component = () => {
     }
   };
 
-  // 进设置就各拉一次(available 恒定 → effect 只跑一次)。
   createEffect(
     () => available,
     () => {
@@ -122,15 +121,12 @@ export const PairingSection: Component = () => {
   const remainingSec = (): number => Math.max(0, Math.ceil((expiresAt() - now()) / 1000));
   const lanIssue = (): string | null => lanAddressIssue(lan()?.lan_endpoint ?? null);
 
-  /** 二维码与局域网面是一体的:换 daemon(重启)后旧码的 base_url 就作废了。 */
   const dropQr = (): void => {
     setQrDataUrl(null);
     setQrBaseUrl(null);
     setExpiresAt(0);
   };
 
-  // daemon 刚换过实例:宿主连接在壳侧已重建,这里把活动标签的流重新挂上去,
-  // 无活动标签(no_active_seed)时静默即可。
   const reattachStreams = (): void => {
     const host = desktopHostSurface(transport);
     if (host == null) return;
@@ -143,10 +139,10 @@ export const PairingSection: Component = () => {
     setLanConfirm(null);
     setLanNote(
       force
-        ? "正在强制重启 daemon(在跑的 Turn 会被中断)…"
+        ? "正在强制重启 daemon（进行中的任务会被中断）…"
         : action === "enable"
-          ? "正在以局域网模式重启 daemon,冷启动加证书生成约需数秒…"
-          : "正在切回回环模式并重启 daemon…",
+          ? "正在开启局域网模式并重启 daemon…"
+          : "正在切回本机回环模式…",
     );
     try {
       const port = Number.parseInt(portDraft(), 10);
@@ -166,7 +162,6 @@ export const PairingSection: Component = () => {
       } else {
         setLanError(messageOf(cause));
       }
-      // 停机请求可能已部分生效:状态刷新一次,别让面板停在旧值上。
       void loadLan();
     } finally {
       setLanNote(null);
@@ -210,244 +205,221 @@ export const PairingSection: Component = () => {
   const fingerprint = (): string | null => shortFingerprint(lan()?.tls_fingerprint ?? null);
 
   return (
-    <Section
-      id="section-pairing"
-      title="设备配对(移动端)"
-      desc="先开启局域网模式让手机能连到本机,再生成一次性二维码扫码绑定。令牌 120 秒有效且只能用一次。"
-    >      <Show
+    <div id="section-pairing" style={{ display: "flex", "flex-direction": "column", gap: "24px" }}>
+      <Show
         when={available}
-        fallback={<p class="field-hint" style={{ "grid-column": "1 / -1" }}>浏览器 dev 环境不可用:请在桌面壳内使用。</p>}
+        fallback={
+          <SettingGroup title="设备配对">
+            <SettingRow label="当前环境不可用" desc="请在 Electron 桌面端内使用局域网配对功能。">
+              <Badge>仅桌面端</Badge>
+            </SettingRow>
+          </SettingGroup>
+        }
       >
-        <div class="lan-block" style={{ "grid-column": "1 / -1" }}>
-          <div class="lan-head">
-            <span class="lan-title">
-              <IconRadioTower />
-              局域网模式
-            </span>
-            <Show
-              when={!lanBusy()}
-              fallback={<span class="lan-badge pending">重启中…</span>}
-            >
-              <span class={`lan-badge ${lanActive() ? "on" : "off"}`}>
-                {lanActive() ? "已开启" : lan()?.running === true ? "未开启" : "daemon 未运行"}
-              </span>
-            </Show>
-            <button type="button" class="ghost-mini" disabled={lanBusy()} onClick={() => void loadLan()}>
-              <IconRefreshCw class={{ spin: !lanBusy() && lan() == null }} />
+        <SettingGroup
+          title="局域网模式"
+          desc="开启后以自签 TLS 监听局域网，便于手机扫码直连；切换期间会话会短暂中断。"
+          aside={
+            <Button size="sm" variant="ghost" disabled={lanBusy()} onClick={() => void loadLan()}>
+              <IconRefreshCw class={{ "icon-spin": !lanBusy() && lan() == null }} />
               刷新
-            </button>
-          </div>
+            </Button>
+          }
+        >
+          <SettingRow
+            label="局域网访问"
+            desc={lanActive() ? "手机需与本机处于同一局域网内" : "当前仅监听本机回环地址，手机无法连接"}
+          >
+            <Show when={!lanBusy()} fallback={<Badge tone="warn">重启中…</Badge>}>
+              <Badge tone={lanActive() ? "ok" : "warn"}>
+                {lanActive() ? "已开启" : lan()?.running === true ? "未开启" : "未运行"}
+              </Badge>
+            </Show>
+            <Show
+              when={lanActive()}
+              fallback={
+                <Show when={lanConfirm() !== "enable" && lanConfirm() !== "force"}>
+                  <Button size="sm" variant="primary" disabled={lanBusy()} onClick={() => setLanConfirm("enable")}>
+                    开启局域网模式
+                  </Button>
+                </Show>
+              }
+            >
+              <Button size="sm" variant="secondary" disabled={lanBusy()} onClick={() => setLanConfirm("disable")}>
+                关闭
+              </Button>
+            </Show>
+          </SettingRow>
 
           <Show when={lanActive()}>
-            <dl class="lan-grid">
-              <dt>手机连接的地址</dt>
-              <dd><b>{lan()!.lan_endpoint}</b></dd>
-              <dt>证书指纹</dt>
-              <dd><b title={lan()!.tls_fingerprint ?? ""}>{fingerprint() ?? "未提供"}</b></dd>
-            </dl>
-            <Show when={lanIssue() != null}>
-              <p class="field-hint is-warn">{lanIssue()}</p>
-            </Show>
-            <Show when={lanIssue() == null}>
-              <p class="field-hint">手机需与本机在同一局域网内。切换回环模式或改绑定地址都要重启 daemon,期间会话会中断。</p>
-            </Show>
-            <div class="lan-actions">
-              <button type="button" class="ghost-mini" disabled={lanBusy()} onClick={() => setLanConfirm("disable")}>
-                关闭局域网模式
-              </button>
-            </div>
-          </Show>
-
-          <Show when={!lanActive()}>
-            <p class="field-hint">
-              daemon 现在只听回环地址,手机扫不到。开启后壳会以 <b>server --bind</b> 重启 daemon(启用自签 TLS),
-              期间会话会短暂中断。
-            </p>
-            <Show when={lanConfirm() !== "enable" && lanConfirm() !== "force"}>
-              <div class="lan-actions">
-                <button type="button" class="ghost-mini" disabled={lanBusy()} onClick={() => setLanConfirm("enable")}>
-                  开启局域网模式
-                </button>
-              </div>
-            </Show>
+            <SettingRow label="手机连接地址" desc={lanIssue() ?? undefined}>
+              <span class="ui-setting-row-value is-mono">{lan()!.lan_endpoint}</span>
+            </SettingRow>
+            <SettingRow label="TLS 证书指纹">
+              <span class="ui-setting-row-value is-mono" title={lan()!.tls_fingerprint ?? ""}>
+                {fingerprint() ?? "未提供"}
+              </span>
+            </SettingRow>
           </Show>
 
           <Show when={lanConfirm() === "enable" || lanConfirm() === "force" || lanConfirm() === "disable"}>
-            <div class="lan-confirm">
+            <div style={{ padding: "14px 16px", background: "var(--surface-hover)", display: "flex", "flex-direction": "column", gap: "12px" }}>
               <Show when={lanConfirm() === "enable"}>
                 <div class="lan-form">
-                  <Field label="绑定地址" hint="留空 = 自动选出口网卡(0.0.0.0)。多网卡或开着代理建议手填,如 192.168.1.23;改地址会重签证书,设备需重扫。">
+                  <Field label="绑定地址" hint="留空自动选择网卡；多网卡或代理环境建议手填局域网 IP。">
                     <TextInput value={bindIp()} onInput={setBindIp} placeholder="留空自动" />
                   </Field>
-                  <Field label="端口" hint="固定端口让手机侧地址可预测;被占用时换个再试。" compact>
+                  <Field label="端口" hint="默认 64413，被占用时可修改。" compact>
                     <TextInput value={portDraft()} onInput={setPortDraft} placeholder={String(DEFAULT_LAN_PORT)} />
                   </Field>
-                  <div class="lan-actions">
-                    <button type="button" class="ghost-mini" disabled={lanBusy()} onClick={() => void runLanRestart("enable", false)}>
-                      确认开启并重启 daemon
-                    </button>
-                    <button type="button" class="ghost-mini" disabled={lanBusy()} onClick={() => setLanConfirm(null)}>
-                      取消
-                    </button>
-                  </div>
+                </div>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <Button size="sm" variant="primary" disabled={lanBusy()} onClick={() => void runLanRestart("enable", false)}>
+                    确认开启并重启
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={lanBusy()} onClick={() => setLanConfirm(null)}>
+                    取消
+                  </Button>
                 </div>
               </Show>
+
               <Show when={lanConfirm() === "force"}>
-                <p class="lan-confirm-copy is-warn">
-                  daemon 正在跑 Turn,默认不硬停。确认强制重启会中断当前会话与审批。
+                <p class="field-hint is-warn" style={{ margin: 0 }}>
+                  daemon 正在执行任务，强制重启会中断当前会话与审批。
                 </p>
-                <div class="lan-actions">
-                  <button type="button" class="ghost-mini is-danger button-danger" disabled={lanBusy()} onClick={() => void runLanRestart(forceAction(), true)}>
-                    {forceAction() === "disable" ? "强制切回回环模式" : "强制开启局域网模式"}
-                  </button>
-                  <button type="button" class="ghost-mini" disabled={lanBusy()} onClick={() => setLanConfirm(null)}>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <Button size="sm" variant="danger" disabled={lanBusy()} onClick={() => void runLanRestart(forceAction(), true)}>
+                    {forceAction() === "disable" ? "强制切回回环" : "强制开启局域网"}
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={lanBusy()} onClick={() => setLanConfirm(null)}>
                     取消
-                  </button>
+                  </Button>
                 </div>
               </Show>
+
               <Show when={lanConfirm() === "disable"}>
-                <p class="lan-confirm-copy">
-                  关闭会以回环模式重启 daemon,局域网面随即消失,手机连不上。重新开启若换了绑定地址或端口,
-                  自签证书会重签、已配对设备需要重新扫码。
+                <p class="field-hint" style={{ margin: 0 }}>
+                  关闭后将以回环模式重启 daemon，移动端将断开连接。
                 </p>
-                <div class="lan-actions">
-                  <button type="button" class="ghost-mini" disabled={lanBusy()} onClick={() => void runLanRestart("disable", false)}>
-                    确认关闭并重启
-                  </button>
-                  <button type="button" class="ghost-mini" disabled={lanBusy()} onClick={() => setLanConfirm(null)}>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <Button size="sm" variant="danger" disabled={lanBusy()} onClick={() => void runLanRestart("disable", false)}>
+                    确认关闭
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={lanBusy()} onClick={() => setLanConfirm(null)}>
                     取消
-                  </button>
+                  </Button>
                 </div>
               </Show>
             </div>
           </Show>
 
-          <Show when={lanNote() != null}>
-            <p class="field-hint">{lanNote()}</p>
-          </Show>
-          <Show when={lanError() != null}>
-            <p class="field-hint is-error">{lanError()}</p>
-          </Show>
-        </div>
-
-        <Field label="授予档位" wide>
-          <div class="scope-list">
-            <For each={SCOPES}>
-              {(item) => (
-                <label class={`scope${scope() === item.id ? " active" : ""}${item.id === "admin" ? " dangerous" : ""}`}>
-                  <input
-                    type="radio"
-                    name="pairing-scope"
-                    checked={scope() === item.id}
-                    onInput={() => setScope(item.id)}
-                  />
-                  <span class="scope-name">{item.label}</span>
-                  <span class="scope-desc">{item.desc}</span>
-                </label>
-              )}
-            </For>
-          </div>
-        </Field>
-        <Field label="设备名" hint="给手机起个名字,便于在设备列表里辨认。">
-          <TextInput value={deviceName()} onInput={setDeviceName} placeholder="我的手机" />
-        </Field>
-        <div class="pairing-actions">
-          <button
-            type="button"
-            class="ghost-mini"
-            disabled={creating() || lanBusy() || !lanActive()}
-            onClick={() => void generate()}
-          >
-            <Show when={qrDataUrl() != null} fallback={<IconQrCode />}>
-              <IconRefreshCw />
-            </Show>
-            {creating() ? "生成中…" : qrDataUrl() == null ? "生成配对二维码" : expired() ? "已过期,重新生成" : "重新生成"}
-          </button>
-          <Show when={qrDataUrl() != null && !expired()}>
-            <span class="pairing-count">{remainingSec()}s 后过期</span>
-          </Show>
-          <Show when={!lanActive()}>
-            <span class="pairing-count">需先开启局域网模式</span>
-          </Show>
-        </div>
-        <Show when={error() != null}>
-          <p class="field-hint is-error" style={{ "grid-column": "1 / -1" }}>{error()}</p>
-        </Show>
-        <Show when={qrDataUrl() != null}>
-          <div class="pairing-qr" style={{ "grid-column": "1 / -1" }}>
-            <img src={qrDataUrl()!} alt="配对二维码" width={220} height={220} />
-            <div class="pairing-qr-note">
-              <Show
-                when={!expired()}
-                fallback={<span class="pairing-expired">二维码已过期,请重新生成。</span>}
-              >
-                <span>
-                  用移动端扫码绑定。令牌一次性,{remainingSec()}s 后过期;手机按指纹 pinning 直连
-                  <b>{qrBaseUrl() ?? lan()!.lan_endpoint}</b>。
-                </span>
-              </Show>
+          <Show when={lanNote() != null || lanError() != null}>
+            <div style={{ padding: "10px 16px" }}>
+              <Show when={lanNote() != null}><p class="field-hint" style={{ margin: 0 }}>{lanNote()}</p></Show>
+              <Show when={lanError() != null}><p class="field-hint is-error" style={{ margin: 0 }}>{lanError()}</p></Show>
             </div>
-          </div>
-        </Show>
+          </Show>
+        </SettingGroup>
 
-        <div class="devices-block" style={{ "grid-column": "1 / -1" }}>
-          <div class="devices-head">
-            <span>已配对设备</span>
-            <button type="button" class="ghost-mini" disabled={devicesLoading()} onClick={() => void loadDevices()}>
-              <IconRefreshCw class={{ spin: devicesLoading() }} />
+        <SettingGroup title="配对新设备" desc="生成一次性配对二维码（120 秒有效），使用移动端扫码完成绑定。">
+          <SettingRow label="授予权限档位" desc={SCOPE_DESC[scope()]}>
+            <SegmentedControl
+              aria-label="授予权限档位"
+              options={SCOPE_OPTIONS}
+              value={scope()}
+              onChange={setScope}
+            />
+          </SettingRow>
+          <SettingRow label="设备名称" desc="用于在已配对列表中区分不同移动设备">
+            <div style={{ width: "200px" }}>
+              <TextInput value={deviceName()} onInput={setDeviceName} placeholder="我的手机" />
+            </div>
+          </SettingRow>
+          <SettingRow
+            label="一次性配对二维码"
+            desc={!lanActive() ? "请先在上方开启局域网模式" : qrDataUrl() != null && !expired() ? `剩余有效时间 ${remainingSec()} 秒` : "点击右侧按钮签发一次性令牌"}
+          >
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={creating() || lanBusy() || !lanActive()}
+              onClick={() => void generate()}
+            >
+              <Show when={qrDataUrl() != null} fallback={<IconQrCode />}>
+                <IconRefreshCw />
+              </Show>
+              {creating() ? "生成中…" : qrDataUrl() == null ? "生成二维码" : expired() ? "重新生成" : "刷新二维码"}
+            </Button>
+          </SettingRow>
+
+          <Show when={error() != null}>
+            <div style={{ padding: "10px 16px" }}>
+              <p class="field-hint is-error" style={{ margin: 0 }}>{error()}</p>
+            </div>
+          </Show>
+
+          <Show when={qrDataUrl() != null}>
+            <div class="pairing-qr" style={{ margin: "12px 16px 16px" }}>
+              <img src={qrDataUrl()!} alt="配对二维码" width={200} height={200} />
+              <div class="pairing-qr-note">
+                <Show
+                  when={!expired()}
+                  fallback={<span class="pairing-expired">二维码已过期，请点击上方重新生成。</span>}
+                >
+                  <span>
+                    用移动端扫码绑定，{remainingSec()}s 后过期；直连地址 <b>{qrBaseUrl() ?? lan()!.lan_endpoint}</b>。
+                  </span>
+                </Show>
+              </div>
+            </div>
+          </Show>
+        </SettingGroup>
+
+        <SettingGroup
+          title="已配对设备"
+          aside={
+            <Button size="sm" variant="ghost" disabled={devicesLoading()} onClick={() => void loadDevices()}>
+              <IconRefreshCw class={{ "icon-spin": devicesLoading() }} />
               刷新
-            </button>
-          </div>
+            </Button>
+          }
+        >
           <Show
             when={devices() != null && devices()!.length > 0}
-            fallback={<p class="field-hint">{devicesLoading() ? "加载中…" : "暂无已配对设备。"}</p>}
+            fallback={
+              <SettingRow label={devicesLoading() ? "正在加载设备列表…" : "暂无已配对设备"} desc="完成扫码绑定后，设备会显示在这里">
+                <span />
+              </SettingRow>
+            }
           >
-            <table class="readonly-table devices-table">
-              <thead>
-                <tr>
-                  <th>名称</th>
-                  <th>平台</th>
-                  <th>档位</th>
-                  <th>最近活跃</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                <For each={devices()}>
-                  {(device) => (
-                    <tr>
-                      <td>{device.name}</td>
-                      <td>{device.platform}</td>
-                      <td><span class={`scope-badge ${device.scope}`}>{device.scope}</span></td>
-                      <td>{relativeTime(device.last_seen_ms)}</td>
-                      <td class="devices-actions">
-                        <Show
-                          when={confirmRevoke() === device.device_id}
-                          fallback={
-                            <button type="button" class="ghost-mini is-danger button-danger" onClick={() => setConfirmRevoke(device.device_id)}>
-                              吊销
-                            </button>
-                          }
-                        >
-                          <span class="devices-confirm">
-                            确认吊销?
-                            <button type="button" class="ghost-mini is-danger button-danger" onClick={() => void revoke(device.device_id)}>
-                              确认
-                            </button>
-                            <button type="button" class="ghost-mini" onClick={() => setConfirmRevoke(null)}>
-                              取消
-                            </button>
-                          </span>
-                        </Show>
-                      </td>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
+            <For each={devices()}>
+              {(device) => (
+                <SettingRow
+                  label={device.name}
+                  desc={`${device.platform} · 最近活跃 ${relativeTime(device.last_seen_ms)}`}
+                >
+                  <Badge tone={device.scope === "admin" ? "warn" : "accent"}>{device.scope}</Badge>
+                  <Show
+                    when={confirmRevoke() === device.device_id}
+                    fallback={
+                      <Button size="sm" variant="danger" onClick={() => setConfirmRevoke(device.device_id)}>
+                        吊销
+                      </Button>
+                    }
+                  >
+                    <Button size="sm" variant="danger" onClick={() => void revoke(device.device_id)}>
+                      确认吊销
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirmRevoke(null)}>
+                      取消
+                    </Button>
+                  </Show>
+                </SettingRow>
+              )}
+            </For>
           </Show>
-        </div>
+        </SettingGroup>
       </Show>
-    </Section>
+    </div>
   );
 };

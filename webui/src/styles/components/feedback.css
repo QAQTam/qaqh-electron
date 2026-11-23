@@ -48,10 +48,12 @@
   .toast {
     display: flex; align-items: flex-start; gap: 8px;
     max-width: 420px; padding: 8px 10px;
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--stroke-control, var(--border-strong));
     border-radius: var(--r-md);
-    background: var(--surface);
-    box-shadow: var(--shadow-panel);
+    background: var(--flyout-bg, var(--surface));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
     font-size: var(--fs-sm);
     pointer-events: auto;
     transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
@@ -85,7 +87,10 @@
     padding: 8px 10px;
     border: 1px solid color-mix(in srgb, var(--warn) 52%, var(--border));
     border-radius: var(--r-md);
-    background: var(--surface); box-shadow: var(--shadow-panel);
+    background: var(--flyout-bg, var(--surface));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
     color: var(--text); font-size: var(--fs-sm);
     transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
   }
@@ -114,10 +119,12 @@
     width: min(520px, 100%);
     overflow: hidden;
     color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
+    background: var(--dialog-bg, var(--surface-solid, var(--surface)));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    border: 1px solid var(--stroke-control, var(--border-strong));
     border-radius: var(--r-lg);
-    box-shadow: var(--shadow-panel);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
     transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
   }
   .quit-dialog-head {
@@ -158,227 +165,115 @@
   }
   @keyframes toast-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-  /* Startup 首页样式 (延迟创建新会话) */
+  /* Startup 首页样式（对齐 Antigravity 极简四锚点布局） */
   .startup-container {
     display: flex;
     flex-direction: column;
     align-items: center;
-    /* `safe`:窗口装得下就居中;装不下(矮窗口 + 四张卡 + 提示行)就退回起始对齐,
-       否则 flex 居中会把标题顶到滚动区外面,永远滚不到。 */
     justify-content: safe center;
     min-height: 100%;
     width: 100%;
-    padding: var(--space-8) var(--content-gutter);
+    padding: 40px var(--content-gutter) 32px;
     overflow-y: auto;
   }
   .startup-hero {
-    /* 撑满一行,辉光才敢用 `min(560px, 100%)`:hero 若按内容收缩,百分比会小到
-       只剩副标题那么宽,而写死 560px 又会在窄窗口里撑出横向滚动条。 */
-    align-self: stretch;
-    /* 空态留白多,纯色背景会显得"没加载完":标题后面垫一层极淡的主色辉光。
-       isolation 把 z-index:-1 关在 hero 自己的层叠上下文里,不会掉到页面背景下面。 */
-    position: relative;
-    isolation: isolate;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 24px;
+    gap: 6px;
+    margin-bottom: 32px;
     text-align: center;
   }
-  .startup-hero::before {
-    content: "";
-    position: absolute; left: 50%; top: -72px; translate: -50% 0;
-    width: min(560px, 100%); height: 220px;
-    border-radius: 50%;
-    background: radial-gradient(closest-side, var(--accent-soft), transparent);
-    filter: blur(14px);
-    pointer-events: none;
-    z-index: -1;
-  }
   .startup-title {
-    font-size: 28px;
-    font-weight: 700;
+    margin: 0;
+    font-size: 26px;
+    font-weight: 600;
     color: var(--text);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.025em;
   }
   .startup-subtitle {
+    margin: 0;
     font-size: var(--fs-sm);
     color: var(--muted);
   }
-  /* 技术支持 credit:品牌是皮,底座署名一行带过,不抢 hero。 */
-  .startup-credit {
-    font-size: 11px;
-    color: var(--muted);
-    opacity: .8;
-  }
-  .startup-config-bar {
+  .startup-suggestions {
     display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    justify-content: center;
-    margin-bottom: 24px;
-  }
-  /* 空态的两枚选择器是页面上的控件,不是工具栏里的按钮:给表面色与描边,
-     否则在纯色背景上读起来像两行灰字。输入区里的同款 chip 仍保持透明。 */
-  .startup-config-bar .composer-tool-button {
-    min-height: 34px;
-    color: var(--text);
-    background: var(--surface);
-    border-color: var(--border);
-  }
-  .startup-config-bar .composer-tool-button:hover,
-  .startup-config-bar .composer-tool-button[aria-expanded="true"] {
-    background: var(--surface-2);
-    border-color: var(--border-strong);
-  }
-  /* 主页「最近的工作」:工作量前 3(turn_count 排序),与建议卡同族视觉;
-     图标底色用中性面,不与主色建议卡抢注意力。3 张卡只排 1/3 列,
-     不排 2 列(2+1 必然留孤儿,同建议卡的排法纪律)。 */
-  .home-recent {
-    display: grid;
-    gap: 8px;
+    flex-direction: column;
+    gap: 2px;
     width: min(var(--content-width), 100%);
-    margin-bottom: 24px;
+    margin-bottom: 20px;
   }
-  .home-recent-head {
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    color: var(--muted);
-    letter-spacing: .04em;
-    text-align: left;
-  }
-  .home-recent-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  @container workspace (min-width: 760px) {
-    .home-recent-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  }
-  .home-recent-card {
-    display: grid;
-    grid-template-columns: 30px minmax(0, 1fr);
-    align-items: start;
+  .startup-suggestion-row {
+    display: flex;
+    align-items: center;
     gap: 10px;
-    padding: 13px 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    width: 100%;
+    min-height: 36px;
+    padding: 6px 12px;
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--fs-sm);
     text-align: left;
     cursor: pointer;
-    transition: all var(--dur-fast) var(--ease);
+    transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
   }
-  .home-recent-card:hover {
-    border-color: var(--accent);
-    background: var(--surface-2);
-    box-shadow: var(--shadow-soft);
-    transform: translateY(-1px);
+  .startup-suggestion-row:hover {
+    background: var(--surface-hover);
+    color: var(--text);
   }
-  .home-recent-icon {
-    display: grid;
-    place-items: center;
-    width: 30px; height: 30px;
-    border-radius: 9px;
+  .startup-row-icon {
+    width: 15px;
+    height: 15px;
+    flex: none;
     color: var(--muted);
-    background: var(--surface-2);
   }
-  .home-recent-icon svg { width: 16px; height: 16px; }
-  .home-recent-body { display: grid; gap: 3px; min-width: 0; }
-  .home-recent-title {
-    min-width: 0;
+  .startup-suggestion-row:hover .startup-row-icon {
+    color: var(--accent);
+  }
+  .startup-row-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 600;
-    color: var(--text);
-    font-size: var(--fs-sm);
-  }
-  .home-recent-meta { font-size: var(--fs-xs); color: var(--muted); }
-
-  /* 四张卡片的列数跟着**可用内容宽度**(容器 workspace,不是窗口)走:1 → 2 → 4。
-     不排 3 列:4 张卡排 3 列必然留一张孤儿行,那正是这版之前的样子。 */
-  .startup-suggestions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-    width: min(var(--content-width), 100%);
-    margin-bottom: 24px;
-  }
-  /* 2 列的下限放到 460px:窄窗口里四张卡竖着排会把输入框挤到折叠线以下,
-     两列 2×2 既省一半高度,单卡宽度也还撑得住描述行。 */
-  @container workspace (min-width: 460px) {
-    .startup-suggestions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-  @container workspace (min-width: 1000px) {
-    .startup-suggestions {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      width: min(1040px, 100%);
-    }
-  }
-  .startup-suggestion-card {
-    display: grid;
-    grid-template-columns: 30px minmax(0, 1fr);
-    align-items: start;
-    gap: 10px;
-    padding: 13px 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    text-align: left;
-    cursor: pointer;
-    transition: all var(--dur-fast) var(--ease);
-  }
-  .startup-suggestion-card:hover {
-    border-color: var(--accent);
-    background: var(--surface-2);
-    box-shadow: var(--shadow-soft);
-    transform: translateY(-1px);
-  }
-  .startup-card-icon {
-    display: grid;
-    place-items: center;
-    width: 30px; height: 30px;
-    border-radius: 9px;
-    color: var(--accent);
-    background: var(--accent-soft);
-  }
-  .startup-card-icon svg { width: 16px; height: 16px; }
-  .startup-card-body { display: grid; gap: 3px; min-width: 0; }
-  .startup-card-title {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    color: var(--text);
-  }
-  .startup-card-desc {
-    font-size: calc(13px * var(--font-scale));
-    line-height: 1.5;
-    color: var(--muted);
   }
   .startup-composer-box {
     width: min(var(--content-width), 100%);
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: var(--bg);
+    box-shadow: var(--shadow-soft);
+  }
+  .startup-composer-context {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px 6px;
+  }
+  .startup-composer-context .composer-tool-button {
+    min-height: 28px;
+    padding: 0 8px;
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+  }
+  .startup-composer-context .composer-tool-button:hover,
+  .startup-composer-context .composer-tool-button[aria-expanded="true"] {
+    color: var(--text);
+    background: var(--surface-hover);
+    border-color: transparent;
   }
   .startup-composer-box #composer {
     width: 100%;
+    padding: 0;
     position: static;
     bottom: auto;
   }
-  /* 快捷键提示:原先挤在占位符的括注里,读起来像残句;挪到输入框下方用键帽摆出来。 */
-  .startup-hints {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 6px 16px;
-    margin-top: 10px;
-    color: var(--muted);
-    font-size: calc(11px * var(--font-scale));
-  }
-  .startup-hints > span { display: inline-flex; align-items: center; gap: 4px; }
-  .startup-hints kbd {
-    padding: 1px 5px;
-    border: 1px solid var(--border);
-    border-bottom-width: 2px;
-    border-radius: 5px;
-    color: var(--text);
-    background: var(--surface);
-    font-family: var(--font-mono);
-    font-size: 0.92em;
+  .startup-composer-box .composer-surface {
+    width: 100%;
+    border-color: var(--border);
+    box-shadow: none;
   }
   @keyframes icon-spin {
     from { transform: rotate(0deg); }

@@ -1,6 +1,7 @@
 import { createSignal, For, onCleanup, Show, type Component } from "solid-js";
 import IconKeyRound from "~icons/lucide/key-round";
 import IconHouse from "~icons/lucide/house";
+import IconPlus from "~icons/lucide/plus";
 import IconSettings from "~icons/lucide/settings";
 import IconUsers from "~icons/lucide/users";
 import IconWrench from "~icons/lucide/wrench";
@@ -13,15 +14,15 @@ import { SETTINGS_NAV, SETTINGS_NAV_GROUPS, TOOLS_NAV } from "../settings/naviga
 
 export type GlobalSection = "home" | "messages" | "tools" | "team" | "oauth" | "settings";
 
-/** 导航 2×2(spec §6.1):取代 64px 图标 rail,带可见 label,不再依赖 tooltip。
- *  「接入」涵盖后续友商(不都是 OAuth),改词只改这里。 */
-const NAV_ITEMS = [
+/** 单列紧凑主导航（参考 Antigravity / Linear）：高频入口置顶，设置固定沉底。 */
+const MAIN_NAV_ITEMS = [
   { id: "home", label: "主页", Icon: IconHouse },
   { id: "tools", label: "工具", Icon: IconWrench },
   { id: "team", label: "团队", Icon: IconUsers },
   { id: "oauth", label: "接入", Icon: IconKeyRound },
-  { id: "settings", label: "设置", Icon: IconSettings },
 ] as const;
+
+const SETTINGS_NAV_ITEM = { id: "settings", label: "设置", Icon: IconSettings } as const;
 
 /**
  * 壳侧栏(spec §6.1,阶段 3):Nav 2×2 + 会话列表同占一列 288px。
@@ -30,6 +31,7 @@ const NAV_ITEMS = [
  */
 export const Sidebar: Component<{
   section: GlobalSection;
+  settingsActive?: boolean;
   onNavigate: (section: GlobalSection) => void;
   settingsSection?: string;
   onSettingsSection?: (section: string) => void;
@@ -176,7 +178,19 @@ export const Sidebar: Component<{
   >
     <nav class="sidebar-nav" aria-label="主导航" ref={setNavGridEl}>
       <span class="sidebar-nav-pill" aria-hidden="true" ref={setNavGridPillEl} />
-      <For each={NAV_ITEMS}>
+      <Show when={props.onCreate != null}>
+        <button
+          type="button"
+          class="sidebar-new-chat"
+          disabled={props.creating || props.canCreate === false}
+          title="新建会话"
+          onClick={() => props.onCreate?.()}
+        >
+          <IconPlus />
+          <span>新建会话</span>
+        </button>
+      </Show>
+      <For each={MAIN_NAV_ITEMS}>
         {(item) => (
           <button
             type="button"
@@ -232,6 +246,19 @@ export const Sidebar: Component<{
         }</For>
       </nav>
     </Show>
+    <div class="sidebar-footer">
+      <button
+        type="button"
+        class={`sidebar-nav-item${props.settingsActive || props.section === SETTINGS_NAV_ITEM.id ? " active" : ""}`}
+        aria-current={props.settingsActive || props.section === SETTINGS_NAV_ITEM.id ? "page" : undefined}
+        aria-label={SETTINGS_NAV_ITEM.label}
+        title={SETTINGS_NAV_ITEM.label}
+        onClick={() => props.onNavigate(SETTINGS_NAV_ITEM.id)}
+      >
+        <SETTINGS_NAV_ITEM.Icon />
+        <span>{SETTINGS_NAV_ITEM.label}</span>
+      </button>
+    </div>
     {/* 拖拽调宽把手(用户侧需求):dock 展开态才有(App 传 onWidthCommit);
         收起/抽屉态由 CSS 隐藏。键盘 ←/→ ±16px,Home 恢复默认。 */}
     <Show when={props.onWidthCommit != null}>

@@ -8,20 +8,28 @@
   body {
     background: var(--bg);
     color: var(--text);
-    font: var(--fs-body)/1.75 var(--font-ui);
+    font: var(--fs-body)/1.5 var(--font-ui);
+    -webkit-font-smoothing: antialiased;
     overflow: hidden;
   }
-  /* 仅在 Windows 且成功拿到 Mica 材质时才允许透明穿透；
-     Linux (WebKitGTK) 或无材质环境下必须保持实底，防止 X11 产生黑屏穿底或缩放黑边 */
   html.desktop.has-mica body { background: transparent; }
   :focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow: var(--focus-shadow);
   }
-  button:focus:not(:focus-visible) { outline: none; }
+  button:focus:not(:focus-visible) { outline: none; box-shadow: none; }
   code, kbd, pre { font-family: var(--font-code); }
   ::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb { background: var(--border-strong); border: 3px solid transparent; border-radius: var(--radius-pill); background-clip: content-box; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--muted) 32%, transparent);
+    border: 2px solid transparent;
+    border-radius: var(--radius-pill);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--muted) 56%, transparent);
+    background-clip: content-box;
+  }
   ::-webkit-scrollbar-track { background: transparent; }
 }

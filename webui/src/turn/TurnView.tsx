@@ -8,6 +8,7 @@ import { flyBoxToSession } from "../ui/box-fly";
 import IconFork from "~icons/lucide/git-fork";
 import IconSiren from "~icons/lucide/siren";
 import { Collapse } from "../ui/Collapse";
+import { TextShimmer } from "../ui/TextShimmer";
 import { Markdown } from "../markdown/Markdown";
 import { AssistantContent } from "./AssistantContent";
 import type { WidgetHostContext } from "../widget/host";
@@ -26,80 +27,120 @@ import type { InterjectionStep, Step, Turn, Wait } from "../session/types";
 import { turnSegments, workSegmentEnd, type TurnSegment, type WorkSegment } from "./segments";
 import { groupRuns, type WorkUnit } from "./aggRuns";
 import { toolPaths } from "../tools/presentation";
+import { toolLabel } from "../tools/registry";
 import { aggMinRun } from "../lib/density";
 import { interjectionHint, interjectionLabel, isSystemInterjection } from "./interjection";
 import { thinkingLabel, thinkingRichSummary, thinkingTitle } from "./thinking-label";
 import { openSession, pollSessions, sessionCatalog } from "../tabs/store";
+
+/** O(末行长度) 逆向提取思考流最新一个非空行,零数组分配、零全文 split。 */
+function extractThinkingTail(text: string | undefined, maxChars = 88): string {
+  if (!text) return "";
+  let end = text.length;
+  while (end > 0) {
+    const ch = text.charCodeAt(end - 1);
+    if (ch !== 10 && ch !== 13 && ch !== 32 && ch !== 9) break;
+    end--;
+  }
+  if (end === 0) return "";
+  const nl = text.lastIndexOf("\n", end - 1);
+  const rawLine = text.slice(nl + 1, end).trim();
+  const cleaned = rawLine
+    .replace(/^(?:#{1,6}\s+|[-*+>]\s+|\d+[.)]\s+)/, "")
+    .replace(/[*`_~]+/g, "")
+    .trim();
+  if (!cleaned) return "";
+  return cleaned.length > maxChars ? `${cleaned.slice(0, maxChars)}…` : cleaned;
+}
+
+/** 提取被归入工作段的过程旁白首行摘要。 */
+function extractCommentaryPreview(text: string | undefined, maxChars = 96): string {
+  if (!text) return "";
+  let start = 0;
+  const len = text.length;
+  while (start < len) {
+    const nl = text.indexOf("\n", start);
+    const lineEnd = nl === -1 ? len : nl;
+    const raw = text.slice(start, lineEnd).trim();
+    if (raw !== "" && !raw.startsWith("```")) {
+      const cleaned = raw
+        .replace(/^(?:#{1,6}\s+|[-*+>]\s+|\d+[.)]\s+)/, "")
+        .replace(/[*`_~]+/g, "")
+        .trim();
+      if (cleaned) {
+        return cleaned.length > maxChars ? `${cleaned.slice(0, maxChars)}…` : cleaned;
+      }
+    }
+    if (nl === -1) break;
+    start = nl + 1;
+  }
+  return "";
+}
 
 const WorkStep: Component<{ step: Accessor<Step>; turn: Turn; thinkingRich: () => boolean; cwd?: string | null; isLatest?: boolean; onFollowUp?: (text: string) => void; widgetCtx: WidgetHostContext; loadOutput?: (ref: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed"> }> = (props) => {
   const thinking = createMemo(() => { const step = props.step(); return step.kind === "thinking" ? step : null; });
   // 套餐路径的思考是服务端摘要而非模型原文:标签必须分开(见 ./thinking-label)。
   const thinkingText = () => thinkingLabel(thinking()?.reasoningKind);
   const thinkingHint = () => thinkingTitle(thinking()?.reasoningKind);
-  // 套餐(OAuth) + GPT 家族:摘要是 markdown,默认展开直读,不再折叠(特判见 ./thinking-label)。
   const thinkingRunning = () => props.turn.status === "running" && thinking()?.endedAt == null;
+  const thinkingTail = createMemo(() => extractThinkingTail(thinking()?.text));
+  const commentary = createMemo(() => { const step = props.step(); return step.kind === "text" ? step : null; });
+  const commentaryPreview = createMemo(() => extractCommentaryPreview(commentary()?.text));
   const tool = createMemo(() => { const step = props.step(); return step.kind === "tool" ? step : null; });
+  // 思考与过程旁白默认收起为单行脉搏(零内嵌滚动条、零流式 Markdown 重排),点击原地展开。
   const [thinkingOverride, setThinkingOverride] = createSignal<boolean | null>(null);
-  const thinkingOpen = () => thinkingOverride() ?? (thinking() != null && (props.thinkingRich() || thinkingRunning()));
-  createEffect(
-    () => [props.turn.status, thinking()?.endedAt] as const,
-    ([status, endedAt]) => {
-      if (status !== "running" && endedAt != null) setThinkingOverride(null);
-    },
-  );
-  let thinkingRow: HTMLDivElement | undefined;
-  let following = true;
-  let frame: number | null = null;
-  let resizeObserver: ResizeObserver | undefined;
-
-  const followTail = (): void => {
-    if (frame != null) return;
-    frame = requestAnimationFrame(() => {
-      frame = null;
-      const scroller = thinkingRow?.querySelector<HTMLDivElement>(".thinking-full");
-      if (following && scroller?.isConnected) scroller.scrollTop = scroller.scrollHeight;
-    });
-  };
-  createEffect(
-    () => [thinkingOpen(), thinking()?.text] as const,
-    ([open]) => { if (open) followTail(); },
-  );
-  onCleanup(() => {
-    if (frame != null) cancelAnimationFrame(frame);
-    resizeObserver?.disconnect();
-  });
+  const thinkingOpen = () => thinkingOverride() ?? false;
+  const [commentaryOpen, setCommentaryOpen] = createSignal(false);
   return (
     <Switch>
       <Match when={thinking() != null}>
-        <div class="timeline-row thinking" ref={(node) => {
-          thinkingRow = node;
-          resizeObserver = new ResizeObserver(followTail);
-          resizeObserver.observe(node);
-        }}>
-          <button type="button" class="timeline-label" title={thinkingHint()} aria-expanded={thinkingOpen() ? "true" : "false"} onClick={() => {
-            following = true;
-            setThinkingOverride(!thinkingOpen());
-          }}>{thinkingText()}</button>
+        <div class="timeline-row thinking">
+          <button
+            type="button"
+            class="timeline-label thinking-head"
+            title={thinkingHint()}
+            aria-expanded={thinkingOpen() ? "true" : "false"}
+            onClick={() => setThinkingOverride(!thinkingOpen())}
+          >
+            <Show when={thinkingOpen()} fallback={<IconChevronRight class="thinking-chevron" />}><IconChevronDown class="thinking-chevron" /></Show>
+            <span class="thinking-tag">{thinkingText()}</span>
+            <Show when={!thinkingOpen() && thinkingTail()}>
+              <span class="thinking-preview"><TextShimmer text={thinkingTail()} active={thinkingRunning()} /></span>
+            </Show>
+          </button>
           <Collapse open={thinkingOpen()} instant={thinkingOverride() == null}>
-            <div class={{ "thinking-full": true, "thinking-md": props.thinkingRich() }} tabindex={0} role="region" aria-label={thinkingText()}
-              onScroll={(event) => {
-                const el = event.currentTarget;
-                // Layout/resize can also emit scroll events; only user input
-                // suspends following, while reaching the bottom resumes it.
-                if (el.scrollHeight - el.scrollTop - el.clientHeight <= 2) following = true;
-              }}
-              onWheel={(event) => { if (event.deltaY < 0) following = false; }}
-              onPointerDown={() => { following = false; }}
-              onTouchStart={() => { following = false; }}
-              onKeyDown={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key)) following = false; }}
-            >
+            <div class={{ "thinking-full": true, "thinking-md": props.thinkingRich() }} role="region" aria-label={thinkingText()}>
               <Show
                 when={props.thinkingRich()}
                 fallback={thinking()?.text}
               >
-                {/* 摘要是 markdown:走流式渲染;revision 用步 id,checkpoint 整块替换时重画。 */}
+                {/* 摘要是 markdown:展开时才挂载流式渲染。 */}
                 <Markdown text={() => thinking()?.text ?? ""} revision={thinking()?.id} streaming={thinkingRunning()} />
               </Show>
+            </div>
+          </Collapse>
+        </div>
+      </Match>
+      <Match when={commentary() != null}>
+        <div class="timeline-row commentary" data-text-id={commentary()!.id}>
+          <button
+            type="button"
+            class="timeline-label commentary-head"
+            aria-expanded={commentaryOpen() ? "true" : "false"}
+            onClick={() => setCommentaryOpen(!commentaryOpen())}
+          >
+            <Show when={commentaryOpen()} fallback={<IconChevronRight class="thinking-chevron" />}><IconChevronDown class="thinking-chevron" /></Show>
+            <span class="commentary-preview" title={commentaryPreview()}>{commentaryPreview() || "过程说明"}</span>
+          </button>
+          <Collapse open={commentaryOpen()}>
+            <div class="commentary-full" role="region">
+              <Markdown
+                text={() => commentary()!.contentRef && !commentary()!.text
+                  ? props.contentStatus?.[commentary()!.contentRef!] === "failed" ? "正文加载失败，请重试正文" : "正文加载中…"
+                  : commentary()!.text}
+                revision={commentary()!.id}
+                streaming={false}
+              />
             </div>
           </Collapse>
         </div>
@@ -185,27 +226,55 @@ const RunGroup: Component<{ unit: Accessor<Extract<WorkUnit, { kind: "run" }>>; 
 };
 
 const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thinkingRich: () => boolean; cwd?: string | null; latestToolStepId?: string | null; onFollowUp?: (text: string) => void; widgetCtx: WidgetHostContext; loadOutput?: (ref: string) => void; contentStatus?: Record<string, "loading" | "ready" | "failed"> }> = (props) => {
-  const [override, setOverride] = createSignal<boolean | null>(null);
-  // 回复边界自动收起一次;之后用户仍可展开这个已完成工作段。
-  let wasClosed = untrack(() => props.group.closed);
-  createEffect(() => props.group.closed, (closed) => {
-    if (closed && !wasClosed) setOverride(null);
-    wasClosed = closed;
+  // 严格两态（对齐 Antigravity）：默认收起为 1 行动态摘要 + 实时计时；点击展开完整步骤，再点干净收起。
+  const [open, setOpen] = createSignal(false);
+  const [now, setNow] = createSignal(Date.now());
+  const isTurnRunning = () => props.turn.status === "running";
+  const isSegmentRunning = () => isTurnRunning() && !props.group.closed && workSegmentEnd(props.group) == null;
+
+  createEffect(isSegmentRunning, (running) => {
+    if (!running) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => window.clearInterval(timer));
   });
-  const open = () => override() ?? !props.group.closed;
-  const units = createMemo(() => groupRuns(props.group.steps, aggMinRun()), { name: "work.structure" });
+
+  const totalSteps = () => props.group.steps.length;
+  // 仅在展开态聚合步骤，收起态零聚合开销。
+  const units = createMemo(() => (open() ? groupRuns(props.group.steps, aggMinRun()) : []), { name: "work.structure" });
   const waits = createMemo(() => {
     const start = props.group.steps[0]?.startedAt ?? props.turn.workStartedAt ?? 0;
     return props.waits.filter((wait) => wait.from >= start && wait.from < (props.group.until ?? Infinity));
   });
-  const label = () => {
+
+  const liveActivityLabel = (): string => {
+    const retrying = props.turn.retrying;
+    if (retrying) {
+      return `正在重试 ${retrying.attempt}/${retrying.maxAttempts}（${retrying.delaySecs}s 后）`;
+    }
+    const latest = props.group.steps[props.group.steps.length - 1];
+    if (!latest) return "正在工作";
+    if (latest.kind === "tool") {
+      const name = toolLabel(latest.name);
+      const firstPath = toolPaths(latest)[0];
+      if (firstPath) {
+        const tail = firstPath.split(/[\\/]/).filter(Boolean).pop() ?? firstPath;
+        return `${name} ${tail}`;
+      }
+      return name;
+    }
+    if (latest.kind === "thinking") return "思考中";
+    if (latest.kind === "text") return extractCommentaryPreview(latest.text, 56) || "正在工作";
+    return "正在工作";
+  };
+
+  const durationText = (): string => {
     const steps = props.group.steps;
     const start = steps[0]?.startedAt ?? props.turn.workStartedAt;
-    const end = workSegmentEnd(props.group);
+    if (start == null) return "";
+    const end = isSegmentRunning() ? now() : workSegmentEnd(props.group);
     let duration = workDurationMs(start, end, waits());
 
-    // 防御自愈：若当前段已关闭，实时算出了有效耗时，则写入持久账本；
-    // 若因刷新/快照重建丢失了时间戳导致算出的 duration 为空或 0，则从本地账本回填！
     if (props.group.closed) {
       if (duration != null && duration > 0) {
         cacheWorkDuration(props.turn.key, props.group.key, duration);
@@ -214,26 +283,35 @@ const WorkGroup: Component<{ group: WorkSegment; turn: Turn; waits: Wait[]; thin
         if (cached != null) duration = cached;
       }
     }
-
-    const text = duration == null ? "" : formatWorkDuration(duration);
-    if (props.turn.status === "failed") return STR.failedWorked(text);
-    if (props.turn.status === "aborted") return STR.interruptedWorked(text);
-    // 工具全部结束(workSegmentEnd 按实时 step.status/endedAt 算出)即视为「已工作」:
-    // 不再等模型下一条 message 把 group.closed 置真才刷新。折叠仍按回复边界。
-    if (props.group.closed || end != null) return STR.worked(text);
-    // 运行中:provider 重试在飞时如实亮出(契约口径:重试只发生在首字节前,
-    // 本标签就是用户此刻唯一能看到的进度),否则维持通用的「正在工作」。
-    const retrying = props.turn.retrying;
-    return retrying
-      ? `正在重试 ${retrying.attempt}/${retrying.maxAttempts}（${retrying.delaySecs}s 后，${retrying.error}）`
-      : "正在工作";
+    return duration == null || duration <= 0 ? "" : formatWorkDuration(duration);
   };
+
+  const label = (): string => {
+    if (props.turn.status === "failed") return STR.failedWorked(durationText());
+    if (props.turn.status === "aborted") return STR.interruptedWorked(durationText());
+    if (!isSegmentRunning()) return STR.worked(durationText());
+    return liveActivityLabel();
+  };
+
   return (
     <div class="work-group" data-work-key={props.group.key}>
-      <button type="button" class="collapsed-row" aria-expanded={open() ? "true" : "false"} onClick={() => setOverride(!open())}>
-        <Show when={open()} fallback={<IconChevronRight />}><IconChevronDown /></Show><span>{label()}</span>
-      </button>
-      {/* 回复边界的自动收起也播放回收动画；历史闭合段初次挂载仍不挂详情。 */}
+      <div class="work-group-bar">
+        <button
+          type="button"
+          class="collapsed-row"
+          aria-expanded={open() ? "true" : "false"}
+          onClick={() => setOpen((prev) => !prev)}
+        >
+          <span>{label()}</span>
+          <Show when={isSegmentRunning() && durationText() !== ""}>
+            <span class="work-step-count" style={{ "font-variant-numeric": "tabular-nums" }}>{durationText()}</span>
+          </Show>
+          <Show when={!isSegmentRunning() && !open() && totalSteps() > 0}>
+            <span class="work-step-count">· {totalSteps()} 步</span>
+          </Show>
+          <Show when={open()} fallback={<IconChevronRight />}><IconChevronDown /></Show>
+        </button>
+      </div>
       <Collapse open={open()}>
         <div class="timeline turn-steps">
           <For each={units()} keyed={(unit) => unit.key}>{(unit) => unit().kind === "run"
@@ -571,7 +649,7 @@ export const TurnView: Component<{ turn: Turn; waits: Wait[]; store: SessionStor
     };
   });
   const latestToolStepId = createMemo(() => {
-    if (!isLatestTurn()) return null;
+    if (!isLatestTurn() || props.turn.status !== "running") return null;
     const steps = props.turn.steps;
     for (let i = steps.length - 1; i >= 0; i--) {
       if (steps[i]?.kind === "tool") return steps[i]!.id;

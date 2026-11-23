@@ -1,21 +1,9 @@
 /**
- * 设置独立页面:daemon 全局配置的读写面(spec 里的「第二阶段·设置页」)。
- *
- * 只呈现 `ConfigDto` 里真实存在的字段,写路径只发差异 patch(见 `./patch`)。
- * 三条来自后端的硬约束在 UI 上有直接体现:
- *  - 密钥读回来永远是 `"****"`(掩码,qaqh-config/src/dto.rs:22),所以密钥框是
- *    「留空 = 不改」的新增值输入,不做双向绑定;后端没有删除密钥的接口,UI 也不假装能删。
- *  - `"" = 保持现值` 的字符串(model/baseUrl/reasoningEffort)
- *    清空不会生效(dto.rs:10-11),所以这些框清空即视作未改动。
- *  - MCP/LSP 只有读模型(ConfigDto:56-59 注明写模型另立),这里只读展示。
- *
- * 服务商（端点、密钥、模型目录、默认选择）在 `ProvidersSection`（命令直写 profiles.toml）;
- * 设备配对在 `PairingSection`;
- * 左侧分区导航是**切换式单页**:点谁渲染谁(2026-10-16 起,原「长滚动+锚点
- * 跳转+scroll-spy」因高亮与视口脱节下线),草稿在 store,切换不丢改动。
+ * 设置独立页面：全部分区统一采用 Grouped Inset List + 左文右控 Lite 范式。
  */
 import { createEffect, createMemo, createSignal, For, onSettled, Show, type Component } from "solid-js";
 import IconRotate from "~icons/lucide/rotate-ccw";
+import IconX from "~icons/lucide/x";
 import { STR } from "../lib/strings";
 import {
   gpuRestartPending,
@@ -39,7 +27,7 @@ import {
   typography,
   updateTypography,
 } from "../lib/typography";
-import { PERMISSION_TIERS, THEME_OPTIONS, needsBypassConfirm } from "./patch";
+import { PERMISSION_TIERS, needsBypassConfirm } from "./patch";
 import {
   busy,
   bypassAck,
@@ -67,34 +55,49 @@ import {
   setGoals,
   setSandbox,
 } from "./store";
-import { Field, Section, Switch, TextInput } from "./controls";
-import { Select } from "../ui/Select";
+import { Switch, TextInput } from "./controls";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
 import { NullableNumberInput, NumberInput } from "../ui/NumberInput";
+import { SegmentedControl, type SegmentedOption } from "../ui/SegmentedControl";
+import { Select } from "../ui/Select";
+import { SettingGroup, SettingRow } from "../ui/SettingGroup";
 import { PairingSection } from "./PairingSection";
 import { AboutSection } from "./AboutSection";
 import { HostSection } from "./HostSection";
 import { ProvidersSection } from "./ProvidersSection";
+import { SandboxSection } from "./SandboxSection";
 import { refreshRegistry } from "./registry";
 import { SETTINGS_NAV, SETTINGS_NAV_GROUPS } from "./navigation";
 
-/** 这些分区即时写 profiles.toml，不参与应用设置的草稿/保存流程。 */
 const REGISTRY_SECTIONS: ReadonlySet<string> = new Set([
   "section-providers",
   "section-pairing",
 ]);
 
-/** 纯本地分区:不读 daemon ConfigDto,后端不可达也照常可用(见 LocalSettings)。 */
 const LOCAL_SECTIONS: ReadonlySet<string> = new Set([
   "section-host",
   "section-appearance",
   "section-about",
 ]);
 
-/**
- * 第三方字体说明:应用内弹层。裸 <a href> 会触发顶层导航把整窗换成纯文本页
- * (2026-11-11 事故:之后退出框永远弹不出来——UI 已被导航卸载;主进程
- * will-navigate 已兜底,这里从源头不交导航权)。fetch 一次,驻留内存。
- */
+const THEME_SEGMENTS: readonly SegmentedOption<string>[] = [
+  { value: "", label: "跟随系统" },
+  { value: "light", label: "浅色" },
+  { value: "dark", label: "深色" },
+];
+
+const PERF_SEGMENTS: readonly SegmentedOption<PerformanceMode>[] = [
+  { value: "auto", label: "自动" },
+  { value: "low", label: "性能" },
+  { value: "quality", label: "画质" },
+];
+
+const MATERIAL_SEGMENTS: readonly SegmentedOption<SessionMaterial>[] = [
+  { value: "glass", label: "通透" },
+  { value: "solid", label: "实色" },
+];
+
 const FontNotices: Component = () => {
   const [open, setOpen] = createSignal(false);
   const [text, setText] = createSignal<string | null>(null);
@@ -107,17 +110,17 @@ const FontNotices: Component = () => {
     fetch("/fonts/THIRD-PARTY-NOTICES.txt")
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((body) => { if (id === req) setText(body); })
-      .catch(() => { if (id === req) setText("说明文件读取失败,请检查安装完整性。"); });
+      .catch(() => { if (id === req) setText("说明文件读取失败，请检查安装完整性。"); });
   };
   return (
     <>
-      <a href="/fonts/THIRD-PARTY-NOTICES.txt" onClick={show}>第三方字体说明</a>
+      <a href="/fonts/THIRD-PARTY-NOTICES.txt" onClick={show}>第三方字体许可</a>
       <Show when={open()}>
         <div class="font-notice-overlay" onClick={() => setOpen(false)}>
-          <div class="font-notice-card" role="dialog" aria-modal="true" aria-label="第三方字体说明" onClick={(e) => e.stopPropagation()}>
+          <div class="font-notice-card" role="dialog" aria-modal="true" aria-label="第三方字体许可" onClick={(e) => e.stopPropagation()}>
             <div class="font-notice-head">
               <span>第三方字体许可与来源</span>
-              <button type="button" class="ghost-mini" onClick={() => setOpen(false)}>关闭</button>
+              <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>关闭</Button>
             </div>
             <pre class="font-notice-body">{text() ?? "加载中…"}</pre>
           </div>
@@ -127,9 +130,9 @@ const FontNotices: Component = () => {
   );
 };
 
-const FontPicker: Component<{
+const FontRow: Component<{
   label: string;
-  hint: string;
+  desc: string;
   value: string;
   presets: Array<{ label: string; value: string }>;
   onChange: (val: string) => void;
@@ -139,11 +142,11 @@ const FontPicker: Component<{
   );
   const options = createMemo(() => [
     ...props.presets.map((opt) => ({ value: opt.value, label: opt.label })),
-    { value: "__custom", label: "自定义字体名称…" },
+    { value: "__custom", label: "自定义字体…" },
   ]);
   return (
-    <Field label={props.label} hint={props.hint}>
-      <div style={{ display: "grid", gap: "6px" }}>
+    <SettingRow label={props.label} desc={props.desc}>
+      <div style={{ display: "flex", "flex-direction": "column", gap: "6px", "align-items": "flex-end" }}>
         <Select
           value={isCustom() ? "__custom" : props.value}
           options={options()}
@@ -154,20 +157,15 @@ const FontPicker: Component<{
           <TextInput
             value={props.value.trim()}
             onInput={(val) => props.onChange(val.trim() === "" ? " " : val)}
-            placeholder="输入本地字体族名，如 'JetBrains Mono'"
+            placeholder="输入字体名，如 JetBrains Mono"
             spellcheck={false}
           />
         </Show>
       </div>
-    </Field>
+    </SettingRow>
   );
 };
 
-/**
- * 纯本地设置分区(桌面壳/外观/关于):不读 daemon ConfigDto,后端不可达也照常可用。
- * 与 daemon 草稿解耦——这些偏好本就只存本机(localStorage/壳信号),不该被
- * config.load 的成败 gating(此前它们被关在 draft() 门里,daemon 宕机即不可用)。
- */
 const LocalSettings: Component<{
   activeSection: () => string;
   onSelect: (id: string) => void;
@@ -180,147 +178,134 @@ const LocalSettings: Component<{
       </Show>
 
       <Show when={props.activeSection() === "section-appearance"}>
-      <Section id="section-appearance" title="外观" desc={STR.settingsThemeNote}>
-        <Field label="界面风格预设" hint="纯 CSS 主题预设;Win11 22H2+ 由壳启用原生 Mica,旧系统自动回退实底。">
-          <Select
-            value={themePreset()}
-            onChange={(value) => applyThemePreset(value as ThemePreset)}
-            options={THEME_PRESET_OPTIONS}
-            ariaLabel="界面风格预设"
-          />
-        </Field>
-        {/* 消息区配色走主题包插件:装到 plugins/ 目录即出现在这里,
-            rev-bust <link> 热挂/热卸,不重构建;经典 = 岛镜像壳色。 */}
-        <Show when={themePacks().length > 0}>
-          <Field label="消息主题包（插件）" hint="只改消息区（时间线/气泡/代码）配色，外围材质不受影响；导入插件后出现在此列表。">
-            <Select
-              value={themePackSelection()}
-              onChange={(value) => setThemePackSelection(value)}
-              options={[{ value: "", label: "经典（跟随界面）" }, ...themePacks().map((pack) => ({ value: pack.id, label: pack.name }))]}
-              ariaLabel="消息主题包"
+        <div id="section-appearance" style={{ display: "flex", "flex-direction": "column", gap: "24px" }}>
+          <SettingGroup title="主题与配色">
+            <SettingRow label="外观模式" desc="切换浅色或深色界面">
+              <SegmentedControl
+                aria-label="外观模式"
+                options={THEME_SEGMENTS}
+                value={themeChoice()}
+                onChange={(value) => {
+                  setThemeChoice(value);
+                  applyTheme(value);
+                }}
+              />
+            </SettingRow>
+            <SettingRow label="界面风格" desc="切换预设视觉主题">
+              <Select
+                value={themePreset()}
+                onChange={(value) => applyThemePreset(value as ThemePreset)}
+                options={THEME_PRESET_OPTIONS}
+                ariaLabel="界面风格"
+              />
+            </SettingRow>
+            <Show when={themePacks().length > 0}>
+              <SettingRow label="消息主题包" desc="自定义对话区配色">
+                <Select
+                  value={themePackSelection()}
+                  onChange={(value) => setThemePackSelection(value)}
+                  options={[{ value: "", label: "跟随界面" }, ...themePacks().map((pack) => ({ value: pack.id, label: pack.name }))]}
+                  ariaLabel="消息主题包"
+                />
+              </SettingRow>
+            </Show>
+            <Show when={syntaxThemes().length > 0}>
+              <SettingRow label="代码语法高亮" desc="代码块与 Diff 着色方案">
+                <Select
+                  value={syntaxPackSelection()}
+                  onChange={(value) => setSyntaxPackSelection(value)}
+                  options={[{ value: "", label: "GitHub（默认）" }, ...syntaxThemes().map((pack) => ({ value: pack.id, label: pack.name }))]}
+                  ariaLabel="代码语法高亮"
+                />
+              </SettingRow>
+            </Show>
+            <SettingRow label="终端配色" desc="内置终端与命令输出色板">
+              <Select
+                value={terminalScheme()}
+                onChange={(value) => applyTerminalScheme(value as TerminalSchemeId)}
+                options={TERMINAL_SCHEME_OPTIONS}
+                ariaLabel="终端配色"
+              />
+            </SettingRow>
+          </SettingGroup>
+
+          <SettingGroup title="渲染与材质">
+            <SettingRow label="性能模式" desc="低配硬件建议选择「性能」以减少模糊与动画">
+              <SegmentedControl
+                aria-label="性能模式"
+                options={PERF_SEGMENTS}
+                value={performanceMode()}
+                onChange={(value) => setPerformanceMode(value)}
+              />
+            </SettingRow>
+            <SettingRow label="标签页材质" desc="切换会话顶栏的通透或实色风格">
+              <SegmentedControl
+                aria-label="标签页材质"
+                options={MATERIAL_SEGMENTS}
+                value={sessionMaterial()}
+                onChange={(value) => setSessionMaterial(value)}
+              />
+            </SettingRow>
+            <Show when={gpuRestartPending()}>
+              <SettingRow label="硬件加速已变更" desc="重启桌面端后生效，后台任务不受影响">
+                <Button size="sm" variant="primary" onClick={() => { void desktopHost()?.relaunch?.(); }}>
+                  重启生效
+                </Button>
+              </SettingRow>
+            </Show>
+          </SettingGroup>
+
+          <SettingGroup
+            title="字体与排版"
+            aside={
+              <Button size="sm" variant="ghost" onClick={resetTypography}>
+                <IconRotate />
+                恢复默认
+              </Button>
+            }
+          >
+            <SettingRow label="字号缩放" desc="按比例调整全局文字大小">
+              <Select
+                value={typography().scale}
+                onChange={(value) => updateTypography({ scale: value as FontScale })}
+                options={FONT_SCALE_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+                ariaLabel="字号缩放"
+              />
+            </SettingRow>
+            <FontRow
+              label="界面字体"
+              desc="导航栏、按钮与表单"
+              value={typography().fontUi}
+              presets={FONT_PRESETS.ui}
+              onChange={(fontUi) => updateTypography({ fontUi })}
             />
-          </Field>
-        </Show>
-        {/* diff 语法高亮走 syntax-theme 插件包:light/dark 两份 shiki 主题 JSON,
-            按界面明暗自动取用;装到 plugins/ 目录即出现在这里,rev 热更。 */}
-        <Show when={syntaxThemes().length > 0}>
-          <Field label="代码语法主题（插件）" hint="diff 视图的语法高亮配色，亮/暗档各一份自动切换；导入插件后出现在此列表。">
-            <Select
-              value={syntaxPackSelection()}
-              onChange={(value) => setSyntaxPackSelection(value)}
-              options={[{ value: "", label: "经典 GitHub（内置）" }, ...syntaxThemes().map((pack) => ({ value: pack.id, label: pack.name }))]}
-              ariaLabel="代码语法主题"
+            <FontRow
+              label="阅读正文"
+              desc="对话内容与 Markdown"
+              value={typography().fontProse}
+              presets={FONT_PRESETS.prose}
+              onChange={(fontProse) => updateTypography({ fontProse })}
             />
-          </Field>
-        </Show>
-        {/* 模拟终端(命令执行抽屉/工具输出)配色:方案值抄自 Windows Terminal 内置配色。 */}
-        <Field label="终端配色" hint="命令执行抽屉与工具输出的模拟终端配色；经典方案抄自 Windows Terminal 内置色板（Campbell / Tango 等），仅保存在本机。">
-          <Select
-            value={terminalScheme()}
-            onChange={(value) => applyTerminalScheme(value as TerminalSchemeId)}
-            options={TERMINAL_SCHEME_OPTIONS}
-            ariaLabel="终端配色"
-          />
-        </Field>
-        <Field label={STR.settingsTheme}>
-          <Select
-            value={themeChoice()}
-            onChange={(value) => {
-              setThemeChoice(value);
-              applyTheme(value);
-            }}
-            options={THEME_OPTIONS.map((item) => ({ value: item.value, label: item.label }))}
-            ariaLabel={STR.settingsTheme}
-          />
-        </Field>
-        <Field label="会话标签材质" hint="仅保存在此应用窗口，不写入 daemon 配置。">
-          <Select
-            value={sessionMaterial()}
-            onChange={(value) => setSessionMaterial(value as SessionMaterial)}
-            options={[
-              { value: "glass", label: "Glass（跟随窗口材质）" },
-              { value: "solid", label: "Solid（实色）" },
-            ]}
-            ariaLabel="会话标签材质"
-          />
-        </Field>
-        <Field label="渲染性能模式" hint="针对受限硬件（双核CPU、弱核显）优化，自动/强制停用毛玻璃模糊与耗性能动画，避免光栅化打满CPU。Performance/auto-低配 同时禁用壳 GPU 加速（省内存）；Quality 启用。更改需重启壳生效。">
-          <Select
-            value={performanceMode()}
-            onChange={(value) => setPerformanceMode(value as PerformanceMode)}
-            options={[
-              { value: "auto", label: "Auto（自动：低配双核硬件默认开启）" },
-              { value: "low", label: "Performance（低资源/极速模式：纯色实底）" },
-              { value: "quality", label: "Quality（画质模式：保持毛玻璃滤镜）" },
-            ]}
-            ariaLabel="渲染性能模式"
-          />
-        </Field>
-        <Show when={gpuRestartPending()}>
-          <Field label="GPU 偏好待生效" hint="渲染性能模式折算的 GPU 加速偏好已保存，与本次启动的实际状态不一致。重启桌面壳后生效；daemon 与后台任务不受影响。">
-            <button
-              type="button"
-              class="button-secondary"
-              onClick={() => { void desktopHost()?.relaunch?.(); }}
-            >
-              重启壳并生效
-            </button>
-          </Field>
-        </Show>
+            <FontRow
+              label="代码字体"
+              desc="代码块与 Diff 视图"
+              value={typography().fontCode}
+              presets={FONT_PRESETS.code}
+              onChange={(fontCode) => updateTypography({ fontCode })}
+            />
+            <FontRow
+              label="终端字体"
+              desc="命令行与工具原始输出"
+              value={typography().fontTerminal}
+              presets={FONT_PRESETS.terminal}
+              onChange={(fontTerminal) => updateTypography({ fontTerminal })}
+            />
+          </SettingGroup>
 
-        <Field label="全局字号缩放" hint="等比缩放界面中所有字阶（90% ~ 120%），纯前端即时生效。">
-          <Select
-            value={typography().scale}
-            onChange={(value) => updateTypography({ scale: value as FontScale })}
-            options={FONT_SCALE_OPTIONS.map((opt) => ({ value: opt.value, label: `${opt.label} — ${opt.desc}` }))}
-            ariaLabel="全局字号缩放"
-          />
-        </Field>
-
-        <FontPicker
-          label="界面骨架字体 (--font-ui)"
-          hint="侧边栏、标题栏与按钮表单，留空为系统默认。"
-          value={typography().fontUi}
-          presets={FONT_PRESETS.ui}
-          onChange={(fontUi) => updateTypography({ fontUi })}
-        />
-
-        <FontPicker
-          label="消息阅读正文 (--font-prose)"
-          hint="AI 回答、用户气泡与 Markdown 正文，留空跟随界面。"
-          value={typography().fontProse}
-          presets={FONT_PRESETS.prose}
-          onChange={(fontProse) => updateTypography({ fontProse })}
-        />
-
-        <FontPicker
-          label="代码块与差异 (--font-code)"
-          hint="Markdown 代码块与 DiffView 对比行，留空为 Cascadia。"
-          value={typography().fontCode}
-          presets={FONT_PRESETS.code}
-          onChange={(fontCode) => updateTypography({ fontCode })}
-        />
-
-        <FontPicker
-          label="终端与工具输出 (--font-terminal)"
-          hint="命令行执行输出与控制台原始日志，留空为 Menlo/Consolas。"
-          value={typography().fontTerminal}
-          presets={FONT_PRESETS.terminal}
-          onChange={(fontTerminal) => updateTypography({ fontTerminal })}
-        />
-
-        <div style={{ "grid-column": "1 / -1", display: "flex", "align-items": "center", "justify-content": "space-between", "margin-top": "4px" }}>
-          <span class="settings-muted">字体与字号偏好保存在本地，不影响后端会话。</span>
-          <button type="button" class="ghost-mini" onClick={resetTypography}>
-            <IconRotate /> 恢复默认排版
-          </button>
+          <p class="field-hint" style={{ margin: 0, "padding-inline": "2px" }}>
+            外观偏好保存在本机 · <FontNotices />
+          </p>
         </div>
-
-        <p class="settings-section-desc">
-          界面内嵌 Cascadia Code 等宽字体；中文正文引用系统字体（macOS 苹方 / Windows 11 24H2+ 自带 Noto Sans SC，旧系统回落微软雅黑）；字体许可与来源见{" "}
-          <FontNotices />。
-        </p>
-      </Section>
       </Show>
 
       <Show when={props.activeSection() === "section-about"}>
@@ -332,16 +317,17 @@ const LocalSettings: Component<{
 
 export const SettingsView: Component<{
   initialSection?: string;
-  /** 同一分区的重复请求也要生效（App 每次打开菜单时递增）。 */
   sectionNonce?: number;
   onOpenOAuth?: () => void;
   onSectionChange?: (section: string) => void;
   showSectionPicker?: boolean;
+  /** 居中浮层卡片模式（对齐 Antigravity）：内置 200px 左侧目录 + 遮罩 + 右上角关闭按钮。 */
+  modal?: boolean;
+  onClose?: () => void;
 }> = (props) => {
   const [activeSection, setActiveSection] = createSignal<string>(
     props.initialSection ?? SETTINGS_NAV[0].id,
   );
-  // 设置页已打开时从菜单/引导跳到指定分区：不能靠 remount，直接跟 prop 走。
   createEffect(
     () => [props.initialSection, props.sectionNonce] as const,
     ([next]) => {
@@ -353,9 +339,7 @@ export const SettingsView: Component<{
   onSettled(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     page?.querySelector<HTMLElement>("#settings-title")?.focus();
-    // 壳侧 GPU 偏好现状(本次启动 vs 下次启动):撑起「待重启」提示。
     void refreshShellGpuPref();
-    // 应用设置草稿与 profiles.toml 名录是两套读模型，并行读，谁失败谁显示错误。
     void reload();
     void refreshRegistry();
     return () => previousFocus?.focus();
@@ -363,11 +347,6 @@ export const SettingsView: Component<{
 
   const bypassPending = createMemo(() => requireBypass() && needsBypassConfirm(patch()));
 
-  /**
-   * 切换式单页:点谁渲染谁。没有滚动联动/锚点跳转,不存在「高亮与视口分家」
-   * 这一类 bug;未激活分区不渲染,外观区那排字体下拉也不再常驻。
-   * 草稿在 `./store` 的 signal 里,切换分区不丢未保存改动。
-   */
   const activeLabel = createMemo(
     () => SETTINGS_NAV.find((item) => item.id === activeSection())?.label ?? "",
   );
@@ -380,318 +359,352 @@ export const SettingsView: Component<{
   const registrySection = (id: string): boolean => REGISTRY_SECTIONS.has(id);
   const localSection = (id: string): boolean => LOCAL_SECTIONS.has(id);
 
-  return (
-    <main class="settings-page" ref={(node) => { page = node; }} aria-labelledby="settings-title">
-        <header class="settings-head">
-          <div class="settings-title">
-            <h1 id="settings-title" tabindex={-1}>{activeLabel() || STR.settings}</h1>
-          </div>
-          <Show when={props.showSectionPicker}>
-            <label class="settings-section-picker">
-              <span class="sr-only">设置分区</span>
-              <select value={activeSection()} onChange={(event) => selectSection(event.currentTarget.value)}>
-                <For each={[...SETTINGS_NAV_GROUPS]}>{(group) => <optgroup label={group}>
-                  <For each={SETTINGS_NAV.filter((item) => item.group === group)}>{(item) => <option value={item.id}>{item.label}</option>}</For>
-                </optgroup>}</For>
-              </select>
-            </label>
-          </Show>
-          <Show when={dirty()}>
-            <span class="settings-dirty-pill">{changedCount()} 项未保存</span>
-          </Show>
-        </header>
+  const content = (
+    <main
+      class={props.modal ? "settings-page is-modal" : "settings-page"}
+      ref={(node) => { page = node; }}
+      aria-labelledby="settings-title"
+    >
+      <Show when={props.modal}>
+        <aside class="settings-modal-nav" aria-label="设置分区">
+          <div class="settings-modal-nav-title">{STR.settings}</div>
+          <nav class="settings-modal-nav-list">
+            <For each={[...SETTINGS_NAV_GROUPS]}>
+              {(group) => (
+                <>
+                  <div class="settings-nav-group">{group}</div>
+                  <For each={SETTINGS_NAV.filter((item) => item.group === group)}>
+                    {(item) => (
+                      <button
+                        type="button"
+                        class={`settings-nav-item${activeSection() === item.id ? " active" : ""}`}
+                        aria-current={activeSection() === item.id ? "page" : undefined}
+                        data-section-id={item.id}
+                        onClick={() => selectSection(item.id)}
+                      >
+                        {item.label}
+                      </button>
+                    )}
+                  </For>
+                </>
+              )}
+            </For>
+          </nav>
+        </aside>
+      </Show>
 
-        <Show when={loading() && draft() == null}>
-          <div class="settings-state">{STR.settingsLoading}</div>
+      <div class="settings-main">
+      <header class="settings-head">
+        <div class="settings-title">
+          <h1 id="settings-title" tabindex={-1}>{activeLabel() || STR.settings}</h1>
+        </div>
+        <Show when={!props.modal && props.showSectionPicker}>
+          <label class="settings-section-picker">
+            <span class="sr-only">设置分区</span>
+            <select value={activeSection()} onChange={(event) => selectSection(event.currentTarget.value)}>
+              <For each={[...SETTINGS_NAV_GROUPS]}>{(group) => <optgroup label={group}>
+                <For each={SETTINGS_NAV.filter((item) => item.group === group)}>{(item) => <option value={item.id}>{item.label}</option>}</For>
+              </optgroup>}</For>
+            </select>
+          </label>
         </Show>
-        <Show when={draft() == null && !loading() && error() != null}>
-          <div class="settings-state is-error">
-            <span>{error()}</span>
-            <button type="button" class="ghost-mini" onClick={() => void reload()}>
-              {STR.retry}
-            </button>
-          </div>
+        <Show when={dirty()}>
+          <Badge tone="accent">{changedCount()} 项未保存</Badge>
         </Show>
+        <Show when={props.onClose != null}>
+          <button
+            type="button"
+            class="settings-modal-close"
+            aria-label="关闭设置"
+            title="关闭设置 (Esc)"
+            onClick={() => props.onClose?.()}
+          >
+            <IconX />
+          </button>
+        </Show>
+      </header>
 
-              <div class="settings-body">
-                <div class="settings-content">
-                  <Show when={reloadPending()}>
-                    <div class="settings-confirm" role="alert">
-                      <span>重新读取会放弃 {changedCount()} 项未保存的改动。</span>
-                      <div class="settings-confirm-actions">
-                        <button type="button" class="ghost-mini" onClick={cancelReload}>取消</button>
-                        <button type="button" class="primary-mini button-primary" onClick={confirmReload}>放弃并读取</button>
-                      </div>
-                    </div>
-                  </Show>
+      <Show when={loading() && draft() == null}>
+        <div class="settings-state">{STR.settingsLoading}</div>
+      </Show>
+      <Show when={draft() == null && !loading() && error() != null}>
+        <div class="settings-state is-error">
+          <span>{error()}</span>
+          <Button size="sm" variant="ghost" onClick={() => void reload()}>
+            {STR.retry}
+          </Button>
+        </div>
+      </Show>
 
-                  <Show when={registrySection(activeSection())}>
-                    <Show when={activeSection() === "section-providers"}>
-                      <ProvidersSection
-                        onOpenOAuth={props.onOpenOAuth}
-                      />
-                    </Show>
-                    <Show when={activeSection() === "section-pairing"}>
-                      <PairingSection />
-                    </Show>
-                  </Show>
-
-                  <Show when={!registrySection(activeSection())}>
-                    {/* 纯本地分区(桌面壳/外观/关于):不依赖 daemon 配置,后端不可达也照常可用。 */}
-                    <Show when={localSection(activeSection())}>
-                      <LocalSettings activeSection={activeSection} onSelect={selectSection} />
-                    </Show>
-                    <Show when={!localSection(activeSection())}>
-                    <Show
-                      when={draft()}
-                      fallback={<div class="settings-state">{STR.settingsLoading}</div>}
-                    >
-                      {(config) => (
-                        <>
-
-                  <Show when={activeSection() === "section-permission"}>
-                  <Section
-                    id="section-permission"
-                    title="权限档位"
-                    desc="权限越高,自动放行的工具越多。改动保存后立即生效。"
-                  >
-                    <div class="tier-list">
-                      <For each={PERMISSION_TIERS}>
-                        {(item) => (
-                          <label
-                            class={`tier${config().permissionLevel === item.level ? " active" : ""}${
-                              item.dangerous ? " dangerous" : ""
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="permission-tier"
-                              value={String(item.level)}
-                              checked={config().permissionLevel === item.level}
-                              onInput={() => setField("permissionLevel", item.level)}
-                            />
-                            <span class="tier-name">{item.name}</span>
-                            <span class="tier-desc">{item.desc}</span>
-                          </label>
-                        )}
-                      </For>
-                    </div>
-                    <Show when={currentTier() == null}>
-                      <p class="field-hint">
-                        读到的档位 {config().permissionLevel} 不在 1..=4 内——后端会拒绝保存,请先选一个合法档位。
-                      </p>
-                    </Show>
-                    <Show when={bypassPending()}>
-                      <div class="bypass-confirm" role="alert">
-                        <span>{STR.settingsBypassWarn}</span>
-                        <input
-                          class="field-input bypass-ack"
-                          value={bypassAck()}
-                          placeholder="输入 3 确认"
-                          onInput={(event) => setBypassAck(event.currentTarget.value)}
-                        />
-                      </div>
-                    </Show>
-                  </Section>
-                  </Show>
-
-                  <Show when={activeSection() === "section-context"}>
-                  <Section id="section-context" title="上下文与压缩">
-                    <Field label={STR.settingsAutoCompact} hint={STR.settingsAutoCompactHint}>
-                      <NumberInput
-                        value={config().autoCompactThreshold}
-                        integer={false}
-                        min={0}
-                        max={1}
-                        onCommit={(value) => setField("autoCompactThreshold", value)}
-                        ariaLabel={STR.settingsAutoCompact}
-                      />
-                    </Field>
-                    <Field label={STR.settingsTokenizer} hint={STR.settingsTokenizerHint} wide>
-                      <TextInput
-                        value={config().tokenizerPath ?? ""}
-                        onInput={(value) => setField("tokenizerPath", value)}
-                        placeholder="…/tokenizer.json"
-                      />
-                    </Field>
-                  </Section>
-                  </Show>
-
-                  <Show when={activeSection() === "section-runtime"}>
-                  <Section id="section-runtime" title="运行时">
-                    <Field label={STR.settingsDefaultShell} hint={STR.settingsDefaultShellHint}>
-                      <TextInput
-                        value={config().exec.defaultShell ?? ""}
-                        onInput={(value) => setExec("defaultShell", value)}
-                        placeholder="auto"
-                      />
-                    </Field>
-                    <Switch
-                      label="命令沙箱强制隔离 (Sandbox)"
-                      hint="启用系统级沙箱隔离运行命令（Windows AppContainer / Linux Landlock & Seccomp）；关闭后将在宿主无隔离环境下直接执行。"
-                      checked={config().sandbox?.enabled ?? true}
-                      onToggle={(value) => setSandbox(value)}
-                    />
-                    <Field label={STR.settingsIdleUnload} hint={STR.settingsIdleUnloadHint} compact>
-                      <NumberInput
-                        value={config().sessionIdleUnloadSecs}
-                        min={0}
-                        onCommit={(value) => setField("sessionIdleUnloadSecs", value)}
-                        ariaLabel={STR.settingsIdleUnload}
-                      />
-                    </Field>
-                  </Section>
-                  </Show>
-
-                  <Show when={activeSection() === "section-goals"}>
-                  <Section
-                    id="section-goals"
-                    title="目标模式"
-                    desc="会话持久目标与自动续跑(ADR-0015)。总开关只管模型能不能声明新 goal;会话头部徽标可暂停/恢复/清除单个目标。"
-                  >
-                    <Switch
-                      label="启用目标模式"
-                      hint="目标活跃时空闲自动续跑;跨 handoff 交接不断链。关闭后既有 goal 仍按各自预算审计。"
-                      checked={config().goals.enabled}
-                      onToggle={(value) => setGoals("enabled", value)}
-                    />
-                    <Field label="单目标预算上限 (tokens)" hint="空 = 无上限;同时是 create_goal 未显式给预算时的默认值。全局上限,单 goal 预算在会话徽标里调。" compact>
-                      <NullableNumberInput
-                        value={config().goals.maxTokenBudget}
-                        min={1}
-                        integer
-                        placeholder="无上限"
-                        ariaLabel="单目标预算上限"
-                        onCommit={(value) => setGoals("maxTokenBudget", value)}
-                      />
-                    </Field>
-                  </Section>
-                  </Show>
-
-                  <Show when={activeSection() === "section-mcp"}>
-                  <Section
-                    id="section-mcp"
-                    title="MCP / LSP(只读)"
-                    desc="当前仅支持查看;编辑能力会随 workspace 权限模型后续开放。"
-                  >
-                    <div class="readonly-grid">
-                      <span>mcp.enabled</span>
-                      <b>{String(config().mcp.enabled)}</b>
-                      <span>mcp.idleShutdownSecs</span>
-                      <b>{String(config().mcp.idleShutdownSecs)}</b>
-                      <span>lsp.enabled</span>
-                      <b>{String(config().lsp.enabled)}</b>
-                      <span>lsp.idleShutdownSecs</span>
-                      <b>{String(config().lsp.idleShutdownSecs)}</b>
-                    </div>
-                    <Show when={config().mcp.servers.length > 0}>
-                      <table class="readonly-table">
-                        <thead>
-                          <tr>
-                            <th>server</th>
-                            <th>transport</th>
-                            <th>command / url</th>
-                            <th>tools</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <For each={config().mcp.servers}>
-                            {(server) => (
-                              <tr>
-                                <td>{server.name}</td>
-                                <td>{server.transport}</td>
-                                <td>{server.command !== "" ? server.command : server.url}</td>
-                                <td>{server.tools == null ? "全部" : String(server.tools.length)}</td>
-                              </tr>
-                            )}
-                          </For>
-                        </tbody>
-                      </table>
-                    </Show>
-                    <Show when={config().lsp.servers.length > 0}>
-                      <table class="readonly-table">
-                        <thead>
-                          <tr>
-                            <th>server</th>
-                            <th>command</th>
-                            <th>extensions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <For each={config().lsp.servers}>
-                            {(server) => (
-                              <tr>
-                                <td>{server.name}</td>
-                                <td>{server.command}</td>
-                                <td>{server.extensions.join(", ")}</td>
-                              </tr>
-                            )}
-                          </For>
-                        </tbody>
-                      </table>
-                    </Show>
-                  </Section>
-                  </Show>
-
-                        </>
-                      )}
-                    </Show>
-                    </Show>
-                  </Show>
-                </div>
+      <div class="settings-body">
+        <div class="settings-content">
+          <Show when={reloadPending()}>
+            <div class="settings-confirm" role="alert">
+              <span>重新读取将放弃 {changedCount()} 项未保存的改动。</span>
+              <div class="settings-confirm-actions">
+                <Button size="sm" variant="ghost" onClick={cancelReload}>取消</Button>
+                <Button size="sm" variant="primary" onClick={confirmReload}>放弃并读取</Button>
               </div>
+            </div>
+          </Show>
 
-              <footer class="settings-foot">
-                <Show
-                  when={registrySection(activeSection())}
-                  fallback={
-                    <>
-                      <div class="settings-foot-state">
-                        <Show when={error() != null}>
-                          <span class="settings-error">{error()}</span>
+          <Show when={registrySection(activeSection())}>
+            <Show when={activeSection() === "section-providers"}>
+              <ProvidersSection onOpenOAuth={props.onOpenOAuth} />
+            </Show>
+            <Show when={activeSection() === "section-pairing"}>
+              <PairingSection />
+            </Show>
+          </Show>
+
+          <Show when={!registrySection(activeSection())}>
+            <Show when={localSection(activeSection())}>
+              <LocalSettings activeSection={activeSection} onSelect={selectSection} />
+            </Show>
+            <Show when={!localSection(activeSection())}>
+              <Show
+                when={draft()}
+                fallback={<div class="settings-state">{STR.settingsLoading}</div>}
+              >
+                {(config) => (
+                  <>
+                    <Show when={activeSection() === "section-permission"}>
+                      <div id="section-permission" style={{ display: "flex", "flex-direction": "column", gap: "16px" }}>
+                        <SettingGroup title="工具执行权限" desc="档位越高，自动放行的工具越多；保存后立即生效。">
+                          <For each={PERMISSION_TIERS}>
+                            {(item) => (
+                              <label
+                                class="ui-setting-row"
+                                style={{ cursor: "pointer", background: config().permissionLevel === item.level ? "var(--surface-hover)" : undefined }}
+                              >
+                                <div class="ui-setting-row-copy">
+                                  <span class="ui-setting-row-label" style={{ display: "inline-flex", "align-items": "center", gap: "8px" }}>
+                                    <span>{item.name}</span>
+                                    <Show when={item.dangerous}>
+                                      <Badge tone="err">高风险</Badge>
+                                    </Show>
+                                  </span>
+                                  <span class="ui-setting-row-desc">{item.desc}</span>
+                                </div>
+                                <div class="ui-setting-row-control">
+                                  <input
+                                    type="radio"
+                                    name="permission-tier"
+                                    value={String(item.level)}
+                                    checked={config().permissionLevel === item.level}
+                                    onInput={() => setField("permissionLevel", item.level)}
+                                  />
+                                </div>
+                              </label>
+                            )}
+                          </For>
+                        </SettingGroup>
+                        <Show when={currentTier() == null}>
+                          <p class="field-hint is-error" style={{ margin: 0 }}>
+                            当前档位 {config().permissionLevel} 超出有效范围，请先重新选择。
+                          </p>
                         </Show>
-                        <Show when={error() == null && note() != null}>
-                          <span class="settings-note">{note()}</span>
-                        </Show>
-                        <Show when={error() == null && note() == null}>
-                          <span class="settings-muted">
-                            {changedCount() > 0 ? `${STR.settingsChanged} ${changedCount()} 项` : STR.settingsClean}
-                          </span>
+                        <Show when={bypassPending()}>
+                          <div class="bypass-confirm" role="alert">
+                            <span>{STR.settingsBypassWarn}</span>
+                            <input
+                              class="field-input bypass-ack"
+                              value={bypassAck()}
+                              placeholder="输入 3 确认"
+                              onInput={(event) => setBypassAck(event.currentTarget.value)}
+                            />
+                          </div>
                         </Show>
                       </div>
-                      <div class="settings-foot-actions">
-                        <Show when={confirmDiscard()}>
-                          <span class="settings-discard">
-                            {STR.settingsDiscardAsk}
-                            <button type="button" class="ghost-mini" onClick={discard}>
-                              {STR.settingsDiscardYes}
-                            </button>
-                            <button type="button" class="ghost-mini" onClick={() => setConfirmDiscard(false)}>
-                              {STR.settingsStay}
-                            </button>
-                          </span>
+                    </Show>
+
+                    <Show when={activeSection() === "section-sandbox"}>
+                      <SandboxSection
+                        enabled={config().sandbox?.enabled ?? true}
+                        onToggle={(value) => setSandbox(value)}
+                      />
+                    </Show>
+
+                    <Show when={activeSection() === "section-context"}>
+                      <SettingGroup id="section-context" title="上下文管理">
+                        <SettingRow label="自动压缩阈值" desc="上下文占用达到该比例时自动压缩（0 ~ 1）">
+                          <div class="ui-input-compact">
+                            <NumberInput
+                              value={config().autoCompactThreshold}
+                              integer={false}
+                              min={0}
+                              max={1}
+                              onCommit={(value) => setField("autoCompactThreshold", value)}
+                              ariaLabel={STR.settingsAutoCompact}
+                            />
+                          </div>
+                        </SettingRow>
+                      </SettingGroup>
+                    </Show>
+
+                    <Show when={activeSection() === "section-runtime"}>
+                      <SettingGroup id="section-runtime" title="命令与会话">
+                        <SettingRow label="默认 Shell" desc="留空自动使用系统默认终端">
+                          <TextInput
+                            value={config().exec.defaultShell ?? ""}
+                            onInput={(value) => setExec("defaultShell", value)}
+                            placeholder="auto"
+                          />
+                        </SettingRow>
+                        <SettingRow label="空闲卸载时间（秒）" desc="静置超过该时长后释放内存，0 表示不卸载">
+                          <div class="ui-input-compact">
+                            <NumberInput
+                              value={config().sessionIdleUnloadSecs}
+                              min={0}
+                              onCommit={(value) => setField("sessionIdleUnloadSecs", value)}
+                              ariaLabel={STR.settingsIdleUnload}
+                            />
+                          </div>
+                        </SettingRow>
+                      </SettingGroup>
+                    </Show>
+
+                    <Show when={activeSection() === "section-goals"}>
+                      <SettingGroup id="section-goals" title="目标模式" desc="管理会话持久目标与自动续跑。">
+                        <div class="ui-setting-row">
+                          <Switch
+                            label="启用目标模式"
+                            hint="允许声明持久目标并在空闲时自动续跑"
+                            checked={config().goals.enabled}
+                            onToggle={(value) => setGoals("enabled", value)}
+                          />
+                        </div>
+                        <SettingRow label="单目标 Token 上限" desc="留空表示不限制">
+                          <div class="ui-input-compact">
+                            <NullableNumberInput
+                              value={config().goals.maxTokenBudget}
+                              min={1}
+                              integer
+                              placeholder="无上限"
+                              ariaLabel="单目标预算上限"
+                              onCommit={(value) => setGoals("maxTokenBudget", value)}
+                            />
+                          </div>
+                        </SettingRow>
+                      </SettingGroup>
+                    </Show>
+
+                    <Show when={activeSection() === "section-mcp"}>
+                      <div id="section-mcp" style={{ display: "flex", "flex-direction": "column", gap: "24px" }}>
+                        <SettingGroup title="扩展服务状态" desc="当前仅支持只读查看。">
+                          <SettingRow label="MCP 服务" desc={`空闲关闭：${config().mcp.idleShutdownSecs}s`}>
+                            <Badge tone={config().mcp.enabled ? "ok" : "neutral"}>
+                              {config().mcp.enabled ? "已启用" : "未启用"}
+                            </Badge>
+                          </SettingRow>
+                          <SettingRow label="LSP 语言服务" desc={`空闲关闭：${config().lsp.idleShutdownSecs}s`}>
+                            <Badge tone={config().lsp.enabled ? "ok" : "neutral"}>
+                              {config().lsp.enabled ? "已启用" : "未启用"}
+                            </Badge>
+                          </SettingRow>
+                        </SettingGroup>
+
+                        <Show when={config().mcp.servers.length > 0}>
+                          <SettingGroup title="MCP 服务列表">
+                            <For each={config().mcp.servers}>
+                              {(server) => (
+                                <SettingRow
+                                  label={server.name}
+                                  desc={server.command !== "" ? server.command : server.url}
+                                >
+                                  <Badge>{server.transport}</Badge>
+                                  <span class="ui-setting-row-value">
+                                    {server.tools == null ? "全部工具" : `${server.tools.length} 个工具`}
+                                  </span>
+                                </SettingRow>
+                              )}
+                            </For>
+                          </SettingGroup>
                         </Show>
-                        <button type="button" class="ghost-mini" disabled={busy()} onClick={requestReload}>
-                          <IconRotate />
-                          {STR.settingsReload}
-                        </button>
-                        <button
-                          type="button"
-                          class="primary-mini button-primary"
-                          disabled={busy() || loading() || !dirty()}
-                          onClick={() => void save()}
-                        >
-                          {busy() ? STR.settingsSaving : STR.settingsSave}
-                        </button>
+
+                        <Show when={config().lsp.servers.length > 0}>
+                          <SettingGroup title="LSP 服务列表">
+                            <For each={config().lsp.servers}>
+                              {(server) => (
+                                <SettingRow label={server.name} desc={server.command}>
+                                  <span class="ui-setting-row-value is-mono">{server.extensions.join(", ")}</span>
+                                </SettingRow>
+                              )}
+                            </For>
+                          </SettingGroup>
+                        </Show>
                       </div>
-                    </>
-                  }
-                >
+                    </Show>
+                  </>
+                )}
+              </Show>
+            </Show>
+          </Show>
+        </div>
+      </div>
+
+      <footer class="settings-foot">
+        <Show
+          when={registrySection(activeSection())}
+          fallback={
+            <>
+              <div class="settings-foot-state">
+                <Show when={error() != null}>
+                  <span class="settings-error">{error()}</span>
+                </Show>
+                <Show when={error() == null && note() != null}>
+                  <span class="settings-note">{note()}</span>
+                </Show>
+                <Show when={error() == null && note() == null}>
                   <span class="settings-muted">
-                    本页改动即时写入 profiles.toml；应用设置草稿不受影响。
+                    {changedCount() > 0 ? `${STR.settingsChanged} ${changedCount()} 项` : STR.settingsClean}
                   </span>
                 </Show>
-              </footer>
+              </div>
+              <div class="settings-foot-actions">
+                <Show when={confirmDiscard()}>
+                  <span class="settings-discard">
+                    {STR.settingsDiscardAsk}
+                    <Button size="sm" variant="danger" onClick={discard}>{STR.settingsDiscardYes}</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirmDiscard(false)}>{STR.settingsStay}</Button>
+                  </span>
+                </Show>
+                <Button size="sm" variant="ghost" disabled={busy()} onClick={requestReload}>
+                  <IconRotate />
+                  {STR.settingsReload}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={busy() || loading() || !dirty()}
+                  onClick={() => void save()}
+                >
+                  {busy() ? STR.settingsSaving : STR.settingsSave}
+                </Button>
+              </div>
+            </>
+          }
+        >
+          <span class="settings-muted">本页改动即时生效。</span>
+        </Show>
+      </footer>
+      </div>
     </main>
+  );
+
+  return (
+    <Show when={props.modal} fallback={content}>
+      <div class="settings-modal-overlay" onClick={() => props.onClose?.()}>
+        <div
+          class="settings-modal-card"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-title"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {content}
+        </div>
+      </div>
+    </Show>
   );
 };

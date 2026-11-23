@@ -1,14 +1,9 @@
 /**
- * 「桌面壳」面板:把 Electron 主进程独有的能力集中到一处。
- *
- * 这些状态不属于 daemon 配置,也不应该散落在各个会话标签里:
- *  - 壳/daemon 版本与协议;
- *  - 窗口/托盘关闭行为;
- *  - `conn://` 诊断(liveness、重连、宿主错误、不兼容);
- *  - 原生模型选择器与截图/原生材质能力;
- *  - 壳进程/界面进程组的内存摘要。
+ * 「桌面壳」面板：分组左文右控布局（窗口与电源 / 运行状态 / 可折叠高级诊断）。
  */
 import { createSignal, onSettled, Show, type Component } from "solid-js";
+import IconChevronDown from "~icons/lucide/chevron-down";
+import IconRefreshCw from "~icons/lucide/refresh-cw";
 import { activeTab } from "../tabs/store";
 import { desktopHost, type WindowState } from "../lib/desktop-host";
 import { formatBytes } from "../lib/memwatch";
@@ -32,8 +27,11 @@ import {
   restorePowerMode,
   type PowerBlockerMode,
 } from "../lib/power-blocker";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { SettingGroup, SettingRow } from "../ui/SettingGroup";
 import { toast } from "../ui/toast";
-import { Section, Switch } from "./controls";
+import { Switch } from "./controls";
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 
@@ -45,9 +43,9 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
   const [group, setGroup] = createSignal<ProcessGroup | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
   const [note, setNote] = createSignal<string | null>(null);
-  /** 休眠限制(阶段外新增,用户需求):双开关 ↔ 模式;偏好存 localStorage,启动重放。 */
   const [powerMode, setPowerMode] = createSignal<PowerBlockerMode>("off");
   const [powerActive, setPowerActive] = createSignal(false);
+  const [showDiagnostics, setShowDiagnostics] = createSignal(false);
   const powerBridge = (): boolean => desktopHost()?.powerBlocker != null;
 
   const windowState = (): WindowState | null => hostWindowState();
@@ -93,7 +91,6 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
 
   onSettled(() => {
     void refresh();
-    // 启动重放:上次会话的休眠限制偏好重新应用到主进程;off 只查状态。
     void restorePowerMode().then((state) => {
       if (state != null) {
         setPowerMode(state.mode);
@@ -162,7 +159,6 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
     }
   };
 
-  /** 休眠限制双开关 → 主进程 powerSaveBlocker;返回态为准(localStorage 只存偏好)。 */
   const setPowerToggles = async (keepAwake: boolean, keepBright: boolean): Promise<void> => {
     const bridge = desktopHost()?.powerBlocker;
     if (bridge == null) {
@@ -181,106 +177,134 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
   };
 
   return (
-    <Section
-      id="section-host"
-      title="桌面壳"
-      desc="Electron 主进程、窗口/托盘与宿主诊断。daemon 的连接配置仍由「模型与端点」管理。"
-    >
-      <div class="readonly-grid" style={{ "grid-column": "1 / -1" }}>
-        <span>壳版本</span>
-        <b>{build()?.display ?? (build()?.unavailable ? "浏览器环境（无壳）" : "读取中…")}</b>
-        <span>commit</span>
-        <b title={build()?.commit ?? ""}>{build()?.commit?.slice(0, 12) ?? "—"}</b>
-        {/* 口径同 AboutSection:批次指纹=打包原子配对(前端仓 HEAD 注入),协议层级=API level。 */}
-        <span>后端批次</span>
-        <b title="发布批次指纹,非后端源码 commit(详见「关于」页分层说明)">{daemonVersionLabel()}</b>
-        <span>协议层级</span>
-        <b title="控制协议 level(API level 语义,与构建批次无关)">{protocolVersion()}</b>
-        <span>局域网</span>
-        <b>{lan()?.active === true ? (lan()?.lan_endpoint ?? "已开启") : lan()?.running === true ? "未开启" : "daemon 未运行"}</b>
-        <span>窗口</span>
-        <b>
-          {windowState()?.visible === true ? "显示" : "隐藏"}
-          {" · "}
-          {windowState()?.maximized === true ? "最大化" : "普通"}
-          {windowState()?.fullscreen === true ? " · 全屏" : ""}
-        </b>
-        <span>托盘</span>
-        <b>{windowState()?.tray === true ? "已启用" : "未启用"}</b>
-        <span>关闭窗口</span>
-        <b>{effectiveCloseToTray() ? "隐藏到托盘" : trayReady() ? "进入退出确认" : "进入退出确认（托盘不可用）"}</b>
-        <span>宿主最后事件</span>
-        <b>{formatLiveness(lastLivenessAt())}</b>
-        <span>最近重连</span>
-        <b>
-          {lastReconnect() == null
-            ? "无"
-            : `第 ${lastReconnect()!.attempt} 次，${Math.max(1, Math.ceil(lastReconnect()!.delay_ms / 1000))} 秒后`}
-        </b>
-        <span>宿主错误</span>
-        <b class={hostError() == null ? undefined : "is-error"}>{hostError() ?? "无"}</b>
-        <span>不兼容实例</span>
-        <b class={hostIncompatible() == null ? undefined : "is-error"}>
-          {hostIncompatible() == null ? "无" : String(hostIncompatible()!.detail ?? "版本/协议不匹配")}
-        </b>
-        <span>Electron 主进程内存</span>
-        <b>{formatBytes(memory()?.resident_bytes ?? null)}</b>
-        <span>界面进程组</span>
-        <b>{group() == null ? "未提供" : `${group()!.members.length} 个 · ${group()!.source}`}</b>
-        <span>应用内截图</span>
-        <b>未实现：使用系统截图后「添加附件」</b>
-        <span>原生窗口材质</span>
-        <b>不支持（set_window_theme 返回 false；使用 CSS 主题）</b>
-        <span>休眠限制</span>
-        <b>{powerBridge() ? describeMode(powerMode(), powerActive()) : "仅桌面壳提供"}</b>
-      </div>
+    <div id="section-host" style={{ display: "flex", "flex-direction": "column", gap: "24px" }}>
+      <SettingGroup title="窗口与电源" desc="控制桌面窗口关闭行为与长任务期间的休眠策略。">
+        <div class="ui-setting-row">
+          <Switch
+            label="关闭窗口时隐藏到托盘"
+            hint="开启后点关闭仅隐藏到系统托盘；关闭则进入退出确认。"
+            checked={effectiveCloseToTray()}
+            disabled={!trayReady()}
+            onToggle={(value) => void setCloseToTray(value)}
+          />
+        </div>
+        <div class="ui-setting-row">
+          <Switch
+            label="阻止系统休眠"
+            hint="任务运行期间防止电脑自动休眠，屏幕仍可按系统设置熄灭。"
+            checked={powerMode() !== "off"}
+            disabled={!powerBridge()}
+            onToggle={(value) => void setPowerToggles(value, value && powerMode() === "keep-awake-bright")}
+          />
+        </div>
+        <div class="ui-setting-row">
+          <Switch
+            label="同时保持屏幕常亮"
+            hint="适合演示或监控场景，开启后将自动启用「阻止系统休眠」。"
+            checked={powerMode() === "keep-awake-bright"}
+            disabled={!powerBridge() || powerMode() === "off"}
+            onToggle={(value) => void setPowerToggles(value || powerMode() !== "off", value)}
+          />
+        </div>
+      </SettingGroup>
 
-      <Switch
-        label="关闭窗口时隐藏到托盘"
-        hint="开启：关闭按钮只隐藏窗口，托盘可重新打开。关闭：关闭按钮进入退出确认，可选择停止 daemon / 停止活动任务。"
-        checked={effectiveCloseToTray()}
-        disabled={!trayReady()}
-        onToggle={(value) => void setCloseToTray(value)}
-      />
+      <SettingGroup
+        title="运行状态"
+        aside={
+          <Button size="sm" variant="ghost" disabled={busy() != null} onClick={() => void refresh()}>
+            <IconRefreshCw class={{ "icon-spin": busy() === "refresh" }} />
+            刷新
+          </Button>
+        }
+      >
+        <SettingRow label="壳版本与后端批次" desc={`协议层级 v${protocolVersion()}`}>
+          <span class="ui-setting-row-value is-mono">
+            {build()?.display ?? (build()?.unavailable ? "浏览器" : "…")} · {daemonVersionLabel()}
+          </span>
+        </SettingRow>
+        <SettingRow label="局域网服务" desc={lan()?.active ? (lan()?.lan_endpoint ?? undefined) : "默认仅监听本机回环"}>
+          <Badge tone={lan()?.active ? "ok" : "neutral"}>
+            {lan()?.active === true ? "已开启" : lan()?.running === true ? "未开启" : "未运行"}
+          </Badge>
+          <Show when={props.onOpenPairing != null}>
+            <Button size="sm" variant="secondary" disabled={busy() != null} onClick={props.onOpenPairing}>
+              设备配对
+            </Button>
+          </Show>
+        </SettingRow>
+        <SettingRow label="主进程内存占用">
+          <span class="ui-setting-row-value is-mono">{formatBytes(memory()?.resident_bytes ?? null)}</span>
+        </SettingRow>
+        <SettingRow label="宿主维护">
+          <Button size="sm" variant="secondary" disabled={busy() != null} onClick={() => void retryStreams()}>
+            重建事件流
+          </Button>
+          <Button size="sm" variant="secondary" disabled={busy() != null || !trayReady()} onClick={() => void hideToTray()}>
+            隐藏到托盘
+          </Button>
+          <Button size="sm" variant="danger" disabled={busy() != null} onClick={() => void stopStale()}>
+            停止旧 daemon
+          </Button>
+        </SettingRow>
+      </SettingGroup>
 
-      <Switch
-        label="阻止系统休眠"
-        hint="运行期间阻止电脑进入休眠/挂起（Linux 经 D-Bus inhibit，Windows 经 SetThreadExecutionState）。屏幕仍可能按系统设置熄灭。"
-        checked={powerMode() !== "off"}
-        disabled={!powerBridge()}
-        onToggle={(value) => void setPowerToggles(value, value && powerMode() === "keep-awake-bright")}
-      />
-      <Switch
-        label="同时保持屏幕常亮"
-        hint="在阻止休眠的基础上保持屏幕不熄灭——适合演示/监控场景；隐含开启「阻止系统休眠」。"
-        checked={powerMode() === "keep-awake-bright"}
-        disabled={!powerBridge() || powerMode() === "off"}
-        onToggle={(value) => void setPowerToggles(value || powerMode() !== "off", value)}
-      />
-
-      <div class="lan-actions" style={{ "grid-column": "1 / -1" }}>
-        <button type="button" class="ghost-mini" disabled={busy() != null} onClick={() => void refresh()}>
-          刷新宿主状态
-        </button>
-        <button type="button" class="ghost-mini" disabled={busy() != null} onClick={() => void retryStreams()}>
-          重新建立事件流
-        </button>
-        <button type="button" class="ghost-mini is-danger" disabled={busy() != null} onClick={() => void stopStale()}>
-          停止旧 daemon 并重连
-        </button>
-        <button type="button" class="ghost-mini" disabled={busy() != null || !trayReady()} onClick={() => void hideToTray()}>
-          隐藏到托盘
-        </button>
-        <Show when={props.onOpenPairing != null}>
-          <button type="button" class="ghost-mini" disabled={busy() != null} onClick={props.onOpenPairing}>
-            打开设备配对
-          </button>
+      <SettingGroup
+        title="高级诊断"
+        aside={
+          <Button size="sm" variant="ghost" onClick={() => setShowDiagnostics((v) => !v)}>
+            <span>{showDiagnostics() ? "收起详情" : "展开详情"}</span>
+            <IconChevronDown style={{ transform: showDiagnostics() ? "rotate(180deg)" : "none", transition: "transform 140ms" }} />
+          </Button>
+        }
+      >
+        <Show
+          when={showDiagnostics()}
+          fallback={
+            <SettingRow label="连接健康度" desc={`最后事件：${formatLiveness(lastLivenessAt())}`}>
+              <Badge tone={hostError() == null && hostIncompatible() == null ? "ok" : "err"}>
+                {hostError() == null && hostIncompatible() == null ? "正常" : "存在异常"}
+              </Badge>
+            </SettingRow>
+          }
+        >
+          <SettingRow label="构建 Commit">
+            <span class="ui-setting-row-value is-mono" title={build()?.commit ?? ""}>{build()?.commit?.slice(0, 12) ?? "—"}</span>
+          </SettingRow>
+          <SettingRow label="窗口与托盘">
+            <span class="ui-setting-row-value">
+              {windowState()?.visible === true ? "显示" : "隐藏"} · {windowState()?.maximized === true ? "最大化" : "普通"}
+              {windowState()?.tray === true ? " · 托盘已启用" : " · 托盘未启用"}
+            </span>
+          </SettingRow>
+          <SettingRow label="宿主最后事件">
+            <span class="ui-setting-row-value">{formatLiveness(lastLivenessAt())}</span>
+          </SettingRow>
+          <SettingRow label="最近重连">
+            <span class="ui-setting-row-value">
+              {lastReconnect() == null
+                ? "无"
+                : `第 ${lastReconnect()!.attempt} 次，${Math.max(1, Math.ceil(lastReconnect()!.delay_ms / 1000))} 秒后`}
+            </span>
+          </SettingRow>
+          <SettingRow label="宿主错误 / 兼容性">
+            <span class="ui-setting-row-value">
+              {hostError() ?? "无"} / {hostIncompatible() == null ? "正常" : String(hostIncompatible()!.detail ?? "不兼容")}
+            </span>
+          </SettingRow>
+          <SettingRow label="界面进程组">
+            <span class="ui-setting-row-value is-mono">
+              {group() == null ? "未提供" : `${group()!.members.length} 个 · ${group()!.source}`}
+            </span>
+          </SettingRow>
+          <SettingRow label="休眠限制状态">
+            <span class="ui-setting-row-value">{powerBridge() ? describeMode(powerMode(), powerActive()) : "仅桌面壳提供"}</span>
+          </SettingRow>
         </Show>
-      </div>
+      </SettingGroup>
 
       <Show when={note() != null}>
-        <p class="field-hint" style={{ "grid-column": "1 / -1" }}>{note()}</p>
+        <p class="field-hint">{note()}</p>
       </Show>
-    </Section>
+    </div>
   );
 };

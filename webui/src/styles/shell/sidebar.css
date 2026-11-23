@@ -1,14 +1,14 @@
 /* QAQ-Harness WebUI —— 全局导航与会话侧边栏 */
 
 @layer components {
-  /* 壳侧栏(spec §6.1):Nav 2×2 + 会话列表同占一列,宽度由 --sidebar-width 控制。 */
+  /* 壳侧栏：顶部单列主导航 + 中部会话/分区列表 + 底部固定设置入口。 */
   .app-sidebar {
     grid-column: 1; grid-row: 2;
     position: relative;
-    display: grid; grid-template-rows: auto minmax(0, 1fr);
+    display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
     min-width: 0; min-height: 0; overflow: hidden;
-    border-right: 1px solid var(--border);
-    background: color-mix(in srgb, var(--surface) 72%, var(--bg));
+    border-right: 0;
+    background: var(--bg);
   }
 
   /* 拖拽调宽把手(用户侧需求):右缘 5px 命中,dock 展开态才有;
@@ -44,58 +44,76 @@
   html.sidebar-resizing .sidebar-nav-item span,
   html.sidebar-resizing .message-sidebar { transition: none !important; }
   html.desktop .app-sidebar {
-    /* 阶段5(spec §10):壳表面实底化,backdrop-filter 只留给抽屉/浮层。 */
-    background: var(--surface);
+    background: var(--bg);
   }
   html.desktop.platform-macos .app-sidebar {
-    box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 45%, transparent);
+    box-shadow: none;
   }
 
-  /* 导航 2×2:每项 ≥44px 命中,图标 18px,label 12px;active 用 --accent-soft。 */
+  /* 单列紧凑主导航（32px 行高，靠克制中性色高亮，不占纵向空间） */
   .sidebar-nav {
-    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px;
-    padding: 10px 10px 8px;
-    border-bottom: 1px solid var(--border);
-    /* 选中指示器 pill 的包含块(绝对定位 + offsetTop/offsetLeft 测量基准)。 */
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 6px 10px 8px;
+    border-bottom: 0;
     position: relative;
   }
-  /* WinUI 3 式选中指示器(共享 pill,由 app/selection-pill.ts 驱动):
-     基础主题不显示;Windows/Fluent 覆盖层里显示并驱动滑动/交换动画。 */
   .sidebar-nav-pill { display: none; }
+  .sidebar-new-chat {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; height: 34px; padding: 0 10px; margin-bottom: 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-control);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--fs-sm); font-weight: 500;
+    box-shadow: var(--shadow-soft);
+    cursor: pointer;
+    transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  }
+  .sidebar-new-chat svg { width: 15px; height: 15px; flex: none; color: var(--text-secondary); }
+  .sidebar-new-chat span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sidebar-new-chat:hover:not(:disabled) { background: var(--control-fill-hover); border-color: var(--stroke-control-strong); }
+  .sidebar-new-chat:disabled { opacity: 0.5; cursor: not-allowed; }
+
   .sidebar-nav-item {
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-    min-width: 0; min-height: 44px; padding: 6px 4px;
-    border-radius: var(--r-md); color: var(--muted); font-size: calc(12px * var(--font-scale)); line-height: 1.2;
+    display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px;
+    width: 100%; min-width: 0; height: 32px; min-height: 32px; padding: 0 10px;
+    border-radius: var(--radius-control);
+    color: var(--text-secondary); font-size: var(--fs-sm); font-weight: 450; line-height: 1;
+    cursor: pointer;
     transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
   }
-  .sidebar-nav-item svg { width: 18px; height: 18px; }
-  /* 标签退场(motion kit):汉堡收起时 max-width→0 + opacity→0,不用 display:none
-     硬切;height 钉在 1.2em,图标在 44px 命中区里的位置不动。 */
+  .sidebar-nav-item svg { width: 16px; height: 16px; flex: none; opacity: 0.82; }
   .sidebar-nav-item span {
-    max-width: 64px; height: 1.2em; overflow: hidden; opacity: 1;
+    max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 1;
     transition: max-width var(--dur-layout) var(--ease), opacity var(--dur-fast) var(--ease);
   }
-  .sidebar-nav-item:hover { color: var(--text); background: var(--surface-2); }
-  .sidebar-nav-item.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+  .sidebar-nav-item:hover { color: var(--text); background: var(--surface-hover); }
+  .sidebar-nav-item.active { color: var(--text); background: var(--surface-active); font-weight: 550; }
+  .sidebar-nav-item.active svg { opacity: 1; color: var(--text); }
+
+  .sidebar-footer {
+    padding: 8px 10px 10px;
+    border-top: 1px solid var(--border);
+  }
 
   .sidebar-settings-nav {
     display: grid; align-content: start; gap: 2px;
     min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-    padding: 16px 12px 24px;
-    /* 选中指示器 pill 的包含块(绝对定位 + offsetTop 测量基准)。 */
+    padding: 8px 10px 20px;
     position: relative;
   }
-  .sidebar-settings-nav .settings-nav-item { min-height: 36px; }
+  .sidebar-settings-nav .settings-nav-item { min-height: 32px; }
   .app-sidebar.collapsed .sidebar-settings-nav { display: none; }
 
-  /* 会话列表现在是 .app-sidebar 的第二段(Nav 之下),表面与边框由壳侧栏统一提供。 */
-  /* 收起态(汉堡切换,#app.sidebar-collapsed):48px 仅图标导航,会话列表隐藏。
-     记忆在 localStorage;<720px 的 160px 窄列被这条 id+class 规则覆盖为 48px。 */
-  #app.sidebar-collapsed { grid-template-columns: 48px minmax(0, 1fr) auto; }
-  #app.sidebar-collapsed #top { grid-template-columns: 48px minmax(0, 1fr) auto; }
-  .app-sidebar.collapsed .sidebar-nav { grid-template-columns: minmax(0, 1fr); padding: 8px 6px; border-bottom: 0; }
-  .app-sidebar.collapsed .sidebar-nav-item { min-height: 40px; }
+  #app.sidebar-collapsed { grid-template-columns: 52px minmax(0, 1fr) auto; }
+  #app.sidebar-collapsed #top { grid-template-columns: 52px minmax(0, 1fr) auto; }
+  .app-sidebar.collapsed .sidebar-nav { padding: 6px 8px; }
+  .app-sidebar.collapsed .sidebar-new-chat { justify-content: center; padding: 0; }
+  .app-sidebar.collapsed .sidebar-new-chat span { display: none; }
+  .app-sidebar.collapsed .sidebar-nav-item { justify-content: center; padding: 0; gap: 0; }
   .app-sidebar.collapsed .sidebar-nav-item span { max-width: 0; opacity: 0; }
+  .app-sidebar.collapsed .sidebar-footer { padding: 8px; }
   /* 会话列表淡出(motion kit):列宽 288→48 由 #app 的轨道过渡驱动,列表原地淡出;
      visibility 延迟到淡出播完才隐藏,焦点/无障碍树同步离场。 */
   .app-sidebar.collapsed .message-sidebar {
@@ -114,9 +132,11 @@
     position: fixed; top: var(--topbar-height, 48px); left: 0; bottom: 0; z-index: 70;
     width: var(--sidebar-width, 288px); max-width: 86vw;
     display: none;
-    border-right: 1px solid var(--border);
-    background: var(--surface);
-    box-shadow: 0 12px 32px color-mix(in srgb, #000 25%, transparent);
+    border-right: 1px solid var(--stroke-control, var(--border));
+    background: var(--dialog-bg, var(--surface-solid, var(--surface)));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: 0 12px 32px color-mix(in srgb, #000 32%, transparent);
     transform: translateX(-102%);
     transition: transform var(--dur-drawer) var(--ease),
                 display var(--dur-drawer) allow-discrete;
@@ -163,8 +183,11 @@
   /* 菜单在流内展开,避免被侧栏滚动容器裁掉。 */
   .message-session-menu {
     display: grid; gap: 1px; margin: 2px 0 4px;
-    padding: 4px; border: 1px solid var(--border-strong); border-radius: var(--r-md);
-    background: var(--surface); box-shadow: var(--shadow-soft);
+    padding: 4px; border: 1px solid var(--stroke-control, var(--border-strong)); border-radius: var(--r-md);
+    background: var(--flyout-bg, var(--surface));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-soft);
   }
   .message-session-menu > strong { padding: 1px 5px 3px; color: var(--muted); font-size: 10px; letter-spacing: .04em; }
   .message-session-menu > button {

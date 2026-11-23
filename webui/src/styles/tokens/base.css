@@ -1,206 +1,225 @@
-/* QAQ-Harness WebUI —— Tokens (设计规范常量、默认浅色与深色变量) */
+/* QAQ-Harness WebUI —— 统一跨平台设计规范 Tokens（Neutral/Zinc 灰阶体系） */
 
 @layer tokens {
   :root {
-    --bg: #f7f7f8;
+    /* ── 表面明度层级（底壳 → 画布 → 次级填充） ── */
+    --bg: #f4f4f6;
     --surface: #ffffff;
-    --surface-2: #f0f1f3;
-    --surface-user: #f0f1f3;
-    --surface-code: #f1f2f4;
-    /* 代码底纱(Codex --codex-row-hover 原方,实测 5~8%):文本色低浓度叠加而非实色灰板,
-       底色自动携带环境(白卡/Mica)的明度,浅档吃 6% 黑,暗档吃 9% 白。 */
-    --code-veil: color-mix(in srgb, var(--text) 6%, transparent);
-    --border: #e1e3e7;
-    --border-strong: #7b8aa0;
-    --text: #20242b;
-    --muted: #626975;
-    --accent: #2563eb;
-    --on-accent: #ffffff;
-    --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
-    --focus-ring: #2563eb;
-    --ok: #167341;
-    --warn: #925b0b;
-    --err: #b42332;
-    --err-soft: color-mix(in srgb, var(--err) 12%, var(--surface));
-    /* 阴影深度用 Fibonacci 阶梯(2-8 / 5-13 / 13-34):数列收敛于 φ,
-       层与层之间的"抬升感"按黄金比例递进,soft < glass < panel 严格分层。 */
-    --shadow-panel: 0 13px 34px rgb(23 43 77 / 12%);
-    --shadow-soft: 0 2px 8px rgb(23 43 77 / 6%);
-    --shadow-glass: 0 5px 13px rgb(23 43 77 / 8%);
-    --glass-bg: rgb(255 255 255 / 82%);
-    --glass-border: rgb(255 255 255 / 72%);
-    --glass-blur: 12px;
-    --diff-add-bg: #e8f5ec;
-    --diff-add-word: #bfe3ca;
-    --diff-del-bg: #fceceb;
-    --diff-del-word: #f3c6c3;
+    --surface-solid: #ffffff;
+    --surface-2: #eceef1;
+    --surface-hover: rgb(0 0 0 / 4%);
+    --surface-active: rgb(0 0 0 / 7%);
+    --surface-user: #f1f2f5;
+    --surface-code: #f5f6f8;
+    --code-veil: color-mix(in srgb, var(--text) 5%, transparent);
 
-    /* —— 消息区主题岛接缝 ——
-       默认逐项镜像壳色:经典工作台不改变任何观感。主题包插件
-       (plugins/, slot=theme)只需覆写 --chat-* 这一族就能热换消息区配色。 */
-    --chat-bg: var(--bg);
-    --chat-surface: var(--surface);
-    --chat-surface-2: var(--surface-2);
-    --chat-surface-user: var(--surface-user);
-    --chat-surface-code: var(--surface-code);
+    /* ── 极淡描边与中性文字层级 ── */
+    --border: rgb(0 0 0 / 7%);
+    --border-strong: rgb(0 0 0 / 15%);
+    --text: #18181b;
+    --text-secondary: #52525b;
+    --muted: #71717a;
+
+    /* ── 克制的语义与强调色 ── */
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --on-accent: #ffffff;
+    --accent-soft: rgb(37 99 235 / 10%);
+    --focus-ring: #2563eb;
+    --focus-shadow: 0 0 0 3px rgb(37 99 235 / 16%);
+    --ok: #15803d;
+    --ok-soft: rgb(21 128 61 / 10%);
+    --warn: #b45309;
+    --warn-soft: rgb(180 83 9 / 10%);
+    --err: #dc2626;
+    --err-soft: rgb(220 38 38 / 10%);
+
+    /* ── 轻量化阴影（靠明度差与 1px 描边分层，减少重阴影） ── */
+    --shadow-soft: 0 1px 2px rgb(0 0 0 / 4%);
+    --shadow-glass: 0 4px 12px rgb(0 0 0 / 6%);
+    --shadow-panel: 0 10px 30px rgb(0 0 0 / 10%);
+    --glass-bg: rgb(255 255 255 / 86%);
+    --glass-border: rgb(0 0 0 / 7%);
+    --glass-blur: 14px;
+
+    /* ── Diff 语义色 ── */
+    --diff-add-bg: #ecfdf5;
+    --diff-add-word: #bbf7d0;
+    --diff-del-bg: #fef2f2;
+    --diff-del-word: #fecaca;
+
+    /* ── 主工作区画布（纯白微圆角浮于淡灰底壳之上） ── */
+    --chat-bg: #ffffff;
+    --chat-surface: #ffffff;
+    --chat-surface-2: #f4f4f6;
+    --chat-surface-user: #f4f4f6;
+    --chat-surface-code: #f5f6f8;
     --chat-text: var(--text);
     --chat-muted: var(--muted);
     --chat-border: var(--border);
     --chat-code-veil: var(--code-veil);
     --chat-err-soft: var(--err-soft);
-    /* Mica 上的消息面填充:非 Windows 默认与纸面同色;Windows tokens 镜像 layer-fill,
-       主题包覆写为半透明纸色。 */
     --chat-mica: var(--chat-bg);
 
-    /* 交互控件与浮层语义 Token（跨平台通用默认基准） */
-    --flyout-bg: var(--surface);
+    /* ── 控件与浮层语义 ── */
+    --layer-fill: #ffffff;
+    --card-fill: #ffffff;
+    --flyout-bg: rgb(255 255 255 / 96%);
+    --dialog-bg: #ffffff;
+    --acrylic-blur: blur(20px) saturate(130%);
+    --acrylic-highlight: inset 0 1px 0 0 rgb(255 255 255 / 70%);
+    --control-fill: #ffffff;
+    --control-fill-hover: #f9f9fb;
+    --control-fill-pressed: #f1f2f5;
     --stroke-control: var(--border-strong);
-    --stroke-control-strong: var(--border-strong);
-    --stroke-control-disabled: color-mix(in srgb, var(--border) 60%, transparent);
+    --stroke-control-strong: rgb(0 0 0 / 24%);
+    --stroke-control-disabled: rgb(0 0 0 / 8%);
     --focus-outer: var(--focus-ring);
     --focus-inner: var(--surface);
 
-    /* 圆角级数 ×φ 递推取整:6 ×1.618→10 ×1.6→16(控件/面板/对话框三级)。 */
-    --radius-control: 6px;
-    --radius-panel: 10px;
+    /* ── 统一圆角体系（摒弃 4px 锐角） ── */
+    --radius-control: 8px;
+    --radius-panel: 12px;
     --radius-dialog: 16px;
     --radius-pill: 999px;
-    --r-sm: var(--radius-control);
-    --r-md: var(--radius-control);
-    --r-lg: var(--radius-panel);
-    --r-input: var(--radius-dialog);
+    --r-sm: 6px;
+    --r-md: 8px;
+    --r-lg: 12px;
+    --r-input: 16px;
+
+    /* ── 4px 间距栅格与布局尺寸 ── */
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;
     --space-4: 16px;
     --space-6: 24px;
     --space-8: 32px;
-    --control-height: 36px;
-    --content-gutter: var(--space-6);
+    --control-height: 32px;
+    --content-gutter: 24px;
     --workspace-panel-width: 320px;
-    /* 正文 14px 对齐 Codex 桌面端(实测全角步进 14px);行距写成 24/14 这个无单位
-       比例而不是 1.5,是为了把字号与行距解耦 —— 沿用 1.5 会让 14px 掉到 21px 行距,
-       字和行一起缩,密度不变。
-       比例同时也让 --font-scale 能整体接管:正文乘系数后,行距、标题(em)、代码(85%)
-       全部按比例跟着走,设置页「等比缩放所有字阶」对阅读区同样成立。
-       标题阶(2/1.5/1.25/1/.875/.85em,600 字重,h1/h2 下边框)与 GitHub Primer
-       markdown 渲染(github-markdown-css)一致,该体系是 Markdown 视觉的事实标准;
-       基准 16px vs 14px 只改变绝对对比度,不改变比例关系。
-       标题阶取黄金小三度级数(√φ=1.272 步进):h4→h3→h2→h1 = 1 / 1.272 / 1.618 / 2.058,
-       相邻比率恒为 √φ,h3→h2、h2→h1 的跨级恰为 φ。 */
+    --sidebar-width: 260px;
+    --topbar-height: 44px;
+    --content-width: 720px;
+
+    /* ── 现代桌面字阶（清晰克制，支持 --font-scale 等比缩放） ── */
+    --font-scale: 1;
+    --fs-caption: calc(12px * var(--font-scale));
+    --fs-xs: calc(12px * var(--font-scale));
+    --fs-sm: calc(13px * var(--font-scale));
+    --fs-md: calc(14px * var(--font-scale));
+    --fs-body: calc(14px * var(--font-scale));
+    --fs-lg: calc(18px * var(--font-scale));
+    --fs-title: calc(22px * var(--font-scale));
+    --fs-tool-out: 11px;
+
+    /* ── Markdown 阅读排版 ── */
     --md-body-size: calc(14px * var(--font-scale));
     --md-body-leading: calc(24 / 14);
-    --md-heading-leading: 1.25;
-    --md-h1-size: 2.058em;
-    --md-h2-size: 1.618em;
-    --md-h3-size: 1.272em;
+    --md-heading-leading: 1.3;
+    --md-h1-size: 1.75em;
+    --md-h2-size: 1.4em;
+    --md-h3-size: 1.18em;
     --md-h4-size: 1em;
-    --md-h5-size: .875em;
-    --md-h6-size: .85em;
-    --md-code-scale: 85%;
+    --md-h5-size: 0.875em;
+    --md-h6-size: 0.85em;
+    --md-code-scale: 88%;
 
-    /* 全局字号缩放基数（默认 100%，由纯前端 typography 模块控制） */
-    --font-scale: 1;
-    /* 壳布局 token(spec §3.3):侧栏 288px = Nav 2×2 + 会话列表;TopBar 48px。 */
-    --sidebar-width: 288px;
-    --topbar-height: 48px;
-    /* UI 字阶:旧梯队 14/15/16/18 相邻比率 1.07~1.13,层级几乎不可辨。
-       改为向 √φ(1.272)收敛的爬升级数 13/15/17/22(比率 1.15→1.13→1.29),
-       大字阶一步跨过 φ(17×1.29≈22),标题才立得住;小字阶保密度不缩进。 */
-    --fs-xs: calc(13px * var(--font-scale));
-    --fs-sm: calc(15px * var(--font-scale));
-    --fs-md: calc(17px * var(--font-scale));
-    --fs-lg: calc(22px * var(--font-scale));
-    --fs-body: calc(17px * var(--font-scale));
-    /* 工具详情区单独一档：报错正文（.tool-error）与 exec PTY 输出（.tool-xterm）。
-       顶部状态位/工具名走 --fs-xs，输出必须比顶部小——原先继承 --fs-sm 时 15px 的
-       红字压过 13px 的标题，报错反而抢眼。固定 10px 不吃 --font-scale，与 .tool-xterm
-       原有的定档口径同源（xterm 从 computed 读字号，零 JS 联动）；fluent 层不覆盖它，
-       所以 Windows 与 macOS 是同一个 10px。要调档只改这一行。 */
-    --fs-tool-out: 10px;
-
-    /* 4 大核心语义字体槽位
-       中文不内嵌：macOS 走苹方；Windows 11 24H2+ 系统自带 Noto Sans SC 可变
-       字体（wght 100-900），旧系统回落雅黑。西文优先 Segoe（Win11 变体），
-       让数字/拉丁与 CJK 各取所长。 */
-    --font-ui: "PingFang SC", "Segoe UI Variable Text", "Noto Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
-    --font-prose: "PingFang SC", "Segoe UI Variable Text", "Noto Sans SC", system-ui, sans-serif;
-    --font-code: "QAQH Cascadia Code", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
-    --font-terminal: "Menlo", "Consolas", "QAQH Cascadia Code", ui-monospace, monospace;
-
-    /* 兼容历史别名（平滑过渡，确保历史引用零破坏） */
+    /* ── 字体栈 ── */
+    --font-ui: "Inter", "PingFang SC", "Segoe UI Variable Text", "Noto Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
+    --font-prose: "Inter", "PingFang SC", "Segoe UI Variable Text", "Noto Sans SC", system-ui, sans-serif;
+    --font-code: "QAQH Cascadia Code", "JetBrains Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+    --font-terminal: "Cascadia Mono", "Menlo", Consolas, ui-monospace, monospace;
     --font-main: var(--font-ui);
     --font-mono: var(--font-code);
 
-    /* 进出场时长按 φ 配比:入场慢、退场快是动效心理学的共识,
-       260/160 = 1.625 ≈ φ——抽屉/浮层"登场从容、离场干脆"。 */
-    --dur-fast: 120ms;
-    --dur: 180ms;
-    --dur-out: 160ms;
-    --dur-enter: 260ms;
-    --dur-layout: 220ms;
-    /* 抽屉滑入/滑出(侧栏/任务面板):比布局过渡略长一点,给「覆盖层滑过正文」
-       的动作留出可读轨迹;退出也走同一时长,不用再抢 --dur-out。 */
-    --dur-drawer: 240ms;
-    --ease: cubic-bezier(.2, 0, 0, 1);
+    /* ── 动效节奏 ── */
+    --dur-fast: 100ms;
+    --dur: 160ms;
+    --dur-out: 140ms;
+    --dur-enter: 220ms;
+    --dur-layout: 200ms;
+    --dur-drawer: 220ms;
+    --dur-slow: 300ms;
+    --ease: cubic-bezier(0.2, 0, 0, 1);
+    --ease-outslowin: cubic-bezier(0.1, 0.9, 0.2, 1);
+    --ease-inslowout: cubic-bezier(0.9, 0.1, 1, 0.2);
 
-    --tool-shimmer-highlight: color-mix(in srgb, var(--accent) 26%, rgba(255, 255, 255, 0.6));
-    --tool-shimmer-dur: 1.618s;
+    --tool-shimmer-highlight: color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.6));
+    --tool-shimmer-dur: 1.6s;
 
-    /* 会话行「待响应」卡的语义色(§6.2 侧栏待响应):
-       授权=琥珀(有风险感)、回答=主色、计划评审=紫。深色表同步。 */
     --pending-permission: #b45309;
     --pending-ask: var(--accent);
     --pending-plan: #6d28d9;
 
-    --content-width: 760px;
     color-scheme: light dark;
   }
 
-  /* 深色 token 两路消费:JS(theme.ts)在模块加载即设 data-theme,所以
-     :root[data-theme] 是主路径;媒体查询只兜「JS 未运行的首帧」,避免闪白。
-     两处 token 表必须保持一致。 */
   :root[data-theme="dark"] {
-    --bg: #17181b;
-    --surface: #202226;
-    --surface-2: #292c31;
-    --surface-user: #292c31;
-    --surface-code: #1b1d21;
-    --code-veil: color-mix(in srgb, var(--text) 9%, transparent);
-    --border: #373b42;
-    --border-strong: #718198;
-    --text: #edeef0;
-    --muted: #abb0b8;
-    --accent: #8ab4ff;
-    --on-accent: #13171d;
-    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
-    --focus-ring: #8ab4ff;
-    --ok: #75d9a1;
-    --warn: #f5c36d;
-    --err: #ff9aa5;
-    --err-soft: color-mix(in srgb, var(--err) 16%, var(--surface));
-    --shadow-panel: 0 13px 34px rgb(0 0 0 / 32%);
-    --shadow-soft: 0 2px 8px rgb(0 0 0 / 20%);
-    --shadow-glass: 0 5px 13px rgb(0 0 0 / 28%);
-    --glass-bg: rgb(29 35 44 / 90%);
-    --glass-border: rgb(255 255 255 / 12%);
-    --diff-add-bg: #1c3326;
-    --diff-add-word: #2a5a3b;
-    --diff-del-bg: #3a2224;
-    --diff-del-word: #6a3338;
+    --bg: #141416;
+    --surface: #1b1b1e;
+    --surface-solid: #1b1b1e;
+    --surface-2: #242428;
+    --surface-hover: rgb(255 255 255 / 5%);
+    --surface-active: rgb(255 255 255 / 9%);
+    --surface-user: #242428;
+    --surface-code: #161619;
+    --code-veil: color-mix(in srgb, var(--text) 7%, transparent);
 
-    --chat-bg: var(--bg);
-    --chat-surface: var(--surface);
-    --chat-surface-2: var(--surface-2);
-    --chat-surface-user: var(--surface-user);
-    --chat-surface-code: var(--surface-code);
+    --border: rgb(255 255 255 / 8%);
+    --border-strong: rgb(255 255 255 / 16%);
+    --text: #f4f4f5;
+    --text-secondary: #a1a1aa;
+    --muted: #71717a;
+
+    --accent: #60a5fa;
+    --accent-hover: #93c5fd;
+    --on-accent: #09090b;
+    --accent-soft: rgb(96 165 250 / 14%);
+    --focus-ring: #60a5fa;
+    --focus-shadow: 0 0 0 3px rgb(96 165 250 / 22%);
+    --ok: #4ade80;
+    --ok-soft: rgb(74 222 128 / 12%);
+    --warn: #fbbf24;
+    --warn-soft: rgb(251 191 36 / 12%);
+    --err: #f87171;
+    --err-soft: rgb(248 113 113 / 14%);
+
+    --shadow-soft: 0 1px 2px rgb(0 0 0 / 24%);
+    --shadow-glass: 0 6px 18px rgb(0 0 0 / 32%);
+    --shadow-panel: 0 14px 36px rgb(0 0 0 / 44%);
+    --glass-bg: rgb(27 27 30 / 90%);
+    --glass-border: rgb(255 255 255 / 9%);
+
+    --diff-add-bg: #132a1e;
+    --diff-add-word: #1f4d34;
+    --diff-del-bg: #2f1719;
+    --diff-del-word: #5c262a;
+
+    --chat-bg: #1b1b1e;
+    --chat-surface: #1b1b1e;
+    --chat-surface-2: #242428;
+    --chat-surface-user: #242428;
+    --chat-surface-code: #161619;
     --chat-text: var(--text);
     --chat-muted: var(--muted);
     --chat-border: var(--border);
     --chat-code-veil: var(--code-veil);
     --chat-err-soft: var(--err-soft);
+
+    --layer-fill: #1b1b1e;
+    --card-fill: #1f1f23;
+    --flyout-bg: rgb(30 30 34 / 96%);
+    --dialog-bg: #1e1e22;
+    --acrylic-highlight: inset 0 1px 0 0 rgb(255 255 255 / 8%);
+    --control-fill: #232327;
+    --control-fill-hover: #2b2b30;
+    --control-fill-pressed: #323238;
+    --stroke-control: var(--border-strong);
+    --stroke-control-strong: rgb(255 255 255 / 26%);
+    --stroke-control-disabled: rgb(255 255 255 / 8%);
+
     --tool-shimmer-highlight: rgba(255, 255, 255, 0.22);
-    --pending-permission: #f5c36d;
+    --pending-permission: #fbbf24;
     --pending-ask: var(--accent);
     --pending-plan: #c4b5fd;
     color-scheme: dark;
@@ -210,46 +229,54 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]):not([data-theme="dark"]) {
-      --bg: #17181b;
-      --surface: #202226;
-      --surface-2: #292c31;
-      --surface-user: #292c31;
-      --surface-code: #1b1d21;
-      --code-veil: color-mix(in srgb, var(--text) 9%, transparent);
-      --border: #373b42;
-      --border-strong: #718198;
-      --text: #edeef0;
-      --muted: #abb0b8;
-      --accent: #8ab4ff;
-      --on-accent: #13171d;
-      --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
-      --focus-ring: #8ab4ff;
-      --ok: #75d9a1;
-      --warn: #f5c36d;
-      --err: #ff9aa5;
-      --err-soft: color-mix(in srgb, var(--err) 16%, var(--surface));
-      --shadow-panel: 0 13px 34px rgb(0 0 0 / 32%);
-      --shadow-soft: 0 2px 8px rgb(0 0 0 / 20%);
-      --shadow-glass: 0 5px 13px rgb(0 0 0 / 28%);
-      --glass-bg: rgb(29 35 44 / 90%);
-      --glass-border: rgb(255 255 255 / 12%);
-      --diff-add-bg: #1c3326;
-      --diff-add-word: #2a5a3b;
-      --diff-del-bg: #3a2224;
-      --diff-del-word: #6a3338;
-
-      --chat-bg: var(--bg);
-      --chat-surface: var(--surface);
-      --chat-surface-2: var(--surface-2);
-      --chat-surface-user: var(--surface-user);
-      --chat-surface-code: var(--surface-code);
+      --bg: #141416;
+      --surface: #1b1b1e;
+      --surface-solid: #1b1b1e;
+      --surface-2: #242428;
+      --surface-hover: rgb(255 255 255 / 5%);
+      --surface-active: rgb(255 255 255 / 9%);
+      --surface-user: #242428;
+      --surface-code: #161619;
+      --code-veil: color-mix(in srgb, var(--text) 7%, transparent);
+      --border: rgb(255 255 255 / 8%);
+      --border-strong: rgb(255 255 255 / 16%);
+      --text: #f4f4f5;
+      --text-secondary: #a1a1aa;
+      --muted: #71717a;
+      --accent: #60a5fa;
+      --accent-hover: #93c5fd;
+      --on-accent: #09090b;
+      --accent-soft: rgb(96 165 250 / 14%);
+      --focus-ring: #60a5fa;
+      --focus-shadow: 0 0 0 3px rgb(96 165 250 / 22%);
+      --ok: #4ade80;
+      --ok-soft: rgb(74 222 128 / 12%);
+      --warn: #fbbf24;
+      --warn-soft: rgb(251 191 36 / 12%);
+      --err: #f87171;
+      --err-soft: rgb(248 113 113 / 14%);
+      --chat-bg: #1b1b1e;
+      --chat-surface: #1b1b1e;
+      --chat-surface-2: #242428;
+      --chat-surface-user: #242428;
+      --chat-surface-code: #161619;
       --chat-text: var(--text);
       --chat-muted: var(--muted);
       --chat-border: var(--border);
       --chat-code-veil: var(--code-veil);
       --chat-err-soft: var(--err-soft);
+      --layer-fill: #1b1b1e;
+      --card-fill: #1f1f23;
+      --flyout-bg: rgb(30 30 34 / 96%);
+      --dialog-bg: #1e1e22;
+      --control-fill: #232327;
+      --control-fill-hover: #2b2b30;
+      --control-fill-pressed: #323238;
+      --stroke-control: var(--border-strong);
+      --stroke-control-strong: rgb(255 255 255 / 26%);
+      --stroke-control-disabled: rgb(255 255 255 / 8%);
       --tool-shimmer-highlight: rgba(255, 255, 255, 0.22);
-      --pending-permission: #f5c36d;
+      --pending-permission: #fbbf24;
       --pending-ask: var(--accent);
       --pending-plan: #c4b5fd;
     }

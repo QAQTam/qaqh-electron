@@ -15,8 +15,9 @@
  * 产物: .qaqh-bundles/<releaseId>/bundles/<kind>-<buildId>.zip (+ bundle-root 目录)
  * 构建身份沿用 just 注入的 QAQH_BUILD_VERSION；缺省回落到 package.json 的固定版本。
  */
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join, resolve, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -84,10 +85,22 @@ async function buildFrontend(identity, skipInstall) {
   const payload = stagingPath("frontend-payload");
   mkdirSync(join(payload, "resources"), { recursive: true });
   const asar = require("@electron/asar");
-  await asar.createPackage(staging, join(payload, "resources", "app.asar"));
-  const buildId = `frontend-${identity.buildId}`;
-  const bundleRoot = join(outRoot, identity.releaseId, buildId);
-  const zipOut = join(outRoot, identity.releaseId, "bundles", `${buildId}.zip`);
+  const asarPath = join(payload, "resources", "app.asar");
+  await asar.createPackage(staging, asarPath);
+  // buildId 拼上 app.asar 内容前 8 位 sha256：对外 version 保持不变，但只要前端代码有变动，
+  // 每次 `just frontend-update` 都会产生新 buildId，热更新自动可被检测到。
+  const asarHash = createHash("sha256").update(readFileSync(asarPath)).digest("hex").slice(0, 8);
+  const buildId = `frontend-${identity.buildId}-${asarHash}`;
+  const releaseDir = join(outRoot, identity.releaseId);
+  if (existsSync(releaseDir)) {
+    for (const entry of readdirSync(releaseDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.startsWith("frontend-")) {
+        rmSync(join(releaseDir, entry.name), { recursive: true, force: true });
+      }
+    }
+  }
+  const bundleRoot = join(releaseDir, buildId);
+  const zipOut = join(releaseDir, "bundles", `${buildId}.zip`);
   mkdirSync(dirname(zipOut), { recursive: true });
   await collectBundle([
     "--kind", "frontend", "--build-id", buildId, "--app-version", identity.version,
