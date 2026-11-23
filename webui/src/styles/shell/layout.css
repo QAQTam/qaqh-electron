@@ -114,9 +114,20 @@
   /* 阶段3:会话列表并入 .app-sidebar,.workspace 不再产生第二组可见列(spec §4.1)。 */
   .workspace.workspace-messages { grid-template-rows: minmax(0, 1fr); }
   .workspace.workspace-settings { grid-template-rows: minmax(0, 1fr); }
-  .workspace-content { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
-  .workspace-content { background: var(--bg); }
-  .workspace-content { container: workspace / inline-size; }
+  .workspace-content {
+    grid-column: 1; grid-row: 1; min-width: 0; min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr);
+    background: var(--bg);
+    container: workspace / inline-size;
+  }
+  .workspace-content > main {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+  }
   /* 消息主面四周圆角(Codex MainContentSurface 同款:大面吃 radius-xl 档,
      不跟 4/8px 控件圆角家族——层级越高的面圆角越大,圆角本身就是深度编码)。
      8px 缝透出底层 Mica/底色,overflow 把滚动条端头一并裁进圆角。 */

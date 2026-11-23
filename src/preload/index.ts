@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld("qaqhHost", {
   },
   devtools: {
     toggle: () => ipcRenderer.invoke("qaqh:devtools-toggle") as Promise<boolean>,
+    blinkMemory: () => {
+      const fn = (process as NodeJS.Process & { getBlinkMemoryInfo?: () => { allocated: number; total: number } }).getBlinkMemoryInfo;
+      return typeof fn === "function" ? fn.call(process) : null;
+    },
   },
   devmode: {
     /** 开发者模式开/关同步到主进程(Dev Surface 的 MCP 可见性门控,不落盘)。 */

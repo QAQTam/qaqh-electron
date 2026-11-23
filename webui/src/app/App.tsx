@@ -1159,6 +1159,18 @@ const App: Component = () => {
           <Show when={section() === "team"}><TeamPage /></Show>
           <Show when={section() === "oauth"}><OAuthPage onOpenSettings={() => navigateSection("settings")} /></Show>
         </main>
+        {/* 内联便签总览卡：嵌在白画布右侧列内，展开时挤压消息区不割裂；窄屏回退抽屉 */}
+        <Show when={section() === "messages" && !isStartup() && activeTab() != null}>
+          <WorkspacePanel
+            store={activeTab()!.store}
+            drawer={appCols() < 3}
+            drawerOpen={railDrawerOpen()}
+            manualOpen={railManual()}
+            onManualToggle={setRailManual}
+            runningExecCount={runningExecCount}
+            onToggleExec={() => execPanelStore.toggle()}
+          />
+        </Show>
         </div>
       </div>
       <Show when={settingsOpen()}>
@@ -1170,12 +1182,6 @@ const App: Component = () => {
           onClose={requestSettingsClose}
           onOpenOAuth={() => { requestSettingsClose(); navigateSection("oauth"); }}
         />
-      </Show>
-      {/* 任务右栏(spec §6.3):≥1280 第三列(dock);<1280 常驻挂载为覆盖层抽屉。 */}
-      {/* 抽屉面板常驻挂载(cols<3 时为覆盖层):开关由 class 驱动,
-          关闭时滑出画面再 display:none(motion kit),退出动画播得出来。 */}
-      <Show when={section() === "messages" && !isStartup() && activeTab() != null}>
-        <WorkspacePanel store={activeTab()!.store} drawer={appCols() < 3} drawerOpen={railDrawerOpen()} manualOpen={railManual()} onManualToggle={setRailManual} />
       </Show>
       {/* 抽屉遮罩:盖 body 行,点击关闭;TopBar 不被盖住(关闭入口常在)。
           常驻 DOM 只切 .open:开合都有淡入淡出,不用 Show 硬切。 */}

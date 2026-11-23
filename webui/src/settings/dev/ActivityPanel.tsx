@@ -1,12 +1,5 @@
 /**
  * 活动状态面板:纯读前端 store,不碰后端。
- *
- * 这块数据本来就因为渲染而响应式更新(连接态、水位、回合计数都在 `SessionStore`
- * 的信号上),控制台只是把平时不显示的那半张脸露出来——所以它免费、实时,而且不会
- * 因为观察而改变被观察的东西。
- *
- * `SessionStore` 的每个信号字段存的是 `createSignal` 的**元组**(App.tsx:268 同
- * 一路数),读一律 `store.connection[0]()`,这里不另造访问器。
  */
 import { For, Show, createMemo, type Component } from "solid-js";
 import { activeId, activeTab, tabs } from "../../tabs/store";
@@ -16,44 +9,35 @@ const num = (value: number | null | undefined): string => (value == null ? "—"
 const pct = (value: number | null): string => (value == null ? "—" : `${value.toFixed(1)}%`);
 const shortId = (value: string): string => (value.length > 12 ? value.slice(0, 10) : value);
 
-/** 单个 store 的读数;非活动标签也照读,多标签状态对拍就靠这个。 */
+const connPill = (value: string): string => {
+  if (value === "live") return "dev-pill is-ok";
+  if (value === "reconnecting" || value === "connecting") return "dev-pill is-warn";
+  if (value === "closed") return "dev-pill is-err";
+  return "dev-pill";
+};
+
 const StoreRows: Component<{ store: SessionStore }> = (props) => {
   const state = () => props.store.state[0];
   const metrics = () => props.store.composerMetrics[0]();
   return (
-    <div class="readonly-grid">
-      <span>seed</span>
-      <b>{props.store.seed}</b>
-      <span>标题</span>
-      <b>{props.store.title[0]() ?? "—"}</b>
-      <span>connection</span>
-      <b>{props.store.connection[0]()}</b>
-      <span>activity</span>
-      <b>{props.store.activity[0]() ?? "—"}</b>
-      <span>回合(总/运行/失败)</span>
-      <b>{state().totalTurns} / {state().runningTurns} / {state().failedTurns}</b>
-      <span>serverEpoch</span>
-      <b>{state().serverEpoch ?? "—"}</b>
-      <span>oldestIndex</span>
-      <b>{num(state().oldestIndex)}</b>
-      <span>slots / structureVersion</span>
-      <b>{state().slots.length} / {state().structureVersion}</b>
-      <span>hasMore / truncatedBefore</span>
-      <b>{String(state().hasMore)} / {String(state().truncatedBefore)}</b>
-      <span>activeTurnKey</span>
-      <b>{state().activeTurnKey ?? "—"}</b>
-      <span>waits</span>
-      <b>{state().waits.length}</b>
-      <span>待授权 / todo</span>
-      <b>{props.store.pending[0]().length} / {props.store.todos[0]().length}</b>
-      <span>contextPercent</span>
-      <b>{pct(metrics().contextPercent)}</b>
-      <span>cacheHitPercent</span>
-      <b>{pct(metrics().cacheHitPercent)}</b>
-      <span>usage extras</span>
-      <b>{Object.keys(metrics().extras).length === 0 ? "—" : Object.entries(metrics().extras).map(([key, value]) => `${key}=${value}`).join(" ")}</b>
-      <span>loadError / hasNewReply</span>
-      <b>{String(props.store.loadError[0]())} / {String(props.store.hasNewReply[0]())}</b>
+    <div class="dev-kv-grid">
+      <div class="dev-kv"><span>seed</span><b>{props.store.seed}</b></div>
+      <div class="dev-kv"><span>标题</span><b>{props.store.title[0]() ?? "—"}</b></div>
+      <div class="dev-kv"><span>connection</span><b class={connPill(props.store.connection[0]())}>{props.store.connection[0]()}</b></div>
+      <div class="dev-kv"><span>activity</span><b>{props.store.activity[0]() ?? "—"}</b></div>
+      <div class="dev-kv"><span>回合 (总/运行/失败)</span><b>{state().totalTurns} / {state().runningTurns} / {state().failedTurns}</b></div>
+      <div class="dev-kv"><span>serverEpoch</span><b>{state().serverEpoch ?? "—"}</b></div>
+      <div class="dev-kv"><span>oldestIndex</span><b>{num(state().oldestIndex)}</b></div>
+      <div class="dev-kv"><span>slots / version</span><b>{state().slots.length} / {state().structureVersion}</b></div>
+      <div class="dev-kv"><span>hasMore / truncated</span><b>{String(state().hasMore)} / {String(state().truncatedBefore)}</b></div>
+      <div class="dev-kv"><span>activeTurnKey</span><b>{state().activeTurnKey ?? "—"}</b></div>
+      <div class="dev-kv"><span>waits / 待授权 / todo</span><b>{state().waits.length} / {props.store.pending[0]().length} / {props.store.todos[0]().length}</b></div>
+      <div class="dev-kv"><span>context / cache</span><b>{pct(metrics().contextPercent)} / {pct(metrics().cacheHitPercent)}</b></div>
+      <div class="dev-kv">
+        <span>usage extras</span>
+        <b>{Object.keys(metrics().extras).length === 0 ? "—" : Object.entries(metrics().extras).map(([k, v]) => `${k}=${v}`).join(" ")}</b>
+      </div>
+      <div class="dev-kv"><span>loadError / hasNewReply</span><b>{String(props.store.loadError[0]())} / {String(props.store.hasNewReply[0]())}</b></div>
     </div>
   );
 };
@@ -62,38 +46,58 @@ export const ActivityPanel: Component = () => {
   const tab = createMemo(() => activeTab());
   return (
     <div class="dev-panel">
-      <Show when={tab()} fallback={<p class="dev-muted">没有活动标签:先开一个会话再看这块。</p>}>
-        {(current) => (
-          <>
-            <h4 class="dev-sub">活动标签({shortId(current().id)})</h4>
-            <StoreRows store={current().store} />
-          </>
-        )}
-      </Show>
+      <div class="dev-card">
+        <div class="dev-card-head">
+          <h4 class="dev-card-title">
+            当前活动标签
+            <Show when={tab()}>{(current) => <span class="dev-muted"> · {shortId(current().id)}</span>}</Show>
+          </h4>
+        </div>
+        <div class="dev-card-body">
+          <Show when={tab()} fallback={<p class="dev-muted">当前没有活动标签。</p>}>
+            {(current) => <StoreRows store={current().store} />}
+          </Show>
+        </div>
+      </div>
 
-      <h4 class="dev-sub">全部标签({tabs().length},activeId {shortId(activeId() ?? "—")})</h4>
-      <Show when={tabs().length > 0} fallback={<p class="dev-muted">当前没有打开的标签。</p>}>
-        <table class="readonly-table">
-          <thead>
-            <tr><th>标签</th><th>seed</th><th>connection</th><th>activity</th><th>回合</th><th>待授权</th><th>水位</th></tr>
-          </thead>
-          <tbody>
-            <For each={tabs()} keyed={(entry) => entry.id}>
-              {(entry) => (
+      <div class="dev-card">
+        <div class="dev-card-head">
+          <h4 class="dev-card-title">全部标签</h4>
+          <span class="dev-muted">{tabs().length} 个 · active {shortId(activeId() ?? "—")}</span>
+        </div>
+        <Show when={tabs().length > 0} fallback={<div class="dev-card-body"><p class="dev-muted">暂无打开的标签。</p></div>}>
+          <div class="dev-table-wrap">
+            <table class="dev-table">
+              <thead>
                 <tr>
-                  <td>{entry().id === activeId() ? "★ " : ""}{shortId(entry().id)}</td>
-                  <td title={entry().seed}>{shortId(entry().seed)}</td>
-                  <td>{entry().store.connection[0]()}</td>
-                  <td>{entry().store.activity[0]() ?? "—"}</td>
-                  <td>{entry().store.state[0].totalTurns}</td>
-                  <td>{entry().store.pending[0]().length}</td>
-                  <td>{entry().store.state[0].structureVersion}</td>
+                  <th>标签</th>
+                  <th>seed</th>
+                  <th>连接</th>
+                  <th>状态</th>
+                  <th class="num">回合</th>
+                  <th class="num">待授权</th>
+                  <th class="num">水位</th>
                 </tr>
-              )}
-            </For>
-          </tbody>
-        </table>
-      </Show>
+              </thead>
+              <tbody>
+                <For each={tabs()} keyed={(entry) => entry.id}>
+                  {(entry) => (
+                    <tr>
+                      <td class="mono">{entry().id === activeId() ? "● " : ""}{shortId(entry().id)}</td>
+                      <td class="mono" title={entry().seed}>{shortId(entry().seed)}</td>
+                      <td><span class={connPill(entry().store.connection[0]())}>{entry().store.connection[0]()}</span></td>
+                      <td class="mono">{entry().store.activity[0]() ?? "—"}</td>
+                      <td class="num">{entry().store.state[0].totalTurns}</td>
+                      <td class="num">{entry().store.pending[0]().length}</td>
+                      <td class="num">{entry().store.state[0].structureVersion}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        </Show>
+      </div>
     </div>
   );
 };

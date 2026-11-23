@@ -1,23 +1,61 @@
 /**
- * 「本机」内存面:壳进程 + 渲染层自己。daemon 那一行仍走 `memwatch.ts` 的 RPC。
- *
- * 为什么壳要单独读:桌面端一共三个进程,daemon 的 `diagnostics.memory` 只看得见
- * daemon 自己。普通用户问的「这软件吃不吃内存」,答案大头其实在 Electron 主进程
- * 和 Chromium 子进程组上。壳侧读取 `process.memoryUsage()`,DTO 与 daemon 同形,
- * 前端一张表能拼两行——见 `qaqh-electron/src/main/ipc-handlers.ts::host_memory`。
- *
- * 子进程组由 Electron `app.getAppMetrics()` 提供,按 Electron 自己认领的进程角色
- * 聚合;读不到的成员会进 `excluded`,不静默漏加。
+ * 「本机」遥测面:壳进程 + 界面进程组 + 宿主机水位 + 渲染层自身。
+ * daemon 内存仍走 `memwatch.ts` 的 RPC。
  */
 import { invoke } from "./host";
+import { desktopHost } from "./desktop-host";
 import { isDesktopRuntime } from "./transport";
 import type { ProcessMemory } from "./memwatch";
+
+export interface HostProcessMemory extends ProcessMemory {
+  pid?: number | null;
+  cpu_percent?: number | null;
+  idle_wakeups?: number | null;
+  creation_time?: number | null;
+}
+
+export interface HostTelemetry {
+  systemMemory: {
+    totalBytes: number;
+    freeBytes: number;
+    swapTotalBytes: number | null;
+    swapFreeBytes: number | null;
+  };
+  eventLoop: {
+    p50Ms: number | null;
+    p95Ms: number | null;
+    maxMs: number | null;
+  };
+  cpuCores: number;
+  uptimeSec: number;
+}
+
+export interface HostRuntimeInfo {
+  appVersion: string;
+  electron: string;
+  chrome: string;
+  node: string;
+  v8: string;
+  platform: string;
+  arch: string;
+  osRelease: string;
+  cpuCores: number;
+  display: {
+    width: number;
+    height: number;
+    scaleFactor: number;
+    refreshRate: number;
+  };
+  logDir: string;
+}
 
 /** 渲染层自报的数字;`performance.memory` 只有 Chromium 渲染进程有。 */
 export interface RendererMemory {
   usedJsHeapBytes: number | null;
   totalJsHeapBytes: number | null;
   jsHeapLimitBytes: number | null;
+  blinkAllocatedBytes: number | null;
+  blinkTotalBytes: number | null;
   /** 主文档元素节点数(不含 Shadow DOM 内部与跨域 iframe)。 */
   domNodes: number;
   childFrames: number;
@@ -26,29 +64,36 @@ export interface RendererMemory {
 export interface MachineProcessRow {
   id: "shell" | "daemon";
   label: string;
+  pid: number | null;
   resident: number | null;
   private: number | null;
   peak: number | null;
+  cpuPercent: number | null;
+  idleWakeups: number | null;
   source: string;
 }
 
 export interface MachineMemoryView {
   rows: MachineProcessRow[];
-  /** 界面进程组按角色聚合;Windows 上有数,其他平台是空 + excluded 里说明。 */
   group: GroupRow[];
   renderer: RendererMemory | null;
-  /** 已覆盖部分之和;一个数都没有时为 null(而不是冒充 0 B)。 */
   totalBytes: number | null;
-  /** 没算进合计的部分,UI 要跟着说清口径。 */
+  totalCpuPercent: number | null;
+  totalIdleWakeups: number | null;
   excluded: string[];
 }
 
-/** `procgroup.rs::GroupMember` 的镜像(serde 字段是 snake_case)。 */
 export interface ProcessGroupMember {
   pid: number;
   kind: string;
+  name?: string | null;
   resident_bytes: number | null;
   private_bytes: number | null;
+  peak_resident_bytes?: number | null;
+  cpu_percent?: number | null;
+  idle_wakeups?: number | null;
+  creation_time?: number | null;
+  sandboxed?: boolean | null;
   error: string | null;
 }
 
@@ -62,33 +107,45 @@ export interface GroupRow {
   kind: string;
   label: string;
   count: number;
+  pids: number[];
   resident: number | null;
   private: number | null;
-  /** 这个角色里读不到字节量的进程数(权限/沙箱),不能悄悄少加。 */
+  peak: number | null;
+  cpuPercent: number | null;
+  idleWakeups: number | null;
   failed: number;
 }
 
-/** 角色标签来自引擎自己认领的 Kind,不是我们按进程名猜的。 */
 const KIND_LABEL: Record<string, string> = {
-  browser: "browser(Chromium 主进程)",
-  renderer: "renderer(页面)",
-  gpu: "gpu",
-  utility: "utility",
-  network: "network(网络进程)",
-  zygote: "zygote(共享 fork 页)",
-  sandbox_helper: "sandbox_helper",
-  ppapi_plugin: "ppapi_plugin",
-  ppapi_broker: "ppapi_broker",
-  other: "other(其他子进程)",
-  unknown: "unknown",
+  browser: "Browser",
+  renderer: "Renderer",
+  gpu: "GPU",
+  utility: "Utility",
+  network: "Network",
+  zygote: "Zygote",
+  sandbox_helper: "Sandbox Helper",
+  ppapi_plugin: "PPAPI Plugin",
+  ppapi_broker: "PPAPI Broker",
+  other: "Other",
+  unknown: "Unknown",
 };
 
-/** Linux zygote/sandbox helper 的页与子进程 fork 共享;计入合计会把 renderer 的私有页重复算一遍。 */
 const SHARED_PAGE_KINDS = new Set(["zygote", "sandbox_helper"]);
 
-/** 壳未提供该命令(旧壳 / 非 Electron)时返回 null。 */
 export const loadProcessGroup = (): Promise<ProcessGroup | null> =>
   isDesktopRuntime() ? invoke<ProcessGroup | null>("host_process_group") : Promise.resolve(null);
+
+export const loadHostTelemetry = (): Promise<HostTelemetry | null> =>
+  isDesktopRuntime() ? invoke<HostTelemetry | null>("host_telemetry") : Promise.resolve(null);
+
+export const stopHostTelemetry = (): Promise<void> =>
+  isDesktopRuntime() ? invoke("host_telemetry_stop").then(() => undefined, () => undefined) : Promise.resolve();
+
+export const loadHostRuntimeInfo = (): Promise<HostRuntimeInfo | null> =>
+  isDesktopRuntime() ? invoke<HostRuntimeInfo | null>("host_runtime_info") : Promise.resolve(null);
+
+export const openHostLogs = (): Promise<{ ok: boolean; error: string | null } | null> =>
+  isDesktopRuntime() ? invoke<{ ok: boolean; error: string | null }>("host_open_logs") : Promise.resolve(null);
 
 /** 按角色聚合;保持首次出现的顺序,免得每秒重排一次表格。 */
 export function groupRowsByKind(group: ProcessGroup | null): GroupRow[] {
@@ -99,29 +156,33 @@ export function groupRowsByKind(group: ProcessGroup | null): GroupRow[] {
       kind: member.kind,
       label: KIND_LABEL[member.kind] ?? member.kind,
       count: 0,
+      pids: [],
       resident: null,
       private: null,
+      peak: null,
+      cpuPercent: null,
+      idleWakeups: null,
       failed: 0,
     };
     row.count += 1;
-    // 「读不到」只看 resident:mac 那一档根本没有 private 口径(见 procgroup.rs),
-    // 拿它参与判定会把每个 mac 成员都标成失败。
+    row.pids.push(member.pid);
     if (member.resident_bytes == null) row.failed += 1;
     if (member.resident_bytes != null) row.resident = (row.resident ?? 0) + member.resident_bytes;
     if (member.private_bytes != null) row.private = (row.private ?? 0) + member.private_bytes;
+    if (member.peak_resident_bytes != null) row.peak = (row.peak ?? 0) + member.peak_resident_bytes;
+    if (member.cpu_percent != null) row.cpuPercent = (row.cpuPercent ?? 0) + member.cpu_percent;
+    if (member.idle_wakeups != null) row.idleWakeups = (row.idleWakeups ?? 0) + member.idle_wakeups;
     byKind.set(member.kind, row);
   }
   return [...byKind.values()];
 }
 
-/** 壳未提供该命令(纯浏览器 / 旧壳)时返回 null,由面板显式缺。 */
-export async function loadHostMemory(): Promise<ProcessMemory | null> {
+export async function loadHostMemory(): Promise<HostProcessMemory | null> {
   if (!isDesktopRuntime()) return null;
-  const value = await invoke<ProcessMemory | null>("host_memory");
+  const value = await invoke<HostProcessMemory | null>("host_memory");
   return value == null ? null : value;
 }
 
-/** Chromium 的非标准面;TS 的 DOM lib 里没有,所以按 unknown 收窄而不写断言。 */
 interface MemoryInfoLike {
   usedJSHeapSize?: unknown;
   totalJSHeapSize?: unknown;
@@ -131,106 +192,109 @@ interface MemoryInfoLike {
 const finiteOrNull = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 
-/** 上限报 0 是 Chromium 在非隔离环境下「不给」的写法,不是真的 0 字节上限。 */
 const positiveOrNull = (value: unknown): number | null => {
   const parsed = finiteOrNull(value);
   return parsed == null || parsed === 0 ? null : parsed;
 };
 
-/**
- * 纯函数:把「带 memory 的对象 + 已经数好的节点/框架数」折算成 RendererMemory。
- * 传进来的是替身,所以单测能覆盖 WKWebView(没有 memory)和上限为 0 的降级态。
- */
 export function readRendererMemory(
   perf: { memory?: MemoryInfoLike },
   domNodes: number,
   childFrames: number,
+  blink?: { allocated?: unknown; total?: unknown } | null,
 ): RendererMemory {
   const info = perf.memory ?? {};
+  const blinkAlloc = finiteOrNull(blink?.allocated);
+  const blinkTotal = finiteOrNull(blink?.total);
   return {
     usedJsHeapBytes: finiteOrNull(info.usedJSHeapSize),
     totalJsHeapBytes: finiteOrNull(info.totalJSHeapSize),
-    // 非隔离环境下 Chromium 会把上限报成 0——那不是「上限是 0」,是没给。
     jsHeapLimitBytes: positiveOrNull(info.jsHeapSizeLimit),
+    blinkAllocatedBytes: blinkAlloc != null ? blinkAlloc * 1024 : null,
+    blinkTotalBytes: blinkTotal != null ? blinkTotal * 1024 : null,
     domNodes,
     childFrames,
   };
 }
 
-/** 读实时 DOM 规模。`getElementsByTagName("*")` 只走主文档,Shadow DOM 不在内。 */
 export function captureRendererMemory(): RendererMemory {
   if (typeof document === "undefined" || typeof performance === "undefined") {
-    return readRendererMemory({}, 0, 0);
+    return readRendererMemory({}, 0, 0, null);
   }
   const frames = window?.frames?.length ?? 0;
+  let blink: { allocated: number; total: number } | null = null;
+  try {
+    blink = desktopHost()?.devtools?.blinkMemory?.() ?? null;
+  } catch {}
   return readRendererMemory(
     performance as Performance & { memory?: MemoryInfoLike },
     document.getElementsByTagName("*").length,
     frames,
+    blink,
   );
 }
 
-const rowOf = (id: MachineProcessRow["id"], label: string, process: ProcessMemory | null): MachineProcessRow | null => {
-  if (process == null) return null;
+const rowOf = (
+  id: MachineProcessRow["id"],
+  label: string,
+  proc: HostProcessMemory | null,
+): MachineProcessRow | null => {
+  if (proc == null) return null;
   return {
     id,
     label,
-    resident: process.resident_bytes,
-    private: process.private_bytes,
-    peak: process.peak_resident_bytes,
-    source: process.source,
+    pid: proc.pid ?? null,
+    resident: proc.resident_bytes,
+    private: proc.private_bytes,
+    peak: proc.peak_resident_bytes,
+    cpuPercent: proc.cpu_percent ?? null,
+    idleWakeups: proc.idle_wakeups ?? null,
+    source: proc.source,
   };
 };
 
-/**
- * 合计口径:壳 resident + daemon resident + 界面进程组 resident + 页面已用 JS 堆。
- *
- * 三者不是同一种量(前两个是工作集,第三个是堆内已用),相加只为给一个可比的
- * 数量级——所以**读不到的那一块也要进 `excluded`**,让 UI 把话说全,而不是悄悄少加
- * 一个数还照样显示合计。
- *
- * 界面进程组与壳/daemon 不会重复计数:那是 Electron/Chromium 自己起的子进程
- * (browser/renderer/gpu),既不是壳也不是 sidecar。
- */
 export function summarizeMachineMemory(
-  host: ProcessMemory | null,
+  host: HostProcessMemory | null,
   daemon: ProcessMemory | null,
   renderer: RendererMemory | null,
   group: ProcessGroup | null,
 ): MachineMemoryView {
   const rows: MachineProcessRow[] = [];
   const excluded: string[] = [];
-  for (const [id, label, process] of [["shell", "Electron 主进程", host], ["daemon", "daemon 进程", daemon]] as const) {
-    const entry = rowOf(id, label, process);
+  for (const [id, label, proc] of [
+    ["shell", "Electron 主进程", host],
+    ["daemon", "daemon 进程", daemon],
+  ] as const) {
+    const entry = rowOf(id, label, proc);
     if (entry == null) excluded.push(`${label}(未读到)`);
     else rows.push(entry);
   }
   const parts: number[] = [];
+  const cpuParts: number[] = [];
+  const wakeupParts: number[] = [];
   for (const entry of rows) {
     if (entry.resident != null) parts.push(entry.resident);
     else excluded.push(`${entry.label} 的 resident 缺测`);
+    if (entry.cpuPercent != null) cpuParts.push(entry.cpuPercent);
+    if (entry.idleWakeups != null) wakeupParts.push(entry.idleWakeups);
   }
   const groupRows = groupRowsByKind(group);
   for (const entry of groupRows) {
     if (SHARED_PAGE_KINDS.has(entry.kind)) {
-      // 共享页不进合计,但要说话:面板上仍然展示这一行,只是不计入。
-      if (entry.resident != null) excluded.push(`${entry.label} ${entry.count} 个(与子进程共享 fork 页,不计入合计)`);
+      if (entry.resident != null) excluded.push(`${entry.label} ${entry.count} 个(共享 fork 页)`);
       continue;
     }
     if (entry.resident != null) parts.push(entry.resident);
+    if (entry.cpuPercent != null) cpuParts.push(entry.cpuPercent);
+    if (entry.idleWakeups != null) wakeupParts.push(entry.idleWakeups);
     if (entry.failed > 0) excluded.push(`${entry.label} 有 ${entry.failed} 个进程读不到`);
   }
   if (group == null) excluded.push("界面进程组(壳未提供)");
   else if (group.source === "unsupported") excluded.push(`界面进程组(${group.error ?? "本平台未实现"})`);
-  // 空列表和「不支持」是两件事:mac 上如果 WKWebView 的 helper 不是我们的直接子进程,
-  // 枚举会成功但一条都没有——不写出来的话,合计看起来就像「界面组本来就是 0」。
-  else if (group.members.length === 0) excluded.push("界面进程组(枚举到 0 个子进程)");
+  else if (group.members.length === 0) excluded.push("界面进程组(0 个子进程)");
   if (renderer?.usedJsHeapBytes != null) {
-    // JS 堆包含在 renderer 进程的工作集里:进程组读到了 renderer 就不再重复加,
-    // 否则同一个字节被数两遍(合计虚高一个堆的量)。纯浏览器(无进程组)时它仍是
-    // 渲染侧唯一读数,照常计入。
     const rendererCountedInGroup = groupRows.some((row) => row.kind === "renderer" && row.resident != null);
-    if (rendererCountedInGroup) excluded.push("页面 JS 堆(已含在 renderer 工作集,不重复计入)");
+    if (rendererCountedInGroup) excluded.push("页面 JS 堆(已含在 Renderer 工作集)");
     else parts.push(renderer.usedJsHeapBytes);
   } else {
     excluded.push("页面 JS 堆");
@@ -240,6 +304,8 @@ export function summarizeMachineMemory(
     group: groupRows,
     renderer,
     totalBytes: parts.length > 0 ? parts.reduce((sum, value) => sum + value, 0) : null,
+    totalCpuPercent: cpuParts.length > 0 ? cpuParts.reduce((sum, value) => sum + value, 0) : null,
+    totalIdleWakeups: wakeupParts.length > 0 ? wakeupParts.reduce((sum, value) => sum + value, 0) : null,
     excluded,
   };
 }

@@ -1,8 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, shell, type MenuItemConstructorOptions } from "electron";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { release as osRelease } from "node:os";
+import { cpus, release as osRelease } from "node:os";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { readDiscovery, DaemonManager } from "./daemon.js";
 import { globalCommandTarget, loadNativeAddon, sessionCommandTarget } from "./native-client.js";
 import { isAlive } from "./daemon.js";
@@ -26,7 +27,7 @@ import {
   openExternalUrl,
   uploadAttachment,
 } from "./native-dialogs.js";
-import { processGroup } from "./process-metrics.js";
+import { mainProcessMetrics, processGroup } from "./process-metrics.js";
 import { readGpuStatus } from "./gpu-info.js";
 import { putWidgetState, readWidgetStates } from "./widget-states.js";
 import { voice } from "./voice/manager.js";
@@ -37,6 +38,20 @@ import type { BrowserPaneControl, PaneRect } from "./browser-host/engine.js";
 const DEFAULT_LAN_PORT = 64413;
 const RESTART_TIMEOUT_MS = 20_000;
 const restartLock = { held: false };
+let elHistogram: ReturnType<typeof monitorEventLoopDelay> | null = null;
+function ensureEventLoopMonitor(): ReturnType<typeof monitorEventLoopDelay> {
+  if (!elHistogram) {
+    elHistogram = monitorEventLoopDelay({ resolution: 20 });
+    elHistogram.enable();
+  }
+  return elHistogram;
+}
+function stopEventLoopMonitor(): void {
+  if (elHistogram) {
+    elHistogram.disable();
+    elHistogram = null;
+  }
+}
 
 /** createMainWindow 在 win32 上无条件设了透明底色 + mica 请求；不支持材质或
  *  调用失败时必须主动撤掉，否则 DWM 不画 backdrop，窗口会整块透出桌面
@@ -604,11 +619,10 @@ async function handleCommand(
 
     case "host_memory": {
       const usage = process.memoryUsage();
-      // Linux 的 procfs 自带进程全生命周期峰值(VmHWM,单位 kB),把一直缺测的
-      // peak 补上;其他平台没有等价读数,保持 null 缺测,不冒充 0。
-      let peak: number | null = null;
-      let source = "node:process.memoryUsage.rss";
-      if (process.platform === "linux") {
+      const mainMetric = mainProcessMetrics(app.getAppMetrics(), process.pid);
+      let peak: number | null = mainMetric?.peak_resident_bytes ?? null;
+      let source = mainMetric ? "electron.app.getAppMetrics + node:process.memoryUsage" : "node:process.memoryUsage.rss";
+      if (peak == null && process.platform === "linux") {
         try {
           const status = await readFile("/proc/self/status", "utf8");
           const hwmKb = Number(/^VmHWM:\s+(\d+)\s+kB$/m.exec(status)?.[1]);
@@ -618,7 +632,18 @@ async function handleCommand(
           }
         } catch {}
       }
-      return { resident_bytes: usage.rss, private_bytes: null, virtual_bytes: null, peak_resident_bytes: peak, source, error: null };
+      return {
+        pid: process.pid,
+        resident_bytes: mainMetric?.resident_bytes ?? usage.rss,
+        private_bytes: mainMetric?.private_bytes ?? null,
+        virtual_bytes: null,
+        peak_resident_bytes: peak,
+        cpu_percent: mainMetric?.cpu_percent ?? null,
+        idle_wakeups: mainMetric?.idle_wakeups ?? null,
+        creation_time: mainMetric?.creation_time ?? null,
+        source,
+        error: null,
+      };
     }
 
     case "host_process_group": {
@@ -626,18 +651,69 @@ async function handleCommand(
     }
 
     case "host_gpu_info": {
-      // GPU 后端探针:软渲染时 CSS 层面的省电优化收效有限,面板与 auto 性能档
-      // 都需要这个事实(src/main/gpu-info.ts)。读不出就如实报错,不猜。
       try {
-        return readGpuStatus(await app.getGPUInfo("complete"));
+        return readGpuStatus(await app.getGPUInfo("complete"), app.getGPUFeatureStatus() as unknown as Record<string, unknown>);
       } catch (cause) {
         return {
-          compositing: null, softwareRendering: null, software: null, vendor: null, renderer: null,
+          compositing: null, rasterization: null, canvas2d: null, webgl: null, videoDecode: null,
+          softwareRendering: null, software: null, vendor: null, renderer: null, driverVersion: null,
           source: "electron.app.getGPUInfo", error: cause instanceof Error ? cause.message : String(cause),
         };
       }
     }
 
+    case "host_telemetry": {
+      const sys = process.getSystemMemoryInfo();
+      const hist = ensureEventLoopMonitor();
+      const nsToMs = (ns: number): number | null => (Number.isFinite(ns) && ns >= 0 ? Math.round((ns / 1e6) * 10) / 10 : null);
+      const p50Ms = hist.count > 0 ? nsToMs(hist.percentile(50)) : null;
+      const p95Ms = hist.count > 0 ? nsToMs(hist.percentile(95)) : null;
+      const maxMs = hist.count > 0 ? nsToMs(hist.max) : null;
+      hist.reset();
+      return {
+        systemMemory: {
+          totalBytes: sys.total * 1024,
+          freeBytes: sys.free * 1024,
+          swapTotalBytes: typeof sys.swapTotal === "number" ? sys.swapTotal * 1024 : null,
+          swapFreeBytes: typeof sys.swapFree === "number" ? sys.swapFree * 1024 : null,
+        },
+        eventLoop: { p50Ms, p95Ms, maxMs },
+        cpuCores: cpus().length,
+        uptimeSec: Math.floor(process.uptime()),
+      };
+    }
+
+    case "host_telemetry_stop": {
+      stopEventLoopMonitor();
+      return { stopped: true };
+    }
+
+    case "host_runtime_info": {
+      const primary = screen.getPrimaryDisplay();
+      return {
+        appVersion: app.getVersion(),
+        electron: process.versions.electron,
+        chrome: process.versions.chrome,
+        node: process.versions.node,
+        v8: process.versions.v8,
+        platform: process.platform,
+        arch: process.arch,
+        osRelease: osRelease(),
+        cpuCores: cpus().length,
+        display: {
+          width: primary.size.width,
+          height: primary.size.height,
+          scaleFactor: primary.scaleFactor,
+          refreshRate: primary.displayFrequency,
+        },
+        logDir: app.getPath("logs"),
+      };
+    }
+
+    case "host_open_logs": {
+      const err = await shell.openPath(app.getPath("logs"));
+      return { ok: err === "", error: err || null };
+    }
     case "pairing_create": {
       const discovery = await readDiscovery();
       if (!discovery?.lan_endpoint) throw new Error("daemon 当前未开启局域网模式；请先开启 LAN 模式");

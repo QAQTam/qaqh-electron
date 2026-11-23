@@ -1,24 +1,51 @@
 /**
- * 「本机」面板:壳进程 + 界面进程组 + daemon + 页面自身,各占多少一次看全。
- *
- * 四路数据各自的脾气不一样,所以分开兜,任何一路失败都只少它那一行:
- *  - `host_memory` 是 Electron 壳命令,旧壳/纯浏览器里没有 → 少一行。
- *  - `host_process_group` 走 Electron `app.getAppMetrics()`,按进程角色聚合;
- *    拿不到成员时由 `excluded` 说明口径。
- *  - daemon 那一行走 `diagnostics.memory.snapshot`,要求 admin scope;这里只读
- *    `process` 字段,**不 start**——采集开关仍归「内存」面板管。
- *  - 页面数字来自 `performance.memory`(Chromium 渲染进程)+ DOM 规模。
+ * 「本机」遥测面板:总览 KPI + 内存占比条 + 进程/子进程组(含 CPU/唤醒率) + GPU 特性 + 渲染层。
  */
-import { For, Show, createSignal, onCleanup, type Component } from "solid-js";
-import { formatBytes, formatClock, errorTextOf, isScopeError, loadMemorySnapshot, MEMORY_POLL_MS } from "../../lib/memwatch";
-import { captureRendererMemory, loadHostMemory, loadProcessGroup, summarizeMachineMemory, type MachineMemoryView } from "../../lib/hostmem";
+import { For, Show, createMemo, createSignal, onCleanup, type Component } from "solid-js";
+import IconCopy from "~icons/lucide/copy";
+import IconPause from "~icons/lucide/pause";
+import IconPlay from "~icons/lucide/play";
+import {
+  formatBytes,
+  formatClock,
+  errorTextOf,
+  isScopeError,
+  loadMemorySnapshot,
+  MEMORY_POLL_MS,
+} from "../../lib/memwatch";
+import {
+  captureRendererMemory,
+  loadHostMemory,
+  loadHostTelemetry,
+  loadProcessGroup,
+  stopHostTelemetry,
+  summarizeMachineMemory,
+  type HostTelemetry,
+  type MachineMemoryView,
+} from "../../lib/hostmem";
 import { loadGpuStatus, type GpuStatus } from "../../lib/gpu";
+
+const BAR_COLORS = ["#18181b", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#9ca3af"];
+
+const fmtPct = (value: number | null): string => (value == null ? "—" : `${value.toFixed(1)}%`);
+const fmtNum = (value: number | null): string => (value == null ? "—" : String(Math.round(value)));
+const fmtMs = (value: number | null): string => (value == null ? "—" : `${value.toFixed(1)} ms`);
+
+const featureTone = (value: string | null): string => {
+  if (!value) return "dev-pill";
+  const lower = value.toLowerCase();
+  if (lower.startsWith("enabled")) return "dev-pill is-ok";
+  if (lower.includes("software") || lower.startsWith("disabled")) return "dev-pill is-warn";
+  return "dev-pill";
+};
+
 export const MachinePanel: Component = () => {
   const [view, setView] = createSignal<MachineMemoryView | null>(null);
+  const [telemetry, setTelemetry] = createSignal<HostTelemetry | null>(null);
   const [note, setNote] = createSignal<string | null>(null);
   const [at, setAt] = createSignal(0);
   const [paused, setPaused] = createSignal(false);
-  // GPU 后端在会话期内不会变,探一次就够;失败只少这一块,不影响内存采样。
+  const [copied, setCopied] = createSignal(false);
   const [gpu, setGpu] = createSignal<GpuStatus | null>(null);
   let stopped = false;
   let timer = 0;
@@ -29,31 +56,25 @@ export const MachinePanel: Component = () => {
 
   const tick = async (): Promise<void> => {
     const notes: string[] = [];
-    let host = null as Awaited<ReturnType<typeof loadHostMemory>>;
-    try {
-      host = await loadHostMemory();
-    } catch (cause) {
-      notes.push(`壳未提供 host_memory(${errorTextOf(cause)})`);
-    }
-    let daemon = null as Awaited<ReturnType<typeof loadMemorySnapshot>>["process"] | null;
-    try {
-      daemon = (await loadMemorySnapshot()).process;
-    } catch (cause) {
-      notes.push(isScopeError(cause) ? "daemon 内存读数要求 admin scope" : `daemon 快照失败(${errorTextOf(cause)})`);
-    }
-    let group = null as Awaited<ReturnType<typeof loadProcessGroup>>;
-    try {
-      group = await loadProcessGroup();
-    } catch (cause) {
-      notes.push(`壳未提供 host_process_group(${errorTextOf(cause)})`);
-    }
+    const [hostRes, daemonRes, groupRes, telRes] = await Promise.allSettled([
+      loadHostMemory(),
+      loadMemorySnapshot(),
+      loadProcessGroup(),
+      loadHostTelemetry(),
+    ]);
+    const host = hostRes.status === "fulfilled" ? hostRes.value : (notes.push(`host_memory: ${errorTextOf(hostRes.reason)}`), null);
+    const daemon = daemonRes.status === "fulfilled"
+      ? daemonRes.value.process
+      : (notes.push(isScopeError(daemonRes.reason) ? "daemon 内存需要 admin scope" : `daemon: ${errorTextOf(daemonRes.reason)}`), null);
+    const group = groupRes.status === "fulfilled" ? groupRes.value : (notes.push(`host_process_group: ${errorTextOf(groupRes.reason)}`), null);
+    const tel = telRes.status === "fulfilled" ? telRes.value : null;
     if (stopped) return;
     setView(summarizeMachineMemory(host, daemon, captureRendererMemory(), group));
+    setTelemetry(tel);
     setAt(Date.now());
     setNote(notes.length > 0 ? notes.join(" · ") : null);
   };
 
-  // 组件体只跑一次,当作挂载钩子用(与 MemoryPanel 同一写法)。
   void tick().then(() => {
     if (stopped) return;
     timer = window.setInterval(() => {
@@ -64,134 +85,298 @@ export const MachinePanel: Component = () => {
   onCleanup(() => {
     stopped = true;
     window.clearInterval(timer);
+    void stopHostTelemetry();
   });
 
-  const segment = (label: string, bytes: number | null): string => `${label} ${formatBytes(bytes)}`;
+  const barSegments = createMemo(() => {
+    const current = view();
+    if (!current || !current.totalBytes || current.totalBytes <= 0) return [];
+    const items: Array<{ label: string; bytes: number }> = [];
+    for (const row of current.rows) {
+      if (row.resident && row.resident > 0) items.push({ label: row.label, bytes: row.resident });
+    }
+    for (const g of current.group) {
+      if (g.kind === "zygote" || g.kind === "sandbox_helper") continue;
+      if (g.resident && g.resident > 0) items.push({ label: g.label, bytes: g.resident });
+    }
+    const total = items.reduce((s, x) => s + x.bytes, 0) || 1;
+    return items.map((item, idx) => ({
+      ...item,
+      pct: Math.max(1.5, (item.bytes / total) * 100),
+      color: BAR_COLORS[idx % BAR_COLORS.length],
+    }));
+  });
+
+  const sysMemShare = createMemo(() => {
+    const total = view()?.totalBytes;
+    const sysTotal = telemetry()?.systemMemory.totalBytes;
+    if (!total || !sysTotal) return null;
+    return `${((total / sysTotal) * 100).toFixed(1)}% / ${formatBytes(sysTotal)}`;
+  });
+
+  const copySnapshot = async (): Promise<void> => {
+    const payload = { at: new Date(at()).toISOString(), view: view(), telemetry: telemetry(), gpu: gpu() };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {}
+  };
 
   return (
     <div class="dev-panel">
       <div class="dev-toolbar">
         <span class={paused() ? "dev-state" : "dev-state is-live"}>{paused() ? "已暂停" : "采样中"}</span>
         <span class="dev-muted">{formatClock(at())}</span>
-        <button type="button" class="ghost-mini" onClick={() => setPaused((value) => !value)}>
-          {paused() ? "继续" : "暂停"}
-        </button>
+        <div class="dev-toolbar-right">
+          <button type="button" class="dev-btn" onClick={() => setPaused((value) => !value)}>
+            <Show when={paused()} fallback={<IconPause />}><IconPlay /></Show>
+            <span>{paused() ? "继续" : "暂停"}</span>
+          </button>
+          <button type="button" class="dev-btn" onClick={() => { void copySnapshot(); }}>
+            <IconCopy />
+            <span>{copied() ? "已复制" : "导出快照"}</span>
+          </button>
+        </div>
       </div>
 
-      <Show when={view()}>
-        {(current) => (
-          <>
-            <p class="dev-mem-total">
-              <b>{formatBytes(current().totalBytes)}</b>
-              <span>合计(已覆盖部分)</span>
-            </p>
-            <p class="dev-muted">
-              {current().rows.map((row) => segment(row.label, row.resident)).join(" · ")}
-              <Show when={current().group.length > 0}>
-                {" · "}
-                {segment("界面进程组", current().group.reduce((sum, row) => sum + (row.resident ?? 0), 0))}
-              </Show>
-              <Show when={current().renderer != null}>
-                {" · "}
-                {segment("页面 JS 堆", current().renderer?.usedJsHeapBytes ?? null)}
-              </Show>
-            </p>
-            <Show when={note() != null}>
-              <p class="dev-warn">{note()}</p>
-            </Show>
-          </>
-        )}
+      <Show when={note() != null}>
+        <p class="dev-warn">{note()}</p>
       </Show>
 
       <Show when={view()}>
         {(current) => (
           <>
-            <h4 class="dev-sub">进程</h4>
-            <Show when={current().rows.length > 0} fallback={<p class="dev-muted">两个进程都没读到。</p>}>
-              <table class="readonly-table">
-                <thead>
-                  <tr><th>进程</th><th>resident</th><th>private</th><th>峰值 resident</th><th>来源</th></tr>
-                </thead>
-                <tbody>
-                  <For each={current().rows} keyed={(row) => row.id}>
-                    {(row) => (
-                      <tr>
-                        <td>{row().label}</td>
-                        <td>{formatBytes(row().resident)}</td>
-                        <td>{formatBytes(row().private)}</td>
-                        <td title="进程全生命周期峰值(Linux procfs VmHWM / Windows psapi),不是本次会话峰值">{formatBytes(row().peak)}</td>
-                        <td>{row().source}</td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-            </Show>
+            {/* 顶部 4 格 KPI 概览 */}
+            <div class="dev-kpi-grid">
+              <div class="dev-kpi">
+                <span class="dev-kpi-label">
+                  <span>应用总内存</span>
+                  <Show when={telemetry()}>
+                    {(t) => <span>可用 {formatBytes(t().systemMemory.freeBytes)}</span>}
+                  </Show>
+                </span>
+                <span class="dev-kpi-value">{formatBytes(current().totalBytes)}</span>
+                <span class="dev-kpi-sub">{sysMemShare() ?? "已覆盖进程工作集"}</span>
+              </div>
 
-            <h4 class="dev-sub">界面进程组(角色由引擎自报,不靠进程名猜)</h4>
-            <Show when={current().group.length > 0} fallback={<p class="dev-muted">没有界面进程组读数。</p>}>
-              <table class="readonly-table">
-                <thead>
-                  <tr><th>角色</th><th>进程数</th><th>resident</th><th>private</th><th>读不到</th></tr>
-                </thead>
-                <tbody>
-                  <For each={current().group} keyed={(row) => row.kind}>
-                    {(row) => (
-                      <tr>
-                        <td>{row().label}</td>
-                        <td>{row().count}</td>
-                        <td>{formatBytes(row().resident)}</td>
-                        <td>{formatBytes(row().private)}</td>
-                        <td>{row().failed > 0 ? `${row().failed} 个` : "—"}</td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-            </Show>
+              <div class="dev-kpi">
+                <span class="dev-kpi-label">
+                  <span>CPU / 唤醒</span>
+                  <Show when={telemetry()}>
+                    {(t) => <span>{t().cpuCores} 核</span>}
+                  </Show>
+                </span>
+                <span class="dev-kpi-value">{fmtPct(current().totalCpuPercent)}</span>
+                <span class="dev-kpi-sub">
+                  空闲唤醒 {fmtNum(current().totalIdleWakeups)}/s
+                </span>
+              </div>
 
-            <h4 class="dev-sub">图形后端</h4>
-            <Show when={gpu()} fallback={<p class="dev-muted">壳未提供 GPU 读数(旧壳/纯浏览器)。</p>}>
-              {(current) => (
-                <>
-                  <div class="readonly-grid">
-                    <span>合成</span>
-                    <b>{current().compositing ?? "—"}</b>
-                    <span>软件渲染</span>
-                    <b>{current().softwareRendering == null ? "—" : current().softwareRendering ? "是" : "否"}</b>
-                    <span>驱动</span>
-                    <b>{[current().vendor, current().renderer].filter(Boolean).join(" / ") || "—"}</b>
+              <div class="dev-kpi">
+                <span class="dev-kpi-label">
+                  <span>图形加速</span>
+                  <Show when={gpu()}>
+                    {(g) => (
+                      <span class={g().software === false ? "dev-pill is-ok" : g().software === true ? "dev-pill is-warn" : "dev-pill"}>
+                        {g().software === false ? "硬件加速" : g().software === true ? "软件光栅" : "未知"}
+                      </span>
+                    )}
+                  </Show>
+                </span>
+                <span class="dev-kpi-value">{gpu()?.vendor ?? "—"}</span>
+                <span class="dev-kpi-sub" title={gpu()?.renderer ?? undefined}>
+                  {gpu()?.renderer ?? gpu()?.compositing ?? "无 GPU 信息"}
+                </span>
+              </div>
+
+              <div class="dev-kpi">
+                <span class="dev-kpi-label">
+                  <span>主进程事件循环 P95</span>
+                  <span>DOM {current().renderer?.domNodes ?? "—"}</span>
+                </span>
+                <span class="dev-kpi-value">{fmtMs(telemetry()?.eventLoop.p95Ms ?? null)}</span>
+                <span class="dev-kpi-sub">
+                  JS 堆 {formatBytes(current().renderer?.usedJsHeapBytes ?? null)} / {formatBytes(current().renderer?.totalJsHeapBytes ?? null)}
+                </span>
+              </div>
+            </div>
+
+            {/* 内存占比堆叠条 */}
+            <Show when={barSegments().length > 0}>
+              <div class="dev-card">
+                <div class="dev-card-body dev-bar-wrap">
+                  <div class="dev-bar" role="img" aria-label="内存分布">
+                    <For each={barSegments()}>
+                      {(seg) => (
+                        <div
+                          class="dev-bar-seg"
+                          style={{ width: `${seg.pct}%`, background: seg.color }}
+                          title={`${seg.label}: ${formatBytes(seg.bytes)}`}
+                        />
+                      )}
+                    </For>
                   </div>
-                  <Show when={current().software === true}>
-                    <p class="dev-warn">GPU 落在软件光栅(SwiftShader):每帧都由 CPU 绘制,关动画/去模糊的主题级优化收效有限——先解决硬件加速,再谈视觉降载。</p>
-                  </Show>
-                  <Show when={current().error != null}>
-                    <p class="dev-warn">GPU 读数失败({current().error})。</p>
-                  </Show>
-                </>
-              )}
+                  <div class="dev-bar-legend">
+                    <For each={barSegments()}>
+                      {(seg) => (
+                        <span class="dev-bar-item">
+                          <i class="dev-bar-dot" style={{ background: seg.color }} />
+                          <span>{seg.label}</span>
+                          <b>{formatBytes(seg.bytes)}</b>
+                        </span>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </div>
             </Show>
 
-            <h4 class="dev-sub">渲染层</h4>
-            <Show when={current().renderer}>
-              {(renderer) => (
-                <div class="readonly-grid">
-                  <span>已用 JS 堆</span>
-                  <b>{formatBytes(renderer().usedJsHeapBytes)}</b>
-                  <span>已分配 JS 堆</span>
-                  <b>{formatBytes(renderer().totalJsHeapBytes)}</b>
-                  <span>JS 堆上限</span>
-                  <b>{formatBytes(renderer().jsHeapLimitBytes)}</b>
-                  <span>主文档元素节点</span>
-                  <b>{renderer().domNodes}</b>
-                  <span>子框架</span>
-                  <b>{renderer().childFrames}</b>
+            {/* 核心进程 */}
+            <div class="dev-card">
+              <div class="dev-card-head">
+                <h4 class="dev-card-title">核心进程</h4>
+                <span class="dev-muted">{current().rows.length} 个</span>
+              </div>
+              <Show when={current().rows.length > 0} fallback={<div class="dev-card-body"><p class="dev-muted">暂无进程读数。</p></div>}>
+                <div class="dev-table-wrap">
+                  <table class="dev-table">
+                    <thead>
+                      <tr>
+                        <th>进程</th>
+                        <th class="num">PID</th>
+                        <th class="num">工作集</th>
+                        <th class="num">私有内存</th>
+                        <th class="num">峰值工作集</th>
+                        <th class="num">CPU</th>
+                        <th class="num">唤醒/s</th>
+                        <th>来源</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <For each={current().rows} keyed={(row) => row.id}>
+                        {(row) => (
+                          <tr>
+                            <td>{row().label}</td>
+                            <td class="num">{row().pid ?? "—"}</td>
+                            <td class="num">{formatBytes(row().resident)}</td>
+                            <td class="num">{formatBytes(row().private)}</td>
+                            <td class="num">{formatBytes(row().peak)}</td>
+                            <td class="num">{fmtPct(row().cpuPercent)}</td>
+                            <td class="num">{fmtNum(row().idleWakeups)}</td>
+                            <td class="mono">{row().source}</td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
                 </div>
-              )}
-            </Show>
+              </Show>
+            </div>
+
+            {/* 界面子进程组 */}
+            <div class="dev-card">
+              <div class="dev-card-head">
+                <h4 class="dev-card-title">Chromium 进程组</h4>
+                <span class="dev-muted">{current().group.reduce((s, r) => s + r.count, 0)} 个子进程</span>
+              </div>
+              <Show when={current().group.length > 0} fallback={<div class="dev-card-body"><p class="dev-muted">暂无子进程组读数。</p></div>}>
+                <div class="dev-table-wrap">
+                  <table class="dev-table">
+                    <thead>
+                      <tr>
+                        <th>角色</th>
+                        <th class="num">数量</th>
+                        <th class="num">工作集</th>
+                        <th class="num">私有内存</th>
+                        <th class="num">峰值</th>
+                        <th class="num">CPU</th>
+                        <th class="num">唤醒/s</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <For each={current().group} keyed={(row) => row.kind}>
+                        {(row) => (
+                          <tr>
+                            <td title={row().pids.length > 0 ? `PID: ${row().pids.join(", ")}` : undefined}>{row().label}</td>
+                            <td class="num">{row().count}</td>
+                            <td class="num">{formatBytes(row().resident)}</td>
+                            <td class="num">{formatBytes(row().private)}</td>
+                            <td class="num">{formatBytes(row().peak)}</td>
+                            <td class="num">{fmtPct(row().cpuPercent)}</td>
+                            <td class="num">{fmtNum(row().idleWakeups)}</td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
+              </Show>
+            </div>
+
+            {/* 图形后端与渲染层 */}
+            <div class="dev-card">
+              <div class="dev-card-head">
+                <h4 class="dev-card-title">图形后端与渲染层</h4>
+                <Show when={gpu()?.driverVersion}>
+                  {(ver) => <span class="dev-muted">驱动 {ver()}</span>}
+                </Show>
+              </div>
+              <div class="dev-card-body">
+                <Show when={gpu()?.software === true}>
+                  <p class="dev-warn" style={{ "margin-bottom": "10px" }}>
+                    当前处于软件光栅（SwiftShader），每帧均由 CPU 绘制。建议排查显卡驱动或关闭「禁用 GPU 加速」。
+                  </p>
+                </Show>
+                <div class="dev-kv-grid">
+                  <div class="dev-kv">
+                    <span>合成器</span>
+                    <b class={featureTone(gpu()?.compositing ?? null)}>{gpu()?.compositing ?? "—"}</b>
+                  </div>
+                  <div class="dev-kv">
+                    <span>光栅化</span>
+                    <b class={featureTone(gpu()?.rasterization ?? null)}>{gpu()?.rasterization ?? "—"}</b>
+                  </div>
+                  <div class="dev-kv">
+                    <span>2D Canvas</span>
+                    <b class={featureTone(gpu()?.canvas2d ?? null)}>{gpu()?.canvas2d ?? "—"}</b>
+                  </div>
+                  <div class="dev-kv">
+                    <span>WebGL</span>
+                    <b class={featureTone(gpu()?.webgl ?? null)}>{gpu()?.webgl ?? "—"}</b>
+                  </div>
+                  <div class="dev-kv">
+                    <span>视频解码</span>
+                    <b class={featureTone(gpu()?.videoDecode ?? null)}>{gpu()?.videoDecode ?? "—"}</b>
+                  </div>
+                  <div class="dev-kv">
+                    <span>JS 堆 (已用 / 上限)</span>
+                    <b>{formatBytes(current().renderer?.usedJsHeapBytes ?? null)} / {formatBytes(current().renderer?.jsHeapLimitBytes ?? null)}</b>
+                  </div>
+                  <Show when={current().renderer?.blinkAllocatedBytes != null}>
+                    <div class="dev-kv">
+                      <span>Blink 引擎内存</span>
+                      <b>{formatBytes(current().renderer?.blinkAllocatedBytes ?? null)} / {formatBytes(current().renderer?.blinkTotalBytes ?? null)}</b>
+                    </div>
+                  </Show>
+                  <div class="dev-kv">
+                    <span>DOM 节点 / 子框架</span>
+                    <b>{current().renderer?.domNodes ?? "—"} / {current().renderer?.childFrames ?? "—"}</b>
+                  </div>
+                  <Show when={telemetry()}>
+                    {(t) => (
+                      <div class="dev-kv">
+                        <span>Event Loop (P50 / Max)</span>
+                        <b>{fmtMs(t().eventLoop.p50Ms)} / {fmtMs(t().eventLoop.maxMs)}</b>
+                      </div>
+                    )}
+                  </Show>
+                </div>
+              </div>
+            </div>
 
             <Show when={current().excluded.length > 0}>
-              <p class="dev-muted">未计入合计:{current().excluded.join("、")}。</p>
+              <p class="dev-muted">未计入总内存：{current().excluded.join(" · ")}</p>
             </Show>
           </>
         )}

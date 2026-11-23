@@ -276,8 +276,9 @@
     font-size: var(--fs-xs);
   }
 
-  /* ── 统一左文右控 Switch ────────────────────────────────────── */
+  /* ── 单色高对比度 Lite Switch（无外框，纯实心轨道 + 浮起大圆滑块） ── */
   .switch-row {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -285,6 +286,13 @@
     width: 100%;
     cursor: pointer;
     user-select: none;
+  }
+  .switch-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
   }
   .switch-copy {
     display: flex;
@@ -314,18 +322,24 @@
     padding: 2px;
     border-radius: var(--radius-pill);
     background: color-mix(in srgb, var(--text) 14%, transparent);
-    border: 1px solid transparent;
-    transition: background var(--dur-fast) var(--ease);
+    border: 0;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .switch-row:hover:not([data-disabled]) .switch-control {
+    background: color-mix(in srgb, var(--text) 20%, transparent);
   }
   .switch-control[data-checked] {
-    background: var(--accent);
+    background: var(--text);
+  }
+  .switch-row:hover:not([data-disabled]) .switch-control[data-checked] {
+    background: color-mix(in srgb, var(--text) 85%, var(--surface));
   }
   .switch-thumb {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     border-radius: var(--radius-pill);
-    background: #ffffff;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 18%);
+    background: var(--surface);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
     transform: translateX(0);
     transition: transform var(--dur-fast) var(--ease);
   }
@@ -333,7 +347,7 @@
     transform: translateX(16px);
   }
   .switch-row[data-disabled] {
-    opacity: 0.48;
+    opacity: 0.45;
     cursor: not-allowed;
   }
 

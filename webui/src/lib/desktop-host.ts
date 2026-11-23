@@ -49,6 +49,10 @@ export type HostCommand =
   | "host_memory"
   | "host_process_group"
   | "host_gpu_info"
+  | "host_telemetry"
+  | "host_telemetry_stop"
+  | "host_runtime_info"
+  | "host_open_logs"
   | "pairing_create"
   | "devices_list"
   | "device_revoke"
@@ -110,6 +114,8 @@ export interface DesktopWindowControls {
 export interface DevToolsBridge {
   /** 切换 Chrome DevTools;返回开关后的状态(true=已打开)。 */
   toggle(): Promise<boolean>;
+  /** Blink 引擎原生分配器内存(KiB)。 */
+  blinkMemory?: () => { allocated: number; total: number } | null;
 }
 
 /** 开发者模式 → 主进程 Dev Surface 门控(ui_* / record_* 的 MCP 可见性)。 */

@@ -31,56 +31,152 @@
   .composer-context-breakdown { display: grid; gap: 2px; padding: 8px 10px; border: 1px dashed var(--border); border-radius: var(--r-sm); }
   .composer-context-breakdown strong { color: var(--muted); font-weight: 500; }
   .composer-context-breakdown small { color: var(--muted); opacity: .8; line-height: 1.4; overflow-wrap: anywhere; }
-  /* ── 任务右栏(spec §6.3):#app 的第三列(真实列宽,不覆盖正文) ──────────── */
+  /* ── 内联便签总览卡：嵌在 .workspace-content 白画布右侧列，展开挤压消息区 ── */
   .workspace-panel {
-    grid-column: 3; grid-row: 2;
+    grid-column: 2; grid-row: 1;
     justify-self: end; align-self: stretch;
     display: flex; flex-direction: column;
     min-width: 0;
     overflow: hidden;
-    border-left: 1px solid var(--border);
-    background: var(--surface);
+    border-left: 0;
+    background: transparent;
   }
-  /* 抽屉态(阶段5,cols<3):覆盖 Main,固定 320;App 控制挂载与开关。 */
-  /* 抽屉态(motion kit):transform 滑入/滑出;display 走 allow-discrete,
-     滑出画面后才 display:none(退出动画播得出来);开则从 @starting-style
-     的出画位置滑进来。常驻挂载由 App 控(不再靠 Show 硬切)。 */
   .workspace-panel.drawer {
-    position: fixed; top: var(--topbar-height, 48px); right: 0; bottom: 0; z-index: 70;
+    position: fixed; top: var(--topbar-height, 44px); right: 0; bottom: 0; z-index: 70;
     grid-column: unset; grid-row: unset; justify-self: unset; align-self: unset;
-    width: var(--workspace-panel-width, 320px);
-    box-shadow: 0 12px 32px color-mix(in srgb, #000 25%, transparent);
-    transform: translateX(102%);
+    width: 300px;
+    padding: 12px;
+    background: transparent;
+    pointer-events: none;
+    transform: translateX(104%);
     transition: transform var(--dur-drawer) var(--ease),
                 display var(--dur-drawer) allow-discrete;
   }
   .workspace-panel.drawer.open { transform: none; }
+  .workspace-panel.drawer .overview-sticky-card { pointer-events: auto; box-shadow: var(--shadow-panel); }
   @starting-style {
-    .workspace-panel.drawer.open { transform: translateX(102%); }
+    .workspace-panel.drawer.open { transform: translateX(104%); }
   }
-  .workspace-panel.drawer .workspace-panel-surface { width: 100%; }
+  .workspace-panel.drawer .workspace-panel-surface {
+    width: 100%;
+    padding: 0;
+    background: transparent;
+  }
   #app.cols-2 .workspace-panel:not(.drawer),
   #app.cols-1 .workspace-panel:not(.drawer) { display: none; }
   .workspace-panel-surface {
     flex: 1; min-height: 0;
-    width: var(--workspace-panel-width);
+    width: 280px;
     height: 100%;
+    padding: 16px 16px 16px 0;
     display: flex; flex-direction: column;
     overflow: hidden;
-    background: var(--surface);
-    /* 宽度收拢不再动画(切换抖动/CPU 修复):width 过渡的每一帧都强迫全应用
-       重排(正文时间线陪跑),低配壳上连续切换会话+缩放窗口时 CPU 打满。
-       开合改为瞬时宽度,观感由 body 的透明度/位移微动效承接(合成为主)。 */
+    background: transparent;
   }
-  /* 收起=完全收回(用户口径 2026-11-11):零宽、去边框,不留窄栏占位;
-     开合入口在顶栏任务钮(rail-trigger)。宽度瞬时收拢(见 surface 的注释)。 */
-  .workspace-panel.collapsed { border-left-width: 0; }
-  .workspace-panel.collapsed .workspace-panel-surface { width: 0; }
+  .workspace-panel.collapsed .workspace-panel-surface { width: 0; padding: 0; }
   html.desktop .workspace-panel-surface {
-    background: var(--surface);
+    background: transparent;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+
+  /* 便签卡本体（12px 圆角 + 1px 淡边框 + 内部细线分段） */
+  .overview-sticky-card {
+    display: flex;
+    flex-direction: column;
+    max-height: 100%;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: var(--shadow-soft);
+  }
+  .overview-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .overview-section:last-child { border-bottom: 0; }
+  .overview-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 8px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+    user-select: none;
+  }
+  .overview-action-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    height: 32px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    font-size: var(--fs-sm);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+  .overview-action-row svg { width: 15px; height: 15px; flex: none; color: var(--text-secondary); }
+  .overview-action-row span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .overview-action-row:hover { background: var(--surface-hover); }
+  .overview-empty {
+    padding: 4px 8px 6px;
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
+  .overview-todo-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .overview-todo-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 8px;
+    font-size: var(--fs-xs);
+    line-height: 1.45;
+    color: var(--text);
+  }
+  .overview-todo-item[data-status="completed"] { color: var(--muted); text-decoration: line-through; }
+  .overview-todo-item[data-status="cancelled"] { color: var(--muted); opacity: 0.7; }
+  .overview-todo-icon {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    margin-top: 2px;
+    color: var(--muted);
+  }
+  .overview-todo-icon svg { width: 14px; height: 14px; }
+  .overview-todo-icon.is-in_progress { color: var(--text); }
+  .overview-todo-icon.is-completed { color: var(--ok); }
+  .overview-todo-icon.is-cancelled { color: var(--err); }
+  .overview-todo-title {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .overview-plugins:empty { display: none; }
+  .overview-plugins { padding: 8px; }
   .workspace-panel-body {
     display: grid; grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden;
     width: 100%;
