@@ -22,6 +22,7 @@ import { splitBlocks } from "./split";
 import { renderMarkdownHtml } from "./render";
 import { patchMarkdown } from "./patch";
 import { createPaintScheduler } from "./paint";
+import { openFileRef } from "./fileRefStore";
 
 /**
  * 单帧同步绘制预算(ms)。120Hz 一帧 8.3ms,留一半给布局与绘制。
@@ -29,6 +30,8 @@ import { createPaintScheduler } from "./paint";
  * p50 0.3 / max 2.7ms;未闭合表格 p50 5.9 / p95 11.7 / max 15.5ms。
  */
 const PAINT_BUDGET_MS = 4;
+/** 常规流式帧间隔下限(ms):锁 60fps(16ms),避免 120/144/165Hz 高刷屏下每帧重排消耗翻倍 CPU/GPU。 */
+const MIN_FRAME_MS = 16;
 /** 超预算时的退回限频(ms)。 */
 const THROTTLE_MS = 120;
 /** 突发摊到几帧内露完:6 帧 ≈ 50ms@120Hz,连得上且不把延迟堆成长尾。 */
@@ -152,7 +155,7 @@ export const Markdown: Component<{
       addCodeBlockHeaders(tail);
     }
     lastCostMs = performance.now() - startedAt;
-    earliestAt = performance.now() + (lastCostMs > PAINT_BUDGET_MS ? THROTTLE_MS : 0);
+    earliestAt = performance.now() + (lastCostMs > PAINT_BUDGET_MS ? THROTTLE_MS : MIN_FRAME_MS);
     // 还有没露完的突发就带着新算出的 deadline 再排一帧(每次绘制仍追最新全文)。
     if (shown < target.length && !finish) painter.schedule(earliestAt);
   };
@@ -193,6 +196,20 @@ export const Markdown: Component<{
     const updateMotion = (): void => { reduceMotion = motion?.matches ?? false; };
     const onClick = (event: MouseEvent): void => {
       const target = event.target instanceof Element ? event.target : null;
+      const fileLink = target?.closest<HTMLElement>("a[data-file-ref]");
+      if (fileLink != null) {
+        const path = fileLink.dataset.fileRef;
+        if (path != null && path !== "") {
+          event.preventDefault();
+          event.stopPropagation();
+          openFileRef({
+            path,
+            ...(fileLink.dataset.line != null ? { line: Number(fileLink.dataset.line) } : {}),
+            ...(fileLink.dataset.col != null ? { col: Number(fileLink.dataset.col) } : {}),
+          });
+        }
+        return;
+      }
       const button = target?.closest<HTMLButtonElement>("button[data-copy-code]");
       const code = button?.closest(".md-code-block")?.querySelector("pre code");
       if (button == null || code == null || navigator.clipboard?.writeText == null) return;

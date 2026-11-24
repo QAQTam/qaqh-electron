@@ -18,14 +18,28 @@ test("work clock follows the slowest completion, never the last listed tool", ()
   expect(workSegmentEnd(group)).toBe(900);
 });
 
-test("new work leaves older work closed with stable segment keys", () => {
+test("new work absorbs intermediate commentary into the single work segment with stable key", () => {
   const steps: any[] = [{ id: "tool1", kind: "tool" }, { id: "chat", kind: "text", text: "hi" }];
   const before = turnSegments(steps, false);
+  expect(before).toHaveLength(2);
+  expect(before[0]).toMatchObject({ key: "work:tool1", closed: true });
+  expect(before[1]).toMatchObject({ key: "text:chat", kind: "text" });
+
   steps.push({ id: "tool2", kind: "tool" });
   const after = turnSegments(steps, false);
-  expect(after[0]).toMatchObject({ key: before[0]!.key, closed: true });
-  expect(after[1]!.key).toBe(before[1]!.key);
-  expect(after[2]).toMatchObject({ closed: false });
+  expect(after).toHaveLength(1);
+  expect(after[0]).toMatchObject({
+    key: before[0]!.key,
+    kind: "work",
+    closed: false,
+    steps: [{ id: "tool1" }, { id: "chat" }, { id: "tool2" }],
+  });
+
+  steps.push({ id: "final", kind: "text", text: "done" });
+  const finalSegs = turnSegments(steps, true);
+  expect(finalSegs).toHaveLength(2);
+  expect(finalSegs[0]).toMatchObject({ key: before[0]!.key, kind: "work", closed: true });
+  expect(finalSegs[1]).toMatchObject({ key: "text:final", kind: "text" });
 });
 
 test("shorter fence inside longer fence remains code", () => {

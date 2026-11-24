@@ -25,7 +25,7 @@ autoCompactThreshold: number | null,
  * `config.save` 的裸 `permissionLevel` 载荷漏进配置。现在并入 patch 并在
  * [`Self::validate`] 中做值域校验（非法即拒绝，1..=4 之外不落盘）。
  */
-permissionLevel: number | null, tokenizerPath: string | null, 
+permissionLevel: number | null, 
 /**
  * exec 工具默认 shell。空串 / "auto" = 平台自动探测。
  */

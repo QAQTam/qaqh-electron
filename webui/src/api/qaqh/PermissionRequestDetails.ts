@@ -14,4 +14,8 @@
  * 在 daemon 侧必须显式失败
  * （`qaqh-daemon::axum_server::axum_impl::v2::ApprovalBodyError`）。
  */
-export type PermissionRequestDetails = { tool_name: string, action_summary?: string | null, reason: string, paths: Array<string>, category: string, level: number, risk: string, consequence: string, };
+export type PermissionRequestDetails = { tool_name: string, action_summary?: string | null, 
+/**
+ * 模型主动请求提权时附带的提权摘要（ADR-0040 决策 3）。
+ */
+justification?: string | null, reason: string, paths: Array<string>, category: string, level: number, risk: string, consequence: string, };

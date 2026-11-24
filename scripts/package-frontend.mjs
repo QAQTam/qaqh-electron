@@ -32,6 +32,17 @@ if (unknown.length > 0) throw new Error(`Unknown option(s): ${unknown.join(" ")}
 const wizard = args.includes("--wizard");
 
 const { assertInputs } = require("./packaging.cjs");
+// 若兄弟仓已有 release 桌宠产物，同步刷新 resources/pet/，让 frontend-rolling 也带最新桌宠与默认皮肤包。
+const petsRoot = resolve(root, process.env.QAQH_PETS_DIR ?? "../qaqh-pets");
+const petsExe = join(petsRoot, "target", "release", "qaqh-pet.exe");
+const petsPack = join(petsRoot, "packs", "default");
+if (existsSync(petsExe) && existsSync(join(petsPack, "pack.json"))) {
+  const dest = join(root, "resources", "pet");
+  rmSync(dest, { recursive: true, force: true });
+  mkdirSync(join(dest, "packs"), { recursive: true });
+  copyFileSync(petsExe, join(dest, "qaqh-pet.exe"));
+  cpSync(petsPack, join(dest, "packs", "default"), { recursive: true });
+}
 assertInputs(root, "win32");
 
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));

@@ -73,7 +73,6 @@ const baseConfig = (): ConfigDto => ({
   sandbox: { enabled: true },
   toolAllowlistEnabled: false,
   toolAllowlist: [],
-  tokenizerPath: null,
 });
 
 const probe = {

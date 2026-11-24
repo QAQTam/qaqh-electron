@@ -57,9 +57,7 @@ linux:
     - "--enable-features=UseOzonePlatform"
     - "--ozone-platform-hint=auto"
     - "--renderer-process-limit=1"
-    - "--js-flags=--max-old-space-size=256 --optimize-for-size"
-    - "--disable-3d-apis"
-    - "--disable-webgl"
+    - "--js-flags=--max-old-space-size=512"
     - "--disable-speech-api"
     - "--disk-cache-size=16777216"
   target:
@@ -107,6 +105,10 @@ win:
       to: voice-runtime/node_modules/sherpa-onnx-node
     - from: node_modules/sherpa-onnx-win-x64
       to: voice-runtime/node_modules/sherpa-onnx-win-x64
+    # 原生桌面宠物(Windows 独占，直连 daemon；放 resources/pet/ 避免触碰 bin/ 白名单，
+    # 且 qaqh-pet.exe 默认在同级 packs/ 找默认角色包，零路径改造)。
+    - from: resources/pet/
+      to: pet/
 
 nsis:
   artifactName: ${productName}-${version}-win-${arch}-setup.${ext}

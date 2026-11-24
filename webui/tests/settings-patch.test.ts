@@ -33,7 +33,6 @@ function dto(overrides: Partial<ConfigDto> = {}): ConfigDto {
     sessionIdleUnloadSecs: 0,
     mcp: { enabled: false, idleShutdownSecs: 300, servers: [] },
     lsp: { enabled: false, idleShutdownSecs: 600, servers: [] },
-    tokenizerPath: null,
     sandbox: { enabled: false },
     toolAllowlistEnabled: false,
     toolAllowlist: [],
@@ -56,8 +55,7 @@ describe("buildPatch", () => {
     expect(buildPatch(dto(), dto({ model: "another-model", baseUrl: "https://example.test" }))).toEqual({});
   });
 
-  test("tokenizer path can be explicitly cleared and theme remains local", () => {
-    expect(buildPatch(dto({ tokenizerPath: "/tmp/tok.json" }), dto()).tokenizerPath).toBe("");
+  test("theme is owned by its dedicated apply_patch surface, not the global patch", () => {
     expect(buildPatch(dto(), dto({ theme: "dark" }))).toEqual({});
     expect(buildPatch(dto({ theme: "dark" }), dto({ theme: null }))).toEqual({});
   });

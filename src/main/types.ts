@@ -17,6 +17,9 @@ import type { ShellCloseResult } from "../../webui/src/api/qaqh/ShellCloseResult
 import type { ShellListResult } from "../../webui/src/api/qaqh/ShellListResult";
 import type { ShellOpenParams } from "../../webui/src/api/qaqh/ShellOpenParams";
 import type { ShellView } from "../../webui/src/api/qaqh/ShellView";
+import type { SandboxPreflightReport } from "../../webui/src/api/qaqh/SandboxPreflightReport";
+import type { SandboxPreflightStartParams } from "../../webui/src/api/qaqh/SandboxPreflightStartParams";
+import type { SandboxPreflightStatusParams } from "../../webui/src/api/qaqh/SandboxPreflightStatusParams";
 import type { WorkspaceEntry } from "../../webui/src/api/qaqh/WorkspaceEntry";
 // gitx 读模型（ADR-0041）暂无生成产物（v4.2 重切后由 sdk-sync 落 api/qaqh），
 // 先复用 webui transport 里的手工镜像 DTO,维持「形状只有一份」的纪律。
@@ -99,9 +102,9 @@ export type MainServiceMap = {
   "gitx.worktree_bind": { params: { session_id: string; worktree_id: string }; result: WorktreeBindingView };
   "gitx.worktree_unbind": { params: { session_id: string }; result: { unbound: boolean } };
   // 沙箱启动自检面（ADR-0040）：补齐 addon 白名单的双向闸；结果形状由 daemon
-  // TYPED_METHODS 锁定,主进程只透传。
-  "sandbox.preflight.start": { params: Record<string, unknown>; result: unknown };
-  "sandbox.preflight.status": { params: Record<string, unknown>; result: unknown };
+  // TYPED_METHODS 锁定。
+  "sandbox.preflight.start": { params: SandboxPreflightStartParams; result: SandboxPreflightReport };
+  "sandbox.preflight.status": { params: SandboxPreflightStatusParams; result: SandboxPreflightReport };
 };
 
 export type MainServiceMethod = keyof MainServiceMap;

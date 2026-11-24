@@ -35,6 +35,7 @@ let pageReady = false;
 let openedAt = 0;
 let statusText = "";
 let metaText = "";
+let progressValue: number | null = null;
 let safetyTimer: ReturnType<typeof setTimeout> | null = null;
 
 function push(script: string): void {
@@ -47,6 +48,7 @@ function push(script: string): void {
 function syncStatus(): void {
   if (statusText !== "") push(`window.__splash(${JSON.stringify(statusText)})`);
   if (metaText !== "") push(`window.__splashMeta(${JSON.stringify(metaText)})`);
+  push(`window.__splashProgress(${progressValue === null ? "null" : String(progressValue)})`);
 }
 
 /** 弹出 splash（幂等）。version 缺省用 app.getVersion()。 */
@@ -98,6 +100,14 @@ export function showSplash(version?: string): void {
 export function setSplashStatus(text: string): void {
   statusText = text;
   if (pageReady) syncStatus();
+}
+
+/** 更新确定态进度（0..100）；传 null 切回循环扫描动画。 */
+export function setSplashProgress(percent: number | null): void {
+  progressValue = percent === null ? null : Math.max(0, Math.min(100, Math.round(percent)));
+  if (pageReady) {
+    push(`window.__splashProgress(${progressValue === null ? "null" : String(progressValue)})`);
+  }
 }
 
 /** 交棒关闭：补足最短驻留后销毁；重复调用安全。 */

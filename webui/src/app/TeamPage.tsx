@@ -1,5 +1,5 @@
 /**
- * Team 页(subagent-team 施工单):任务板 + 花名册 + 留言板摘要。
+ * Team 页(subagent-team 施工单):任务板 + 花名册(留言板已随 ADR-0033 整体退役)。
  *
  * 数据源 = `GET /ringing/v2/sessions/{seed}/team`(读侧投影)。**没有推送**:
  * TeamDelta/TaskBoardDelta 词表在契约里活着但零发射器,不写订阅代码(§〇·1)。
@@ -7,10 +7,7 @@
  *  1. 主触发:订阅 `onBoardToolActivity`,task_* 与 board_* 工具收尾即 refetch;
  *  2. 兜底:页可见时 5s 低频轮询,不可见停。
  *
- * 两个已知粗糙(§〇·2,不要当 bug 修):
- *  - 花名册是端点现算的粗投影(子级 Idle 也映射 running、residency 恒 unloaded、
- *    nickname/role/current_task_id 恒 null)——精确状态 join 会话列表的 status;
- *  - unread_messages 恒空(无发射器),不渲染未读角标。
+ * 已知粗糙(§〇·2,不要当 bug 修):unread_messages 无发射器,不渲染未读角标。
  *
  * 工具输出的 TaskBoardTask 与这里的 TaskView **不同形**(owner 一个是 string
  * 一个是 TeamActor),解析器不混用。
@@ -39,6 +36,7 @@ const TASK_STATE_LABELS: Record<TaskState, string> = {
 const AGENT_STATUS_LABELS: Record<TeamAgentStatus, string> = {
   pending_init: STR.teamStatusPendingInit,
   running: STR.teamStatusRunning,
+  idle: STR.teamStatusIdle,
   waiting_user: STR.teamStatusWaitingUser,
   interrupted: STR.teamStatusInterrupted,
   completed: STR.teamStatusCompleted,
@@ -173,27 +171,6 @@ export const TeamPage: Component = () => {
               </ul>
             </section>
 
-            <section class="team-section">
-              <h3>{STR.teamBoardTitle}</h3>
-              <Show when={(data().board.channels ?? []).length > 0} fallback={<p class="team-empty">{STR.teamBoardEmpty}</p>}>
-                <div class="team-board">
-                  <For each={data().board.channels ?? []}>{(channel) => (
-                    <div class="team-channel">
-                      <span class="team-channel-name">#{channel.name}</span>
-                      <Show when={channel.topic}><span class="team-channel-topic">{channel.topic}</span></Show>
-                      <ul class="team-threads">
-                        <For each={(data().board.threads ?? []).filter((thread) => thread.channel_id === channel.channel_id)}>{(thread) => (
-                          <li class="team-thread">
-                            <span class="team-thread-title">{thread.title}</span>
-                            <span class="team-thread-count">{STR.teamBoardPosts(thread.post_count)}</span>
-                          </li>
-                        )}</For>
-                      </ul>
-                    </div>
-                  )}</For>
-                </div>
-              </Show>
-            </section>
           </>
         )}
       </Show>

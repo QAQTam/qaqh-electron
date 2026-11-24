@@ -129,15 +129,19 @@ export const SessionView: Component<{ tab: Tab }> = (props) => {
     const dist = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     setPinned(dist < 80 ? true : dist > 160 ? false : pinned());
     const nav = navItems();
-    let active: string | null = nav[0]?.key ?? null;
-    const anchor = scroller.scrollTop + Math.min(96, scroller.clientHeight * 0.16);
-    for (const item of nav) {
-      const node = scroller.querySelector<HTMLElement>(`[data-slot-key="${CSS.escape(item.key)}"]`);
-      const top = node == null ? undefined : node.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
-      if (top == null || top > anchor) break;
-      active = item.key;
+    if (nav.length > 0) {
+      let active: string | null = nav[0]?.key ?? null;
+      const scrollerTop = scroller.getBoundingClientRect().top;
+      const scrollTop = scroller.scrollTop;
+      const anchor = scrollTop + Math.min(96, scroller.clientHeight * 0.16);
+      for (const item of nav) {
+        const node = scroller.querySelector<HTMLElement>(`[data-slot-key="${CSS.escape(item.key)}"]`);
+        const top = node == null ? undefined : node.getBoundingClientRect().top - scrollerTop + scrollTop;
+        if (top == null || top > anchor) break;
+        active = item.key;
+      }
+      setActiveNavKey(active);
     }
-    setActiveNavKey(active);
     if (nearBottom()) setUnseen(false);
     if (shouldLoadOlder(scroller.scrollTop, scroller.clientHeight, state().hasMore, store.loadingOlder[0]())) {
       void loadOlder();

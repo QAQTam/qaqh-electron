@@ -134,14 +134,36 @@
   .timeline-head { color: var(--muted); font-size: var(--fs-xs); }
   .timeline-row { display: flex; align-items: flex-start; gap: 8px; min-height: 28px; }
   .timeline-row .timeline-body { flex: 1; min-width: 0; }
-  .timeline-row.thinking { display: block; min-width: 0; }
+  .timeline-row.thinking,
+  .timeline-row.commentary { display: block; min-width: 0; }
   .timeline-label {
-    display: inline-flex; align-items: center; gap: 4px;
+    display: inline-flex; align-items: center; gap: 6px;
     color: var(--muted); font-size: var(--fs-sm); line-height: 1.5;
-    min-height: 24px; padding: 0 2px;
-    border-radius: var(--r-sm);
+    min-height: 26px; padding: 2px 6px;
+    border-radius: var(--r-md);
+    max-width: 100%; min-width: 0;
   }
   button.timeline-label:hover { background: var(--surface-2); }
+  .thinking-head,
+  .commentary-head {
+    width: 100%; text-align: left;
+  }
+  .thinking-chevron {
+    flex: none; width: 13px; height: 13px; color: var(--muted); opacity: .75;
+  }
+  .thinking-tag {
+    flex: none; font-size: var(--fs-xs); font-weight: 500; color: var(--muted);
+  }
+  .thinking-preview,
+  .commentary-preview {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: var(--fs-xs); color: var(--muted); opacity: .88;
+  }
+  .commentary-preview {
+    color: color-mix(in srgb, var(--text) 78%, var(--muted));
+    font-style: normal;
+  }
   .timeline-dur { color: var(--muted); font-variant-numeric: tabular-nums; }
   .timeline-offset {
     margin-left: auto; color: var(--muted); font-size: var(--fs-xs);
@@ -149,20 +171,29 @@
     padding-top: 4px;
   }
   .timeline-row.wait .timeline-label { color: var(--warn); }
-  .thinking-full {
-    width: 100%; min-width: 0; max-height: 6.4em; margin: 4px 0 6px;
-    overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+  /* 思考与过程旁白展开区:流内原地自然撑开,彻底移除内嵌滚动条(避免盒中盒抢滚轮)。 */
+  .thinking-full,
+  .commentary-full {
+    width: 100%; min-width: 0; margin: 4px 0 8px 18px;
+    padding-left: 10px; border-left: 2px solid color-mix(in srgb, var(--border-strong) 45%, transparent);
     white-space: pre-wrap; overflow-wrap: anywhere;
     color: var(--muted); font-size: var(--fs-xs); line-height: 1.6;
   }
+  .commentary-full {
+    white-space: normal;
+    color: var(--text);
+  }
 
   /* 套餐+GPT 家族的摘要走 markdown(特判见 src/turn/thinking-label):
-     排版交给 .md-host,white-space 不能再 pre-wrap(源码换行会变双倍空行);
-     窗口放宽——「不折叠」的意义就是读得见结构,但仍给跟随滚动的尾窗。 */
-  .thinking-full.thinking-md { max-height: 40vh; white-space: normal; }
-  .thinking-full.thinking-md .md-host { color: var(--muted); font-size: var(--fs-xs); }
-  .thinking-full.thinking-md .md-host > :first-child { margin-top: 0; }
-  .thinking-full.thinking-md .md-host > :last-child { margin-bottom: 0; }
+     排版交给 .md-host,white-space 不能再 pre-wrap(源码换行会变双倍空行)。 */
+  .thinking-full.thinking-md { white-space: normal; }
+  .thinking-full.thinking-md .md-host,
+  .commentary-full .md-host { color: var(--muted); font-size: var(--fs-xs); }
+  .commentary-full .md-host { color: var(--text); font-size: var(--fs-sm); }
+  .thinking-full.thinking-md .md-host > :first-child,
+  .commentary-full .md-host > :first-child { margin-top: 0; }
+  .thinking-full.thinking-md .md-host > :last-child,
+  .commentary-full .md-host > :last-child { margin-bottom: 0; }
 
   /* 工具行(§8) */
   .step-row.tool { min-width: 0; }

@@ -9,6 +9,7 @@ import type { ExecOutputSource } from "./ExecOutputSource";
 import type { ExecSessionId } from "./ExecSessionId";
 import type { ExecSessionView } from "./ExecSessionView";
 import type { GoalView } from "./GoalView";
+import type { HookRunStatus } from "./HookRunStatus";
 import type { InputId } from "./InputId";
 import type { InteractionDecision } from "./InteractionDecision";
 import type { InteractionEndStatus } from "./InteractionEndStatus";
@@ -62,4 +63,4 @@ work_summary: string,
 /**
  * fork 完成时刻（unix ms）。
  */
-at_ms: number, };
+at_ms: number, } | { "type": "hook_started", run_id: string, event: string, hook_name: string, turn_id: TurnId | null, call_id: ToolCallId | null, } | { "type": "hook_finished", run_id: string, status: HookRunStatus, summary?: string | null, duration_ms: number, } | { "type": "prompt_blocked", reason: string, };

@@ -10,6 +10,8 @@ const { parseArgs, parseBuildIdentity, assertInputs } = require("./packaging.cjs
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 后端源目录由 justfile 的 QAQH_BACKEND_DIR 统一导出（默认 ../qaqh-backend）。
 const backend = resolve(root, process.env.QAQH_BACKEND_DIR ?? "../qaqh-backend");
+// 原生桌宠仓（仅 Windows NSIS 打包消费，默认 ../qaqh-pets）。
+const pets = resolve(root, process.env.QAQH_PETS_DIR ?? "../qaqh-pets");
 const frontend = resolve(root, "webui");
 const nativeCrate = resolve(root, "crates/qaqh-napi-client");
 
@@ -44,6 +46,17 @@ function syncDir(source, destination) {
   // 仅清理由流水线管理的产物，避免上次前端的旧 hash 文件混入本次安装包。
   rmSync(destination, { recursive: true, force: true });
   cpSync(source, destination, { recursive: true });
+}
+
+function stagePet(exePath, petsRoot, destination) {
+  const defaultPack = join(petsRoot, "packs", "default");
+  if (!existsSync(join(defaultPack, "pack.json"))) {
+    throw new Error(`qaqh-pet default pack missing: ${defaultPack}`);
+  }
+  rmSync(destination, { recursive: true, force: true });
+  mkdirSync(join(destination, "packs"), { recursive: true });
+  cpSync(exePath, join(destination, "qaqh-pet.exe"));
+  cpSync(defaultPack, join(destination, "packs", "default"), { recursive: true });
 }
 
 function assertGeneratedMirror(source, destination) {
@@ -86,7 +99,8 @@ async function main() {
   if (major < 22 || (major === 22 && minor < 12)) throw new Error("Node.js >=22.12 is required.");
   for (const file of [join(frontend, "package.json"), join(frontend, "pnpm-lock.yaml"),
     join(backend, "Cargo.toml"), join(backend, "Cargo.lock"),
-    join(nativeCrate, "Cargo.toml"), join(nativeCrate, "Cargo.lock")]) {
+    join(nativeCrate, "Cargo.toml"), join(nativeCrate, "Cargo.lock"),
+    ...(windowsBuild ? [join(pets, "Cargo.toml"), join(pets, "Cargo.lock")] : [])]) {
     if (!existsSync(file)) throw new Error(`Required repository/lockfile missing: ${file}`);
   }
   run("pnpm", ["--version"]);
@@ -124,8 +138,24 @@ async function main() {
       cpSync(join(root, "crates", "qaqh-update", "target", "release", "qaqh-update.exe"),
         join(bin, "qaqh-update.exe"));
     }
+    // 原生桌面宠物(仅 Windows NSIS 随包分发至 resources/pet/，含默认皮肤包 packs/default)。
+    if (windowsBuild) {
+      const petOutput = run("cargo", ["build", "--locked", "--release", "--bin", "qaqh-pet",
+        "--message-format=json-render-diagnostics"], pets, true);
+      const petArtifacts = petOutput.split("\n").filter(Boolean).map(line => JSON.parse(line));
+      const petArtifact = petArtifacts.findLast(item => item.reason === "compiler-artifact" &&
+        item.target?.name === "qaqh-pet" && item.target.kind.includes("bin") && item.executable);
+      if (!petArtifact) throw new Error("Cargo did not report a qaqh-pet executable.");
+      stagePet(petArtifact.executable, pets, join(root, "resources/pet"));
+    }
   } else {
     console.warn("Explicit --skip-backend: reusing staged daemon; its source freshness is NOT guaranteed.");
+    if (windowsBuild && !existsSync(join(root, "resources/pet/qaqh-pet.exe"))) {
+      const prebuilt = join(pets, "target", "release", "qaqh-pet.exe");
+      if (existsSync(prebuilt)) {
+        stagePet(prebuilt, pets, join(root, "resources/pet"));
+      }
+    }
   }
 
   // native 绑定（qaqh-napi-client → qaqh-client）与 daemon 同源编译。

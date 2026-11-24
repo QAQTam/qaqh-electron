@@ -3,19 +3,13 @@ import { contextBridge, ipcRenderer } from "electron";
 const events = new Set([
   "projection://status", "projection://event", "projection://bootstrap", "projection://reset", "conn://incompatible",
   "conn://error", "conn://liveness", "conn://reconnect",
-  "model-picker:changed", "app://window-state", "app://quit-requested", "browser-view://state",
+  "model-picker:changed", "app://window-state", "browser-view://state",
   "plugins://graph",
   "voice://status",
   "notify://handoff",
   "app://found-in-page",
   "app://shell-frame",
 ]);
-const pendingQuitEvents: unknown[] = [];
-const quitCallbacks = new Set<(payload: unknown) => void>();
-ipcRenderer.on("qaqh:event:app://quit-requested", (_event, payload) => {
-  if (quitCallbacks.size === 0) pendingQuitEvents.push(payload);
-  else for (const callback of [...quitCallbacks]) callback(payload);
-});
 
 contextBridge.exposeInMainWorld("qaqhHost", {
   platform: "electron",
@@ -23,11 +17,6 @@ contextBridge.exposeInMainWorld("qaqhHost", {
     ipcRenderer.invoke("qaqh:invoke", command, args),
   listen: (eventName: string, callback: (payload: unknown) => void) => {
     if (!events.has(eventName)) throw new Error(`Unsupported QAQH event: ${eventName}`);
-    if (eventName === "app://quit-requested") {
-      quitCallbacks.add(callback);
-      for (const payload of pendingQuitEvents.splice(0)) callback(payload);
-      return () => quitCallbacks.delete(callback);
-    }
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
     ipcRenderer.on(`qaqh:event:${eventName}`, listener);
     return () => ipcRenderer.removeListener(`qaqh:event:${eventName}`, listener);
@@ -83,5 +72,5 @@ contextBridge.exposeInMainWorld("qaqhHost", {
     stage: () => ipcRenderer.invoke("qaqh:update-stage"),
     apply: () => ipcRenderer.invoke("qaqh:update-apply"),
   },
-  requestQuit: (options: { stopDaemon: boolean; stopActiveWork: boolean }) => ipcRenderer.invoke("qaqh:request-quit", options),
+  requestQuit: () => ipcRenderer.invoke("qaqh:request-quit"),
 });

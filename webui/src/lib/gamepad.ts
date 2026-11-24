@@ -165,12 +165,12 @@ export class GamepadController {
     if (this.running && this.frame === 0 && this.timer == null) this.tick();
   };
 
-  private scheduleRetry(): void {
+  private scheduleRetry(delayMs = 1500): void {
     if (this.timer != null) window.clearTimeout(this.timer);
     this.timer = window.setTimeout(() => {
       this.timer = null;
       this.tick();
-    }, 150);
+    }, delayMs);
   }
 
   private tick = (): void => {
@@ -243,7 +243,13 @@ export class GamepadController {
 
     this.guidePreviousButtons.set(pad.index, current);
     this.previousButtons.set(pad.index, current);
-    this.frame = requestAnimationFrame(this.tick);
+    // 手柄导航未开启(!active)时仅以 120ms 低频监听 Guide 唤醒键,彻底避免闲置时
+    // 因插着手柄或虚拟控制器驱动而永久跑 60/120fps requestAnimationFrame 死循环。
+    if (active) {
+      this.frame = requestAnimationFrame(this.tick);
+    } else {
+      this.scheduleRetry(120);
+    }
   };
 
   /** 扳机状态机:按下 latch 意图,跨过时长线开麦,松手收尾(或短按聚焦)。 */
@@ -301,8 +307,10 @@ export class GamepadController {
  */
 export function startGamepadRawFeed(onFrame: (pad: Gamepad | null) => void): () => void {
   let frame = 0;
+  let timer: number | null = null;
   const tick = (): void => {
     frame = 0;
+    timer = null;
     let pad: Gamepad | null = null;
     try {
       const pads = Array.from(navigator.getGamepads());
@@ -311,12 +319,18 @@ export function startGamepadRawFeed(onFrame: (pad: Gamepad | null) => void): () 
       // Chromium/Linux 控制器栈热拔出会 throw；下一帧自然恢复，与导航控制器同语义。
     }
     onFrame(pad);
-    frame = requestAnimationFrame(tick);
+    if (pad != null) {
+      frame = requestAnimationFrame(tick);
+    } else {
+      timer = window.setTimeout(tick, 500);
+    }
   };
   if (typeof navigator !== "undefined" && typeof navigator.getGamepads === "function") tick();
   else onFrame(null);
   return () => {
     if (frame !== 0) cancelAnimationFrame(frame);
+    if (timer != null) window.clearTimeout(timer);
     frame = 0;
+    timer = null;
   };
 }

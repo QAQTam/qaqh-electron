@@ -35,6 +35,9 @@ export type HostCommand =
   | "frontend_plugins:remove"
   | "frontend_plugins:import"
   | "frontend_plugins:reveal"
+  | "pet_status"
+  | "pet_start"
+  | "pet_stop"
   | "capture_screenshot"
   | "upload_attachment"
   | "open_external"
@@ -44,7 +47,6 @@ export type HostCommand =
   | "browser_view_viewport"
   | "browser_view_navigate"
   | "browser_view_state"
-  | "exit_app"
   | "app_version"
   | "host_memory"
   | "host_process_group"
@@ -76,7 +78,6 @@ export type HostEvent =
   | "conn://liveness"
   | "conn://reconnect"
   | "app://window-state"
-  | "app://quit-requested"
   | "browser-view://state"
   | "plugins://graph"
   | "voice://status"
@@ -230,7 +231,7 @@ export interface DesktopHostBridge {
   relaunch?(): Promise<void>;
   popupMenu?(items: NativeMenuItem[], pos?: { x?: number; y?: number }): Promise<string | null>;
   updates?: UpdatesBridge;
-  requestQuit(options: { stopDaemon: boolean; stopActiveWork: boolean }): Promise<void>;
+  requestQuit(): Promise<void>;
 }
 
 declare global {

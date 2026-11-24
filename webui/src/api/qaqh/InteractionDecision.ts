@@ -8,4 +8,4 @@
  * value is additive: facts written before this field existed deserialize with
  * `decision = None` and keep `decision_ref` as their only record.
  */
-export type InteractionDecision = "approved" | "rejected" | "answered" | "dismissed";
+export type InteractionDecision = "approved" | "approved_for_session" | "rejected" | "answered" | "dismissed";

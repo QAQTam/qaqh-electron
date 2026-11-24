@@ -14,10 +14,12 @@ import { browserTools, startBrowserMcpServer } from "./browser-host/mcp-server.j
 import { createDevHostEngine, devToolDefs } from "./dev-host/engine.js";
 import { wireBrowserMcpConfig } from "./browser-host/config-wiring.js";
 import { pluginsRoot, startPluginRegistry, notifyPluginsChanged } from "./plugins.js";
+import { userPluginsRoot } from "./frontend-plugins.js";
 import { openExternalUrl } from "./native-dialogs.js";
+import { requestNativeQuit } from "./native-quit.js";
 import { readPrefsSync, writePref } from "./prefs.js";
 import { createNotifier } from "./notifier.js";
-import { showSplash, setSplashStatus, closeSplash } from "./splash.js";
+import { showSplash, setSplashStatus, setSplashProgress, closeSplash } from "./splash.js";
 
 // 注册特权标准协议 app://，支持 SPA 静态资源的绝对路径与 Fetch API
 protocol.registerSchemesAsPrivileged([
@@ -59,16 +61,13 @@ if (process.platform === "linux") {
 app.commandLine.appendSwitch("renderer-process-limit", "1");
 app.commandLine.appendSwitch("disable-site-isolation-trials");
 
-// 3. V8 堆内存约束与代码体积优化（限制最大 256MB，优先小内存占用）
-app.commandLine.appendSwitch("js-flags", "--max-old-space-size=256 --optimize-for-size --expose-gc");
-// performance.memory 精确化：不开的话 Chromium 对 JS 堆读数做量化且 ~20s 才刷新，
-// 开发者面板看到的堆是"大约数"，500MB 尖峰会整个被抹掉（stress-cdp.mjs 同一前提）。
-app.commandLine.appendSwitch("enable-precise-memory-info");
-
-// 4. GPU/3D 开关(用户可调,渲染性能模式驱动):默认禁用(受限硬件极致省内存的
-//    旧行为);设置页选 Quality 档时 renderer 会把偏好写进 shell-prefs.json,
-//    **下次启动**不再追加禁用开关(命令行开关只能在进程启动前生效,改档须重启壳)。
-//    纯内存类约束(V8 堆上限/进程数/缓存)与开关无关,恒定不动。
+// 3. GPU/3D 开关与 V8 堆策略(渲染性能模式驱动):
+//    缺省 = 启用硬件 GPU(让独显/核显直接接管亚克力 backdrop-filter 与合成层,
+//    同时保证首次启动的 host_gpu_info 探针能测出真实硬件合成能力,避免"默认禁 GPU
+//    → 探针判为软渲染 → 永久锁死禁用"的自锁闭环)。
+//    仅当低配模式(Low / Auto 实测软渲染或双核)显式写入 gpuDisabled: true 时,
+//    下次启动才追加 --disable-3d-apis 并收紧 V8 堆上限;常规模式移除牺牲 JIT 速度的
+//    --optimize-for-size 并将堆上限放宽至 512MB,消除长会话/Shiki 高亮时的频繁 Major GC 顿挫。
 type ShellPrefs = { gpuDisabled?: boolean };
 const SHELL_PREFS_FILE = join(app.getPath("userData"), "shell-prefs.json");
 function readShellPrefs(): ShellPrefs {
@@ -80,8 +79,15 @@ function writeShellPrefs(prefs: ShellPrefs): void {
   try { writeFileSync(SHELL_PREFS_FILE, JSON.stringify(prefs, null, 2)); } catch {}
 }
 const shellPrefs = readShellPrefs();
-// 缺省 = 禁用(与历史行为一致);只有 Quality 档明确写过 false 才启用 GPU。
-const gpuDisabledNow = shellPrefs.gpuDisabled !== false;
+const gpuDisabledNow = shellPrefs.gpuDisabled === true;
+app.commandLine.appendSwitch(
+  "js-flags",
+  gpuDisabledNow ? "--max-old-space-size=256 --expose-gc" : "--max-old-space-size=512 --expose-gc",
+);
+// performance.memory 精确化：不开的话 Chromium 对 JS 堆读数做量化且 ~20s 才刷新，
+// 开发者面板看到的堆是"大约数"，500MB 尖峰会整个被抹掉（stress-cdp.mjs 同一前提）。
+app.commandLine.appendSwitch("enable-precise-memory-info");
+
 if (gpuDisabledNow) {
   app.commandLine.appendSwitch("disable-3d-apis");
   app.commandLine.appendSwitch("disable-webgl");
@@ -164,7 +170,14 @@ if (!gotLock) {
   });
 }
 
-registerQuitIpcHandler(() => client);
+function triggerNativeQuit(): Promise<void> {
+  return requestNativeQuit({
+    getClient: () => client,
+    getParentWindow: () => mainWindow,
+  });
+}
+
+registerQuitIpcHandler(triggerNativeQuit);
 
 interface WindowState {
   visible: boolean;
@@ -292,7 +305,7 @@ ipcMain.handle("qaqh:power-blocker-state", (event) => {
 function gpuPrefState(): { currentLaunchDisabled: boolean; nextLaunchDisabled: boolean } {
   return {
     currentLaunchDisabled: gpuDisabledNow,
-    nextLaunchDisabled: readShellPrefs().gpuDisabled !== false,
+    nextLaunchDisabled: readShellPrefs().gpuDisabled === true,
   };
 }
 
@@ -446,6 +459,88 @@ function ensureClient(): Promise<RingingClient> {
   return connecting;
 }
 
+const SANDBOX_PREFLIGHT_SEEN_KEY = "sandbox.preflight.seen";
+const SANDBOX_PREFLIGHT_STATE_KEY = "sandbox.preflight.last_state";
+
+function describeSplashBackend(backend: string): string {
+  switch (backend) {
+    case "windows_redirect":
+      return "ProjFS 虚拟重定向沙箱";
+    case "windows_token":
+      return "TokenPlane 内核写隔离";
+    case "linux_bubblewrap":
+      return "Bubblewrap 命名空间沙箱";
+    case "linux_landlock_seccomp":
+      return "Landlock + Seccomp 沙箱";
+    default:
+      return "无内核隔离（审批模式）";
+  }
+}
+
+/**
+ * 启动期沙箱环境分步校验（接在 daemon 就绪之后、主窗展示之前）。
+ *
+ * - 首次启动（或上次校验失败）：按步骤把后端探针进度实时推给 splash 动画，
+ *   最长等待 3.5s，不阻塞主界面；
+ * - 后续常规启动：daemon 启动时已后台触发自检（~200ms），此处最多等待 700ms
+ *   （落在 splash 800ms 最短驻留窗内，几乎零额外耗时），确保进主界面时
+ *   审批层已拿到真实 verified 状态。
+ */
+async function runStartupSandboxPreflight(client: RingingClient): Promise<void> {
+  const prefs = readPrefsSync();
+  const isFirstOrRetry =
+    prefs[SANDBOX_PREFLIGHT_SEEN_KEY] !== "1" ||
+    prefs[SANDBOX_PREFLIGHT_STATE_KEY] === "failed";
+  const maxWaitMs = isFirstOrRetry ? 3_500 : 700;
+  const pollIntervalMs = 100;
+  const startedAt = Date.now();
+
+  try {
+    setSplashStatus(isFirstOrRetry ? "首次启动：正在检测沙箱环境…" : "正在校验沙箱环境…");
+    let report = await client.serviceCall("sandbox.preflight.start", { force: false });
+
+    const renderSplash = (r: typeof report): void => {
+      setSplashProgress(r.progress_percent);
+      if (r.state === "running") {
+        const total = Math.max(1, r.steps.length);
+        const idx = r.steps.findIndex((s) => s.id === r.current_step_id || s.status === "running");
+        const step = idx >= 0 ? r.steps[idx] : undefined;
+        if (step != null) {
+          setSplashStatus(`校验沙箱 (${idx + 1}/${total})：${step.label}…`);
+        } else {
+          setSplashStatus(`正在校验沙箱环境 (${r.progress_percent}%)…`);
+        }
+      }
+    };
+
+    renderSplash(report);
+    while (
+      (report.state === "idle" || report.state === "running") &&
+      Date.now() - startedAt < maxWaitMs
+    ) {
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+      report = await client.serviceCall("sandbox.preflight.status", { run_id: report.run_id });
+      renderSplash(report);
+    }
+
+    if (report.state === "completed" || report.state === "failed") {
+      writePref(SANDBOX_PREFLIGHT_SEEN_KEY, "1");
+      writePref(SANDBOX_PREFLIGHT_STATE_KEY, report.state);
+      setSplashProgress(100);
+      if (report.filesystem_write_enforced) {
+        setSplashStatus(`沙箱就绪：${describeSplashBackend(report.effective_backend)}`);
+      } else {
+        setSplashStatus("沙箱未完全生效，已自动启用审批保护");
+      }
+      if (isFirstOrRetry) {
+        await new Promise((r) => setTimeout(r, 260));
+      }
+    }
+  } catch (err) {
+    console.warn("[app] Startup sandbox preflight skipped:", err);
+  }
+}
+
 async function bootstrapApp(): Promise<void> {
   console.log("[app] Bootstrapping QAQ-Harness Electron shell...");
   // 首件事弹 splash:下面的 ensureClient 冷启动 daemon 最长可等 15s,那期间
@@ -517,18 +612,23 @@ async function bootstrapApp(): Promise<void> {
       callback(audioOnly && isTrustedRenderer(requestUrl));
     });
   }
+  let client: RingingClient | null = null;
   try {
     setSplashStatus("正在启动会话引擎…");
-    await ensureClient();
+    client = await ensureClient();
   } catch (err) {
     console.error("[app] Failed to connect or start qaqh-daemon:", err);
     setSplashStatus("会话引擎未就绪，离线打开界面…");
+  }
+  if (client != null) {
+    await runStartupSandboxPreflight(client);
   }
   // 桌面通知：配置面(notificationsEnabled)与跨会话 waiting_user 边沿靠轮询刷,
   // 会话事件流已在 ensureClient 的 EventSender 双投接入。
   notifier.start();
 
   // 2. Create renderer after IPC registration.
+  setSplashProgress(null);
   setSplashStatus("准备界面…");
   createMainWindow();
   // 2.5 插件注册表：stat-poll 插件目录，graph 帧推渲染层（热更基石，对齐 dsh client-hmr 可移植件）。
@@ -562,12 +662,19 @@ function registerAppProtocol(): void {
         pathname = "/index.html";
       }
 
-      // /plugins/** 由插件根目录提供（app:// 同源，CSP 'self' 覆盖），其余走 renderer。
+      // /plugins/** 由双根提供（用户根 ~/.qaqh/frontend-plugin 优先覆盖 bundled，
+      // 与 plugins.ts scanGraph 同口径；app:// 同源，CSP 'self' 覆盖），其余走 renderer。
       const isPluginAsset = pathname.startsWith("/plugins/");
-      const baseDir = isPluginAsset ? pluginsRoot() : resolveRendererDir();
-      // 插件资产的 baseDir 已是插件根:必须剥掉 /plugins 前缀,否则 resolve 出
-      // plugins/plugins/<id>/… 双段路径,一切插件资产 404(主题/overlay 全灭)。
       const cleanPath = (isPluginAsset ? pathname.slice("/plugins".length) : pathname).replace(/^\/+/, "");
+      let baseDir: string;
+      if (isPluginAsset) {
+        const slash = cleanPath.indexOf("/");
+        const pluginId = slash > 0 ? cleanPath.slice(0, slash) : "";
+        const userRoot = userPluginsRoot();
+        baseDir = pluginId !== "" && existsSync(join(userRoot, pluginId)) ? userRoot : pluginsRoot();
+      } else {
+        baseDir = resolveRendererDir();
+      }
       const filePath = resolve(baseDir, cleanPath);
       const relativePath = relative(baseDir, filePath);
 
@@ -634,6 +741,10 @@ function createMainWindow(): BrowserWindow {
     },
   });
 
+  // 锁 60fps 帧率上限:防止高刷显示器(120/144/165Hz)与 DWM 透明 Mica 合成把
+  // 渲染进程与 GPU 进程拉入翻倍帧预算消耗。
+  mainWindow.webContents.setFrameRate(60);
+
   // 窗口最小化时主动释放渲染缓存并触发垃圾回收
   mainWindow.on("minimize", () => {
     mainWindow?.webContents.session.clearCache().catch(() => {});
@@ -688,8 +799,8 @@ function createMainWindow(): BrowserWindow {
       mainWindow?.hide();
       return;
     }
-    // The renderer owns the quit confirmation (stop daemon / stop active work).
-    requestRendererQuit();
+    // 退出确认由主进程原生系统对话框接管，不依赖 renderer 存活或可见。
+    void triggerNativeQuit();
   });
 
   mainWindow.on("maximize", sendWindowState);
@@ -784,7 +895,7 @@ function setupTray(): void {
         submenu: [
           { label: "关于 QAQ-Harness", role: "about" },
           { type: "separator" },
-          { label: "退出…", accelerator: "CommandOrControl+Q", click: () => requestRendererQuit() },
+          { label: "退出…", accelerator: "CommandOrControl+Q", click: () => void triggerNativeQuit() },
         ],
       },
     ]));
@@ -809,7 +920,7 @@ function setupTray(): void {
       {
         label: "退出 QAQH",
         click: () => {
-          requestRendererQuit();
+          void triggerNativeQuit();
         },
       },
     ]);
@@ -819,23 +930,6 @@ function setupTray(): void {
   } catch (err) {
     console.warn("[tray] Tray setup skipped or failed:", err);
   }
-}
-
-function requestRendererQuit(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    createMainWindow();
-    if (mainWindow) {
-      const target = mainWindow;
-      target.once("ready-to-show", () => {
-        target.show();
-        target.webContents.send("qaqh:event:app://quit-requested", null);
-      });
-    }
-    return;
-  }
-  mainWindow.show();
-  mainWindow.focus();
-  mainWindow.webContents.send("qaqh:event:app://quit-requested", null);
 }
 
 app.on("window-all-closed", () => {

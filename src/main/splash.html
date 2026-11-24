@@ -85,6 +85,17 @@
     background: linear-gradient(90deg, transparent, var(--accent), transparent);
     animation: sweep 1.35s cubic-bezier(.5,0,.5,1) infinite;
   }
+  .fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0%;
+    border-radius: inherit;
+    background: var(--accent);
+    opacity: 0;
+    transition: width 160ms ease, opacity 120ms ease;
+  }
+  .track.determinate .sweep { opacity: 0; animation-play-state: paused; }
+  .track.determinate .fill { opacity: 1; }
   @keyframes sweep {
     0%   { transform: translateX(0); }
     100% { transform: translateX(350%); }
@@ -93,6 +104,11 @@
     font-size: 12.5px;
     color: var(--muted);
     min-height: 17px;
+    max-width: 390px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     letter-spacing: 0.04em;
   }
   .meta {
@@ -119,7 +135,7 @@
     </svg>
   </div>
   <div class="wordmark">OVERCODER</div>
-  <div class="track" aria-hidden="true"><div class="sweep"></div></div>
+  <div class="track" id="track" aria-hidden="true"><div class="sweep"></div><div class="fill" id="fill"></div></div>
   <div class="status" id="status">正在启动…</div>
   <div class="meta" id="meta"></div>
 <script>
@@ -133,6 +149,19 @@
   window.__splashMeta = function (text) {
     var el = document.getElementById("meta");
     if (el && typeof text === "string") el.textContent = text;
+  };
+  window.__splashProgress = function (percent) {
+    var track = document.getElementById("track");
+    var fill = document.getElementById("fill");
+    if (!track || !fill) return;
+    if (typeof percent === "number" && isFinite(percent)) {
+      var clamped = Math.max(0, Math.min(100, Math.round(percent)));
+      track.classList.add("determinate");
+      fill.style.width = clamped + "%";
+    } else {
+      track.classList.remove("determinate");
+      fill.style.width = "0%";
+    }
   };
 </script>
 </body>

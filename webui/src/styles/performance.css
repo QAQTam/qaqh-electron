@@ -11,6 +11,9 @@
   html[data-perf-mode="low"],
   html.perf-mode-low {
     --glass-blur: 0px !important;
+    --acrylic-blur: none !important;
+    --flyout-bg: var(--surface-solid, #27272b) !important;
+    --dialog-bg: var(--surface-solid, #242428) !important;
     --dur-normal: 0.05s !important;
     --dur-slow: 0.1s !important;
     /* 布局/抽屉过渡(motion kit):#app 轨道过渡是逐帧重排,低配机器压短到 0.1s。 */
@@ -19,32 +22,22 @@
   }
 
   /* 精准停用关键组件的毛玻璃滤镜，避免通配符选择器（*）引发的全 DOM 样式重算与布局抖动 */
-  html[data-perf-mode="low"] :is(.session-capsule, .app-sidebar, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .quit-dialog, .turn-deliverables-card, .approval-stack, #approval-slot, .quit-overlay, #top),
-  html.perf-mode-low :is(.session-capsule, .app-sidebar, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .quit-dialog, .turn-deliverables-card, .approval-stack, #approval-slot, .quit-overlay, #top) {
+  html[data-perf-mode="low"] :is(.session-capsule, .app-sidebar, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .turn-deliverables-card, .approval-stack, #approval-slot, #top, .composer-menu, .context-menu, .select-content, .fluent-tooltip, .toast, .connection-notice, .goal-card, .turn-navigator-card, .session-header-dropdown-menu, .message-session-menu, .find-bar, .back-bottom, .shell-dock, .shell-dock-menu, .plugin-dock-bar, .plugin-dock-panel, .workspace-panel.drawer),
+  html.perf-mode-low :is(.session-capsule, .app-sidebar, .message-sidebar, .session-pending-body, .diff-drawer, .card, .dev-console, .turn-deliverables-card, .approval-stack, #approval-slot, #top, .composer-menu, .context-menu, .select-content, .fluent-tooltip, .toast, .connection-notice, .goal-card, .turn-navigator-card, .session-header-dropdown-menu, .message-session-menu, .find-bar, .back-bottom, .shell-dock, .shell-dock-menu, .plugin-dock-bar, .plugin-dock-panel, .workspace-panel.drawer) {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
 
-  /* 浮层与弹窗：实色填充，避免透明混合 */
-  html[data-perf-mode="low"] .composer-menu,
-  html.perf-mode-low .composer-menu,
-  html[data-perf-mode="low"] .context-menu,
-  html.perf-mode-low .context-menu,
-  html[data-perf-mode="low"] .select-content,
-  html.perf-mode-low .select-content,
-  html[data-perf-mode="low"] .fluent-tooltip,
-  html.perf-mode-low .fluent-tooltip,
-  html[data-perf-mode="low"] .settings-page,
-  html.perf-mode-low .settings-page {
-    background: var(--surface) !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18) !important;
+  /* 浮层与弹窗：退回 100% 实色填充 (--surface-solid)，彻底避免透明叠字与 Alpha 混合开销 */
+  html[data-perf-mode="low"] :is(.composer-menu, .context-menu, .select-content, .fluent-tooltip, .settings-page, .toast, .connection-notice, .goal-card, .turn-navigator-card, .session-header-dropdown-menu, .message-session-menu, .find-bar, .back-bottom, .shell-dock, .shell-dock-menu, .plugin-dock-bar, .plugin-dock-panel, .card, .dev-console, .app-sidebar.drawer, .workspace-panel.drawer, .workspace-panel.drawer .workspace-panel-surface),
+  html.perf-mode-low :is(.composer-menu, .context-menu, .select-content, .fluent-tooltip, .settings-page, .toast, .connection-notice, .goal-card, .turn-navigator-card, .session-header-dropdown-menu, .message-session-menu, .find-bar, .back-bottom, .shell-dock, .shell-dock-menu, .plugin-dock-bar, .plugin-dock-panel, .card, .dev-console, .app-sidebar.drawer, .workspace-panel.drawer, .workspace-panel.drawer .workspace-panel-surface) {
+    background: var(--surface-solid, var(--surface)) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22) !important;
   }
 
   /* 遮罩层低配退实底:blur 被关后半透明遮罩挡不住正文,直接铺底色保证分离 */
   html[data-perf-mode="low"] #approval-slot,
-  html.perf-mode-low #approval-slot,
-  html[data-perf-mode="low"] .quit-overlay,
-  html.perf-mode-low .quit-overlay {
+  html.perf-mode-low #approval-slot {
     background: var(--bg) !important;
   }
 

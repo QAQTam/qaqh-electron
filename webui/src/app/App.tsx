@@ -13,7 +13,6 @@
 import { loadConfigSnapshot } from "../lib/config-snapshot";
 
 import { createEffect, createSignal, For, onSettled, Show, type Component } from "solid-js";
-import { invoke, listen, type UnlistenFn } from "../lib/host";
 import IconArrowLeft from "~icons/lucide/arrow-left";
 import IconMenu from "~icons/lucide/menu";
 import IconMoreHorizontal from "~icons/lucide/more-horizontal";
@@ -23,7 +22,6 @@ import IconMicrophone from "~icons/lucide/mic";
 import IconSquareTerminal from "~icons/lucide/square-terminal";
 import { observeShellCols, type ShellCols } from "../lib/shell-cols";
 import { restoreSidebarWidth, shouldCollapseSidebar } from "../lib/sidebar-resize";
-import IconX from "~icons/lucide/x";
 // TabBar is reserved for the future Goal capsule; session navigation lives in Sidebar.
 import { Sidebar, type GlobalSection } from "./Sidebar";
 import { SessionHeader } from "../session/SessionHeader";
@@ -217,10 +215,6 @@ async function stopStaleAndReconnect(): Promise<void> {
 }
 
 const App: Component = () => {
-  const [quitPrompt, setQuitPrompt] = createSignal<number | null | undefined>(undefined);
-  const [quitConfirmStop, setQuitConfirmStop] = createSignal(false);
-  const [quitBusy, setQuitBusy] = createSignal(false);
-  const [quitError, setQuitError] = createSignal<string | null>(null);
   /** 打开设置时要落的导航分区；`undefined` = 用设置页自己的默认分区。 */
   const [settingsSection, setSettingsSection] = createSignal<string | undefined>(undefined);
   /** 工具页分区:与 settingsSection 同套路,导航在左栏(复用会话列表栏位)。 */
@@ -230,7 +224,6 @@ const App: Component = () => {
   /** 重连倒计时的每秒心跳:仅在活动标签 reconnecting 期间运转(见 connectionNotice)。 */
   const [reconnectTick, setReconnectTick] = createSignal(0);
   let reconnectTickTimer: number | null = null;
-  let quitCancelButton: HTMLButtonElement | undefined;
 
   /** 系统准星占着屏幕:一次只允许一个截图动作在飞。 */
   const [shotBusy, setShotBusy] = createSignal(false);
@@ -361,7 +354,7 @@ const App: Component = () => {
       }
       return; // Never send/focus/toggle the underlying composer or panel under a modal.
     }
-    if (settingsOpen() || onboardingVisible() || quitPrompt() !== undefined) return;
+    if (settingsOpen() || onboardingVisible()) return;
     if (action.kind === "voice-start") { vibrateGamepad(90, 0.3, 0.15); startTalk(); return; }
     if (action.kind === "voice-stop") { void voice.talkStop(); return; }
     if (action.kind === "toggle-panel") {
@@ -384,7 +377,7 @@ const App: Component = () => {
 
   onSettled(() => {
     const gamepad = new GamepadController(
-      () => gamepadMode() && !settingsOpen() && !onboardingVisible() && quitPrompt() === undefined,
+      () => gamepadMode() && !settingsOpen() && !onboardingVisible(),
       (action) => handleGamepadAction(action),
       setGamepadDevice,
       () => voiceOn(),
@@ -458,7 +451,6 @@ const App: Component = () => {
 
     // Electron:外链一律走系统浏览器;宿主诊断事件(兼容性失败/宿主错误/liveness)。
     let unlistenHost: (() => void) | null = null;
-    let unlistenQuit: UnlistenFn | null = null;
     let onClickCleanup: (() => void) | null = null;
     let stopCols: (() => void) | null = null;
     {
@@ -467,10 +459,6 @@ const App: Component = () => {
       if (appEl != null) stopCols = observeShellCols(appEl, { withClasses: false, onChange: setAppCols });
     }
     if (isDesktop) {
-      void listen<void>("app://quit-requested", () => openQuitDialog()).then((unlisten) => {
-        unlistenQuit = unlisten;
-      });
-
       const onClick = (event: MouseEvent): void => {
         const target = event.target instanceof Element ? event.target : null;
         const anchor = target?.closest("a[href]");
@@ -494,12 +482,6 @@ const App: Component = () => {
     const onKey = (event: KeyboardEvent): void => {
       // 首次引导遮罩在最高层：应用快捷键全部让路（不 preventDefault，输入框照常打字）。
       if (onboardingVisible()) return;
-      if (quitPrompt() !== undefined && event.key === "Escape") {
-        event.preventDefault();
-        setQuitPrompt(undefined);
-        setQuitConfirmStop(false);
-        return;
-      }
       // 控制台在设置浮层之上:ESC 先退一层,而不是连设置一起关掉。
       if (event.key === "Escape" && devConsoleOpen()) {
         event.preventDefault();
@@ -529,7 +511,7 @@ const App: Component = () => {
       }
       if (accel && !event.shiftKey && (event.key === "q" || event.key === "Q")) {
         event.preventDefault();
-        openQuitDialog();
+        requestQuit();
         return;
       }
       // 浮层开着时快捷键归浮层:Ctrl+W/Tab/1-9 不该在遮罩背后建会话、切标签。
@@ -614,25 +596,11 @@ const App: Component = () => {
       onClickCleanup?.();
       unlistenConfig();
       unlistenHost?.();
-      unlistenQuit?.();
     };
   });
 
-  const finishExit = async (stopDaemon: boolean, stopActiveWork = false): Promise<void> => {
-    if (quitBusy()) return;
-    setQuitBusy(true);
-    setQuitError(null);
-    try {
-      const host = desktopHost();
-      if (host != null) {
-        await host.requestQuit({ stopDaemon, stopActiveWork });
-      } else {
-        await invoke("exit_app", { stopDaemon, stopActiveWork });
-      }
-    } catch (cause) {
-      setQuitError(cause instanceof Error ? cause.message : String(cause));
-      setQuitBusy(false);
-    }
+  const requestQuit = (): void => {
+    void desktopHost()?.requestQuit();
   };
 
   const active = (): ReturnType<typeof activeTab> => activeTab();
@@ -737,24 +705,6 @@ const App: Component = () => {
     openSettingsAt("section-providers");
   };
 
-  /** 退出确认对话框:⋯菜单、Ctrl+Q、主进程 quit-requested 三条入口共用这一份。 */
-  const openQuitDialog = (): void => {
-    setQuitConfirmStop(false);
-    setQuitError(null);
-    void transport.query("session.activity", {})
-      .then((activities) => {
-        const activeCount = activities.filter((item) =>
-          item.state === "running" || item.state === "waiting_user" || item.state === "cancelling",
-        ).length;
-        setQuitPrompt(activeCount);
-        requestAnimationFrame(() => quitCancelButton?.focus());
-      })
-      .catch(() => {
-        setQuitPrompt(null);
-        requestAnimationFrame(() => quitCancelButton?.focus());
-      });
-  };
-
   /**
    * 壳层 ⋯ 菜单(spec §5.5 阶段1):application menu 的动作在此全部可达,
    * 复用应用内右键菜单宿主(定位/键盘/外点关闭都已有行为)。
@@ -776,7 +726,7 @@ const App: Component = () => {
         onSelect: () => openSettingsAt("section-about"),
       },
       { kind: "separator" },
-      { kind: "action", label: "退出…", hint: "Ctrl+Q", onSelect: () => openQuitDialog() },
+      { kind: "action", label: "退出…", hint: "Ctrl+Q", onSelect: () => requestQuit() },
     ];
     openContextMenu({ x: rect.right - 220, y: rect.bottom + 6, items });
   };
@@ -1196,64 +1146,6 @@ const App: Component = () => {
         <div class="connection-notice" role="status" aria-live="polite">
           <span>{connectionNotice()}</span>
           <button type="button" class="ghost-mini" onClick={retryConnection}>{STR.retry}</button>
-        </div>
-      </Show>
-      <Show when={quitPrompt() !== undefined}>
-        <div class="quit-overlay" role="presentation">
-          <section class="quit-dialog" role="dialog" aria-modal="true" aria-labelledby="quit-dialog-title">
-            <header class="quit-dialog-head">
-              <strong id="quit-dialog-title">退出 QAQH</strong>
-              <button type="button" class="icon-btn" aria-label="取消退出" onClick={() => { setQuitPrompt(undefined); setQuitConfirmStop(false); }} disabled={quitBusy()}>
-                <IconX />
-              </button>
-            </header>
-            <div class="quit-dialog-body">
-              <Show when={quitPrompt() === null} fallback={
-                <Show when={(quitPrompt() ?? 0) > 0} fallback={
-                  <>
-                    <p>当前没有运行中或等待处理的会话。</p>
-                    <p class="quit-dialog-note">停止 daemon 会断开其他客户端；也可以退出 QAQH 并让服务留在后台。</p>
-                  </>
-                }>
-                  <p>有 <b>{quitPrompt()}</b> 个会话正在运行或等待处理。</p>
-                  <p class="quit-dialog-note">退出界面会让后台任务继续运行。停止 daemon 会中断所有客户端连接中的会话。</p>
-                </Show>
-              }>
-                <p>暂时无法确认 daemon 的活动状态。为保护后台任务，建议退出界面并让 daemon 继续运行。</p>
-                <p class="quit-dialog-note">停止服务选项会保持禁用，直到活动状态可查询。</p>
-              </Show>
-              <Show when={quitError() != null}><p class="quit-dialog-error" role="alert">{quitError()}</p></Show>
-              <Show when={quitConfirmStop()}>
-                <div class="quit-stop-confirm" role="alert">
-                  <b>确认停止所有后台任务？</b>
-                  <p>这会优雅关闭共享 daemon，并中断运行中或等待授权的会话。其他客户端也会断开。</p>
-                </div>
-              </Show>
-            </div>
-            <footer class="quit-dialog-actions">
-              <Show when={quitConfirmStop()} fallback={
-                <>
-                  <button ref={quitCancelButton} type="button" class="button-secondary" onClick={() => { setQuitPrompt(undefined); setQuitConfirmStop(false); }} disabled={quitBusy()}>取消</button>
-                  <button type="button" class="button-secondary" onClick={() => void finishExit(false)} disabled={quitBusy()}>
-                    退出并保留后台任务
-                  </button>
-                  <Show when={quitPrompt() !== null}>
-                    <button type="button" class="button-danger" onClick={() => {
-                      if ((quitPrompt() ?? 0) > 0) setQuitConfirmStop(true);
-                      else void finishExit(true);
-                    }} disabled={quitBusy()}>
-                      {(quitPrompt() ?? 0) > 0 ? "停止任务并退出…" : "退出并停止空闲服务"}
-                    </button>
-                  </Show>
-                </>
-              }>
-                <button ref={quitCancelButton} type="button" class="button-secondary" onClick={() => setQuitConfirmStop(false)} disabled={quitBusy()}>返回</button>
-                <button type="button" class="button-danger" onClick={() => void finishExit(true, true)} disabled={quitBusy()}>
-                  {quitBusy() ? "正在停止…" : "确认停止并退出"}
-                </button>
-              </Show>
-            </footer>
-          </section>
         </div>
       </Show>
       <Show when={gamepadMode()}>

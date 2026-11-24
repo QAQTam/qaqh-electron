@@ -77,12 +77,3 @@
 .team-agent-status[data-status="not_found"] { color: var(--err); }
 .team-agent-status[data-status="interrupted"],
 .team-agent-status[data-status="shutdown"] { color: var(--warn); }
-
-.team-board { display: grid; gap: 10px; }
-.team-channel { display: grid; gap: 6px; }
-.team-channel-name { font-size: var(--fs-sm); color: var(--text); font-weight: 500; }
-.team-channel-topic { font-size: var(--fs-xs); color: var(--muted); margin-left: 8px; }
-.team-threads { margin: 0; padding-left: 14px; list-style: none; display: grid; gap: 2px; }
-.team-thread { display: flex; align-items: center; gap: 10px; font-size: var(--fs-xs); }
-.team-thread-title { color: var(--text); overflow-wrap: anywhere; }
-.team-thread-count { color: var(--muted); flex: none; }

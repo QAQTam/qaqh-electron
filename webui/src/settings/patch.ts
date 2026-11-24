@@ -49,7 +49,7 @@ export const WIRE_LABELS: Record<string, string> = {
   gemini: "gemini（Google generateContent）",
 };
 
-/** "" = 跟随系统(apply_patch:lang/theme/tokenizerPath 空串 = 清除)。 */
+/** "" = 跟随系统(apply_patch:lang/theme 空串 = 清除)。 */
 export const THEME_OPTIONS = [
   { value: "", label: "跟随系统" },
   { value: "light", label: "浅色" },
@@ -95,13 +95,6 @@ type Sink = Record<string, unknown>;
 
 const norm = (value: string | null): string => value ?? "";
 
-/** 空串 = 显式清除的字段(lang/theme/tokenizerPath):与基线不同就发,含发空串。 */
-function clearable(patch: Sink, key: string, baseline: string | null, next: string | null): void {
-  const value = norm(next);
-  if (value === norm(baseline)) return;
-  patch[key] = value;
-}
-
 function changed<T>(patch: Sink, key: string, baseline: T, next: T): void {
   if (next === baseline) return;
   patch[key] = next;
@@ -128,8 +121,6 @@ export function buildGoalsPatch(baseline: GoalsDto, draft: GoalsDto): GoalsPatch
 /** baseline 与 draft 的差 → Merge Patch;没有差异时得到 `{}`。 */
 export function buildPatch(baseline: ConfigDto, draft: ConfigDto): ConfigPatchWire {
   const raw: Sink = {};
-  // 空串 = 清除
-  clearable(raw, "tokenizerPath", baseline.tokenizerPath, draft.tokenizerPath);
   changed(raw, "autoCompactThreshold", baseline.autoCompactThreshold, draft.autoCompactThreshold);
   changed(raw, "permissionLevel", baseline.permissionLevel, draft.permissionLevel);
   changed(raw, "sessionIdleUnloadSecs", baseline.sessionIdleUnloadSecs, draft.sessionIdleUnloadSecs);

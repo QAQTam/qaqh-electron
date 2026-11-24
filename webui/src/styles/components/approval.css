@@ -30,12 +30,14 @@
   @keyframes approval-fade { from { opacity: 0; } to { opacity: 1; } }
   @keyframes approval-pop { from { opacity: 0; transform: translateY(6px) scale(.99); } to { opacity: 1; transform: none; } }
   .card {
-    background: var(--surface);
-    border: 1px solid var(--border-strong);
+    background: var(--dialog-bg, var(--surface-solid, var(--surface)));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    border: 1px solid var(--stroke-control, var(--border-strong));
     border-radius: var(--r-lg);
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
-    box-shadow: var(--shadow-panel);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
   }
   .card.perm.high { border-color: var(--err); box-shadow: inset 3px 0 0 var(--err), var(--shadow-panel); }
   /* ask 比另两张卡多一条问题轨,轨道占自己的 auto 行,可滚的仍是卡身。 */
@@ -131,7 +133,7 @@
     display: flex; gap: 8px; align-items: center;
     padding: 10px 14px;
     border-top: 1px solid var(--border);
-    background: var(--surface);
+    background: transparent;
     border-radius: 0 0 var(--r-lg) var(--r-lg);
   }
   .card-actions .primary {

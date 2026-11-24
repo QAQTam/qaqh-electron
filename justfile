@@ -13,6 +13,7 @@ build_version := env_var_or_default("QAQH_BUILD_VERSION", release_version)
 # 后端主仓（main）：打包/契约导出/check 一律走 ../qaqh-backend；
 # 改验证另一份后端时用 QAQH_BACKEND_DIR 覆盖（相对仓根或绝对路径）。
 backend_dir := env_var_or_default("QAQH_BACKEND_DIR", "../qaqh-backend")
+pets_dir := env_var_or_default("QAQH_PETS_DIR", "../qaqh-pets")
 build_commit := `git rev-parse HEAD`
 build_short := `git rev-parse --short=8 HEAD`
 # 跨 shell 写法：pwsh/bash 下等价，避免依赖 bash 的 if/printf。
@@ -23,6 +24,7 @@ export QAQH_GIT_COMMIT := build_commit
 export QAQH_GIT_DIRTY := build_dirty
 export QAQH_BUILD_ID := build_commit
 export QAQH_BACKEND_DIR := backend_dir
+export QAQH_PETS_DIR := pets_dir
 
 default:
     @just --list

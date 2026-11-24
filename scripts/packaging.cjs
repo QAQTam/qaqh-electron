@@ -51,8 +51,10 @@ function expectedPackageVersion(sourceVersion, env = process.env) {
 function assertInputs(root, platform = process.platform) {
   const daemonName = platform === "win32" ? "qaqh-daemon.exe" : "qaqh-daemon";
   const updaterName = platform === "win32" ? "qaqh-update.exe" : null;
-  for (const file of [...requiredFiles, `resources/bin/${daemonName}`,
-    ...(updaterName ? [`resources/bin/${updaterName}`] : [])]) {
+  const winExtras = platform === "win32"
+    ? [`resources/bin/${updaterName}`, "resources/pet/qaqh-pet.exe", "resources/pet/packs/default/pack.json"]
+    : [];
+  for (const file of [...requiredFiles, `resources/bin/${daemonName}`, ...winExtras]) {
     const path = join(root, file);
     if (!existsSync(path) || !statSync(path).isFile() || statSync(path).size === 0) {
       throw new Error(`Missing or empty packaging input: ${file}. Run just build dir.`);
@@ -63,6 +65,10 @@ function assertInputs(root, platform = process.platform) {
   if (platform === "win32") {
     if (header.length < 64 || header.toString("ascii", 0, 2) !== "MZ") {
       throw new Error("qaqh-daemon.exe must be a Windows PE executable.");
+    }
+    const petHeader = readFileSync(join(root, "resources/pet/qaqh-pet.exe"));
+    if (petHeader.length < 64 || petHeader.toString("ascii", 0, 2) !== "MZ") {
+      throw new Error("qaqh-pet.exe must be a Windows PE executable.");
     }
   } else {
     if (!(statSync(daemon).mode & 0o111)) throw new Error("qaqh-daemon is not executable.");

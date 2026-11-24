@@ -32,12 +32,6 @@ mcp: McpDto,
  */
 lsp: LspDto, 
 /**
- * Path to a HuggingFace tokenizer.json。
- * 空 = 启发式估算兜底（agent 状态层的 `<heuristic>`）；变更需**重启 daemon**
- * （tokenizer 是 qaqh-types 的进程级 `OnceLock`，仅在 load 时初始化一次）。
- */
-tokenizerPath: string | null, 
-/**
  * exec 工具默认执行配置（热字段；`exec.default_shell` 被 exec 真正消费）。
  */
 exec: ExecDto, 

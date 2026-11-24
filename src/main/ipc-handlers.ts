@@ -9,6 +9,7 @@ import { globalCommandTarget, loadNativeAddon, sessionCommandTarget } from "./na
 import { isAlive } from "./daemon.js";
 import { pluginsRoot, notifyPluginsChanged } from "./plugins.js";
 import { importPlugin, listManagedPlugins, removePlugin, setPluginEnabled } from "./frontend-plugins.js";
+import { petStart, petStatus, petStop } from "./pet.js";
 import type { RingingCommand } from "../../webui/src/api/qaqh/RingingCommand";
 import type { CommandTarget } from "../../webui/src/api/qaqh/CommandTarget";
 import type { CommandPrecondition } from "../../webui/src/api/qaqh/CommandPrecondition";
@@ -197,19 +198,12 @@ function readPreconditions(value: unknown): CommandPrecondition[] {
   });
 }
 
-export function registerQuitIpcHandler(getClient: () => RingingClient | null): void {
-  ipcMain.handle("qaqh:request-quit", async (event, args: { stopDaemon?: boolean; stopActiveWork?: boolean } = {}) => {
+export function registerQuitIpcHandler(onQuitRequested: () => Promise<void>): void {
+  ipcMain.handle("qaqh:request-quit", async (event) => {
     if (event.senderFrame !== event.sender.mainFrame || !isTrustedRenderer(event.senderFrame?.url ?? "")) {
       throw new Error("IPC sender is not the application renderer");
     }
-    if (args.stopDaemon) {
-      const client = getClient();
-      if (!client) throw new Error("尚未连接 daemon，无法安全停止");
-      const status = await client.stopDaemon(args.stopActiveWork === true ? false : true);
-      if (status === "busy") throw new Error("后台任务状态刚刚变化；为保护任务，daemon 未停止");
-      if (status === "unsupported") throw new Error("当前 daemon 不支持安全停止");
-    }
-    app.quit();
+    await onQuitRequested();
   });
 
   type NativeMenuSpec =
@@ -593,16 +587,6 @@ async function handleCommand(
       return client.shellResize(requireId(args.shell_id, "shell_id"), args.cols, args.rows);
     }
 
-    case "exit_app": {
-      if (args.stopDaemon === true) {
-        const status = await client.stopDaemon(args.stopActiveWork === true ? false : true);
-        if (status === "busy") throw new Error("后台任务状态刚刚变化；为保护任务，daemon 未停止");
-        if (status === "unsupported") throw new Error("当前 daemon 不支持安全停止");
-      }
-      app.quit();
-      return null;
-    }
-
     case "app_version": {
       // 版本固定取 package.json(4.0.0)，不再拼接 git 提交/日期。
       const version = process.env.QAQH_BUILD_VERSION || app.getVersion();
@@ -881,6 +865,19 @@ async function handleCommand(
       const found = listManagedPlugins(pluginsRoot()).find((plugin) => plugin.id === String(args?.id));
       if (found != null) shell.showItemInFolder(join(found.path, "plugin.json"));
       return found != null;
+    }
+
+    /* ── 原生桌面宠物（qaqh-pet）：设置页启停与状态探针 ─────────────── */
+    case "pet_status": {
+      return await petStatus();
+    }
+
+    case "pet_start": {
+      return await petStart();
+    }
+
+    case "pet_stop": {
+      return await petStop();
     }
 
     case "pick_attachments": {

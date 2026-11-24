@@ -24,6 +24,12 @@ export type { ModelDef } from "./qaqh/ModelDef";
 export type { ModelSelection } from "./qaqh/ModelSelection";
 export type { RingingCommand } from "./qaqh/RingingCommand";
 export type { RingingV2CommandAck } from "./qaqh/RingingV2CommandAck";
+export type { SandboxPreflightReport } from "./qaqh/SandboxPreflightReport";
+export type { SandboxPreflightStartParams } from "./qaqh/SandboxPreflightStartParams";
+export type { SandboxPreflightState } from "./qaqh/SandboxPreflightState";
+export type { SandboxPreflightStatusParams } from "./qaqh/SandboxPreflightStatusParams";
+export type { SandboxPreflightStep } from "./qaqh/SandboxPreflightStep";
+export type { SandboxPreflightStepStatus } from "./qaqh/SandboxPreflightStepStatus";
 export type { SessionActivityState } from "./qaqh/SessionActivityState";
 export type { SessionBootstrap } from "./qaqh/SessionBootstrap";
 export type { SessionContentRef } from "./qaqh/SessionContentRef";
@@ -70,6 +76,9 @@ import type { ShellCloseResult } from "./qaqh/ShellCloseResult";
 import type { ShellListResult } from "./qaqh/ShellListResult";
 import type { ShellOpenParams } from "./qaqh/ShellOpenParams";
 import type { ShellView } from "./qaqh/ShellView";
+import type { SandboxPreflightReport } from "./qaqh/SandboxPreflightReport";
+import type { SandboxPreflightStartParams } from "./qaqh/SandboxPreflightStartParams";
+import type { SandboxPreflightStatusParams } from "./qaqh/SandboxPreflightStatusParams";
 
 /** 服务面 typed 方法表（真源：qaqh-client 的封闭查询枚举 + 账号面白名单）。 */
 export type ServiceMap = {
@@ -114,4 +123,7 @@ export type ServiceMap = {
   "shell.open": { params: ShellOpenParams; result: ShellView };
   "shell.close": { params: ShellCloseParams; result: ShellCloseResult };
   "shell.list": { params: Record<never, never>; result: ShellListResult };
+  // 沙箱启动分步自检面（ADR-0040）
+  "sandbox.preflight.start": { params: SandboxPreflightStartParams; result: SandboxPreflightReport };
+  "sandbox.preflight.status": { params: SandboxPreflightStatusParams; result: SandboxPreflightReport };
 };

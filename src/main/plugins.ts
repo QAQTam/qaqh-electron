@@ -198,7 +198,9 @@ export function startPluginRegistry(getWindow: () => BrowserWindow | null): () =
     tick();
   };
   tick();
-  const timer = setInterval(tick, 1000);
+  // 打包环境下本地管理动作(导入/启停/删除)已通过 notifyPluginsChanged() 立即触发,
+  // 轮询周期放宽到 10s,避免每秒同步 statSync/readFileSync 唤醒主进程;开发期保持 1.5s 热更响应。
+  const timer = setInterval(tick, app.isPackaged ? 10_000 : 1_500);
   return () => {
     clearInterval(timer);
     if (pluginTickNotify === tick) pluginTickNotify = null;

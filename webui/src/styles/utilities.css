@@ -69,7 +69,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    #approval-slot, .approval-wrap, .quit-overlay, .quit-dialog { animation: none; }
+    #approval-slot, .approval-wrap { animation: none; }
     .dev-overlay, .dev-console, .dev-pip { animation: none; }
     .dev-state.is-live::before { animation: none; }
   }

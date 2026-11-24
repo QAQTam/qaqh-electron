@@ -35,12 +35,26 @@ import { Switch } from "./controls";
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 
+interface PetStatusView {
+  running: boolean;
+  pid: number | null;
+  exePath: string | null;
+  exeExists: boolean;
+  port: number;
+  daemonConnected: boolean;
+  pose: string | null;
+  activityLabel: string | null;
+  balanceDisplay: string | null;
+}
+
 export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) => {
   const [build, setBuild] = createSignal<BuildInfo | null>(null);
   const [daemonVersion, setDaemonVersion] = createSignal<string | null>(null);
   const [lan, setLan] = createSignal<DaemonLanStatus | null>(null);
   const [memory, setMemory] = createSignal<Awaited<ReturnType<typeof loadHostMemory>>>(null);
   const [group, setGroup] = createSignal<ProcessGroup | null>(null);
+  const [pet, setPet] = createSignal<PetStatusView | null>(null);
+  const [petBusy, setPetBusy] = createSignal(false);
   const [busy, setBusy] = createSignal<string | null>(null);
   const [note, setNote] = createSignal<string | null>(null);
   const [powerMode, setPowerMode] = createSignal<PowerBlockerMode>("off");
@@ -84,6 +98,10 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
         const controls = desktopHost()?.windowControls;
         return controls == null ? null : controls.state();
       }, (value) => { if (value != null) setHostWindowState(value); }),
+      attempt("桌面宠物", async () => {
+        const host = desktopHost();
+        return host == null ? null : host.invoke<PetStatusView>("pet_status");
+      }, setPet),
     ]);
     setNote(failures.length > 0 ? failures.join(" · ") : null);
     setBusy(null);
@@ -159,6 +177,22 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
     }
   };
 
+  const togglePet = async (enable: boolean): Promise<void> => {
+    const host = desktopHost();
+    if (host == null || petBusy()) return;
+    setPetBusy(true);
+    try {
+      const next = await host.invoke<PetStatusView>(enable ? "pet_start" : "pet_stop");
+      setPet(next);
+      toast(next.running ? "桌面宠物已启动（双击桌宠可随时返回主窗）" : "桌面宠物已关闭", "ok");
+    } catch (cause) {
+      toast(`${enable ? "启动" : "关闭"}桌面宠物失败：${messageOf(cause)}`, "err");
+      try { setPet(await host.invoke<PetStatusView>("pet_status")); } catch {}
+    } finally {
+      setPetBusy(false);
+    }
+  };
+
   const setPowerToggles = async (keepAwake: boolean, keepBright: boolean): Promise<void> => {
     const bridge = desktopHost()?.powerBlocker;
     if (bridge == null) {
@@ -206,6 +240,47 @@ export const HostSection: Component<{ onOpenPairing?: () => void }> = (props) =>
             onToggle={(value) => void setPowerToggles(value || powerMode() !== "off", value)}
           />
         </div>
+      </SettingGroup>
+
+      <SettingGroup
+        title="桌面宠物"
+        desc="独立原生 Rust 桌宠（星灵 Astra）：直连 daemon 显示思考/回答/待审批与余额，主窗关闭后仍可常驻，双击即可唤回本窗口。"
+      >
+        <div class="ui-setting-row">
+          <Switch
+            label="启动桌面宠物"
+            hint={
+              pet() == null
+                ? "仅 Electron 桌面壳支持"
+                : pet()!.running
+                  ? `运行中 · ${pet()!.daemonConnected ? (pet()!.activityLabel ?? "已连 daemon") : "等待 daemon"}${pet()!.balanceDisplay ? ` · ${pet()!.balanceDisplay}` : ""}`
+                  : pet()!.exeExists
+                    ? "已就绪，开启后将在桌面右下角悬浮显示"
+                    : `未找到可执行文件：${pet()!.exePath ?? "qaqh-pet.exe"}`
+            }
+            checked={pet()?.running === true}
+            disabled={desktopHost() == null || petBusy() || (pet()?.running !== true && pet()?.exeExists === false)}
+            onToggle={(value) => void togglePet(value)}
+          />
+        </div>
+        <Show when={pet() != null}>
+          <SettingRow
+            label="当前状态"
+            desc={pet()!.exePath ?? "未配置路径"}
+          >
+            <Badge tone={pet()!.running ? (pet()!.daemonConnected ? "ok" : "warn") : "neutral"}>
+              {pet()!.running ? (pet()!.daemonConnected ? (pet()!.activityLabel ?? "已连接") : "离线待连") : "未运行"}
+            </Badge>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={petBusy()}
+              onClick={() => void togglePet(!(pet()?.running === true))}
+            >
+              {pet()?.running ? "关闭桌宠" : "打开桌宠"}
+            </Button>
+          </SettingRow>
+        </Show>
       </SettingGroup>
 
       <SettingGroup

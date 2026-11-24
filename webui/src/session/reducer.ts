@@ -896,7 +896,11 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
       break;
     }
     case "timeline_appended":
-      applyTimelineEntry(draft, event.entry, new Map(bootstrapTools(draft)));
+      applyTimelineEntry(
+        draft,
+        event.entry,
+        event.entry.kind === "tool_call" ? new Map(bootstrapTools(draft, event.entry.data.call_id)) : EMPTY_TOOLS,
+      );
       break;
     case "timeline_truncated": {
       // 撤回:内核已经按 `ord` 把 `from_turn_id`(含)之后的块、工具、交互、exec 行
@@ -950,11 +954,14 @@ export function applySessionEvent(draft: SessionState, event: SessionEventFrame)
   return draft;
 }
 
-function bootstrapTools(draft: SessionState): [string, ToolCallView][] {
+const EMPTY_TOOLS = new Map<string, ToolCallView>();
+
+function bootstrapTools(draft: SessionState, targetCallId?: string): [string, ToolCallView][] {
   const result: [string, ToolCallView][] = [];
   for (const turn of Object.values(draft.turns)) {
     for (const step of turn.steps) {
       if (step.kind !== "tool") continue;
+      if (targetCallId != null && step.id !== targetCallId) continue;
       const args = step.argsJson ? (parseJsonish(step.argsJson) ?? step.argsJson) : null;
       const output = step.outputRef
         ? { kind: "ref" as const, data: { content_ref: step.outputRef } }
@@ -970,6 +977,7 @@ function bootstrapTools(draft: SessionState): [string, ToolCallView][] {
         output_truncated: step.output?.truncated === true,
         metrics: null,
       }]);
+      if (targetCallId != null) return result;
     }
   }
   return result;

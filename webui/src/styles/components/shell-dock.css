@@ -6,9 +6,12 @@
     transform: translateX(-50%);
     width: min(100vw, 1560px); height: min(92dvh, 1100px);
     display: flex; flex-direction: column;
-    background: var(--surface); color: var(--text);
-    border: 1px solid var(--border-strong); border-bottom: 0;
-    border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: var(--shadow-panel);
+    background: var(--dialog-bg, var(--surface-solid, var(--surface))); color: var(--text);
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    border: 1px solid var(--stroke-control, var(--border-strong)); border-bottom: 0;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
     animation: shell-dock-slide-up 200ms cubic-bezier(0.2, 0, 0, 1);
   }
   @keyframes shell-dock-slide-up {
@@ -76,9 +79,11 @@
   .shell-dock-menu {
     position: absolute; z-index: 61; top: calc(100% + 4px); left: 0;
     display: grid; gap: 2px; width: 320px; max-width: 86vw; padding: 6px;
-    background: var(--surface); color: var(--text);
-    border: 1px solid var(--border-strong); border-radius: var(--r-md);
-    box-shadow: var(--shadow-panel);
+    background: var(--flyout-bg, var(--surface)); color: var(--text);
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    border: 1px solid var(--stroke-control, var(--border-strong)); border-radius: var(--r-md);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
   }
   .shell-dock-menu-item {
     display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px;

@@ -11,11 +11,13 @@
     min-width: 156px;
     max-width: min(300px, 78vw);
     padding: 5px;
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--stroke-control, var(--border-strong));
     border-radius: var(--r-md);
     color: var(--text);
-    background: var(--surface);
-    box-shadow: var(--shadow-panel);
+    background: var(--flyout-bg, var(--surface));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
   }
   .context-menu > button {
     display: grid;

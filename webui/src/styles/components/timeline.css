@@ -84,8 +84,11 @@
     position: absolute; left: 0; top: calc(100% + 4px);
     z-index: 50; display: grid; gap: 6px;
     width: 300px; padding: 10px;
-    border: 1px solid var(--border-strong); border-radius: var(--radius-panel);
-    background: var(--surface); box-shadow: var(--shadow-panel);
+    border: 1px solid var(--stroke-control, var(--border-strong)); border-radius: var(--radius-panel);
+    background: var(--flyout-bg, var(--surface));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
   }
   .goal-card-head { display: flex; align-items: center; gap: 8px; }
   .goal-card-status {
@@ -163,8 +166,11 @@
     position: absolute; left: 0; top: calc(100% + 4px);
     z-index: 50; display: grid; gap: 2px;
     min-width: 160px; padding: 6px;
-    border: 1px solid var(--border-strong); border-radius: var(--radius-panel);
-    background: var(--surface); box-shadow: var(--shadow-panel);
+    border: 1px solid var(--stroke-control, var(--border-strong)); border-radius: var(--radius-panel);
+    background: var(--flyout-bg, var(--surface));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
   }
   .session-header-menu-item {
     display: flex; align-items: center; gap: 8px;
@@ -201,11 +207,14 @@
   .turn-navigator-tick.active .turn-navigator-mark { width: 14px; height: 3px; background: var(--text); }
   .turn-navigator-tick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .turn-navigator-card {
-    position: absolute; left: calc(100% + 9px); top: 50%; z-index: 2;
+    position: absolute; left: calc(100% + 9px); top: 50%; z-index: 20;
     display: grid; gap: 6px; width: min(280px, calc(100vw - 64px)); max-height: 180px;
     overflow: hidden; padding: 10px 12px; transform: translateY(-50%);
-    border: 1px solid var(--border); border-radius: var(--r-md);
-    color: var(--text); background: var(--surface); box-shadow: var(--shadow-panel);
+    border: 1px solid var(--stroke-control, var(--border)); border-radius: var(--r-md);
+    color: var(--text); background: var(--flyout-bg, var(--surface));
+    -webkit-backdrop-filter: var(--acrylic-blur, none);
+    backdrop-filter: var(--acrylic-blur, none);
+    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
     text-align: left; font-size: var(--fs-xs); line-height: 1.5; pointer-events: none;
   }
   .turn-navigator-question, .turn-navigator-answer {
@@ -426,9 +435,12 @@
   /* 堆栈类错误正文上窗:错误可见 ≠ 错误铺满全屏。 */
   .turn-error p { max-height: 240px; overflow: auto; overscroll-behavior: contain; }
 
-  /* 折叠行「已工作 X 秒」(§7.3) */
+  /* 折叠行「已工作 X 秒」(§7.3) 与 4 行无滚动条滑动窗头部 */
+  .work-group-bar {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
   .collapsed-row {
-    display: flex; align-items: center; gap: 6px;
+    display: inline-flex; align-items: center; gap: 6px;
     min-height: 28px; padding: 2px 6px;
     border-radius: var(--r-md);
     color: var(--muted); font-size: var(--fs-sm); line-height: 1.5;
@@ -436,8 +448,29 @@
   }
   .collapsed-row:hover { background: var(--surface-2); }
   .collapsed-row svg { width: 14px; height: 14px; }
+  .work-step-count {
+    color: var(--muted); font-size: var(--fs-xs); opacity: .78;
+    font-variant-numeric: tabular-nums;
+  }
+  .work-expand-all {
+    display: inline-flex; align-items: center;
+    min-height: 22px; padding: 1px 8px;
+    border: 1px solid var(--border); border-radius: var(--radius-pill);
+    background: transparent; color: var(--muted);
+    font-size: 11px; line-height: 1.4; cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  }
+  .work-expand-all:hover {
+    color: var(--text); background: var(--surface-2); border-color: var(--border-strong);
+  }
+  /* 运行中 4 行滑动窗顶部羽化渐隐:无需滚动条即可直观表达「上方还有已滚过的历史步骤」。 */
+  .turn-steps.is-windowed {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.45) 12px, #000 28px);
+    mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.45) 12px, #000 28px);
+  }
 
-  /* ── 跨类型聚合条(RunGroup)：统计句一行,展开体 16 行封顶内滚 ──
+  /* ── 跨类型聚合条(RunGroup)：统计句一行,展开体流内直铺(零内嵌滚动条) ──
      层级纪律：组头是「第一层」,组内原始行是「第二层」,原始行自己的展开是「第三层」。 */
   .agg-run { min-width: 0; }
   .agg-run-head {
@@ -456,7 +489,6 @@
   }
   .agg-run-head .tool-diffstat { margin-left: auto; flex: none; }
   .agg-run-body {
-    max-height: 544px; overflow: auto; overscroll-behavior: contain;
     margin: 2px 0 6px 8px;
     border-left: 1px solid var(--border); padding-left: 12px;
     display: grid; gap: 2px;

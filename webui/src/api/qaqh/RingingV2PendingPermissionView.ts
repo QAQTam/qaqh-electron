@@ -8,4 +8,4 @@ import type { JsonValue } from "../serde_json/JsonValue";
  * 「键存在、值为 JSON」；正文不可用时这些键为 `null`、`paths` 为 `[]`，
  * `details_unavailable` 如实标记。
  */
-export type RingingV2PendingPermissionView = { tool_call_id: string, tool_name: JsonValue | null, action_summary: JsonValue | null, reason: JsonValue | null, paths: JsonValue, category: JsonValue | null, level: JsonValue | null, risk: JsonValue | null, consequence: JsonValue | null, details_unavailable: boolean, };
+export type RingingV2PendingPermissionView = { tool_call_id: string, tool_name: JsonValue | null, action_summary: JsonValue | null, justification?: JsonValue | null, reason: JsonValue | null, paths: JsonValue, category: JsonValue | null, level: JsonValue | null, risk: JsonValue | null, consequence: JsonValue | null, details_unavailable: boolean, };

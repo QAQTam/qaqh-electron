@@ -1,0 +1,81 @@
+/* 正文 file:line 引用打开的代码定位侧栏。抽屉动画复用 deliverables.css 的关键帧。 */
+@layer components {
+  .code-preview-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1001;
+    display: flex;
+    justify-content: flex-end;
+    background: rgb(0 0 0 / 50%);
+    animation: drawerFadeIn var(--dur-drawer, 240ms) var(--ease, ease-out);
+  }
+  .code-preview-panel {
+    width: min(52vw, 820px);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+    border-left: 1px solid var(--border-strong);
+    box-shadow: -8px 0 32px rgb(0 0 0 / 22%);
+    animation: drawerSlideIn var(--dur-drawer, 240ms) var(--ease, cubic-bezier(0.16, 1, 0.3, 1));
+  }
+  .code-preview-header {
+    flex: none;
+    height: 48px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .code-preview-heading { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+  .code-preview-kicker { color: var(--muted); font-size: var(--fs-xs); }
+  .code-preview-path {
+    overflow: hidden;
+    font-family: var(--font-code);
+    font-size: var(--fs-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .code-preview-close {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .code-preview-close:hover { background: var(--code-veil); color: var(--text); }
+  .code-preview-state { padding: 24px 16px; color: var(--muted); }
+  .code-preview-scroll {
+    flex: 1;
+    overflow: auto;
+    padding: 8px 0;
+    font-family: var(--font-code);
+    font-size: var(--md-code-scale);
+    line-height: 21px;
+    overscroll-behavior: contain;
+  }
+  .code-preview-line { display: flex; min-height: 21px; white-space: pre; }
+  .code-preview-line.focused { background: var(--code-veil); box-shadow: inset 2px 0 var(--accent); }
+  .code-preview-ln {
+    flex: none;
+    width: 56px;
+    padding-right: 12px;
+    color: var(--muted);
+    text-align: right;
+    user-select: none;
+  }
+  .code-preview-code { flex: 1; padding-right: 16px; }
+  .code-preview-truncated {
+    flex: none;
+    padding: 8px 16px;
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    border-top: 1px solid var(--border);
+  }
+}

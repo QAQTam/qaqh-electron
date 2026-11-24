@@ -55,6 +55,15 @@ function verifyAsar(context, root, platform) {
   if (pkg.main !== "dist/main/index.cjs" || pkg.version !== expectedVersion) {
     throw new Error(`Packaged entrypoint/version mismatch: expected ${expectedVersion}, got ${pkg.version}.`);
   }
+  if (platform === "win32") {
+    for (const rel of ["pet/qaqh-pet.exe", "pet/packs/default/pack.json"]) {
+      const packaged = join(resources, rel);
+      const staged = join(root, "resources", rel);
+      if (!existsSync(packaged) || digest(readFileSync(packaged)) !== digest(readFileSync(staged))) {
+        throw new Error(`Packaged pet asset missing or stale: resources/${rel}`);
+      }
+    }
+  }
   verifyNativeAddon(root, resources, platform);
   console.log(`[verify] ${files.length} shell/renderer files and daemon match the current build.`);
 }

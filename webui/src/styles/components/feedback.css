@@ -106,62 +106,14 @@
     color: var(--text); font-size: var(--fs-sm);
   }
   .provider-retry-detail { color: var(--muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
-  .quit-overlay {
-    position: fixed; inset: 0; z-index: 120;
-    display: grid; place-items: center;
-    padding: 24px;
-    background: color-mix(in srgb, var(--bg) 58%, transparent);
-    -webkit-backdrop-filter: blur(12px);
-    backdrop-filter: blur(12px);
-    transition: opacity var(--dur) var(--ease);
-  }
-  .quit-dialog {
-    width: min(520px, 100%);
-    overflow: hidden;
-    color: var(--text);
-    background: var(--dialog-bg, var(--surface-solid, var(--surface)));
-    -webkit-backdrop-filter: var(--acrylic-blur, none);
-    backdrop-filter: var(--acrylic-blur, none);
-    border: 1px solid var(--stroke-control, var(--border-strong));
-    border-radius: var(--r-lg);
-    box-shadow: var(--acrylic-highlight, 0 0 0 transparent), var(--shadow-panel);
-    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
-  }
-  .quit-dialog-head {
-    display: flex; align-items: center; gap: 12px;
-    min-height: 54px; padding: 8px 14px 8px 18px;
-    border-bottom: 1px solid var(--border);
-    font-size: var(--fs-lg);
-  }
-  .quit-dialog-head .icon-btn { margin-left: auto; }
-  .quit-dialog-body { display: grid; gap: 10px; padding: 18px; line-height: 1.6; }
-  .quit-dialog-note { color: var(--muted); font-size: var(--fs-sm); }
-  .quit-dialog-error { color: var(--err); font-size: var(--fs-sm); overflow-wrap: anywhere; }
-  .quit-stop-confirm {
-    display: grid; gap: 4px; padding: 10px 12px;
-    border: 1px solid color-mix(in srgb, var(--err) 38%, var(--border));
-    border-radius: var(--r-md); background: var(--err-soft);
-  }
-  .quit-stop-confirm p { color: var(--muted); font-size: var(--fs-sm); }
-  .quit-dialog-actions {
-    display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px;
-    padding: 12px 18px 16px; border-top: 1px solid var(--border);
-  }
-  .quit-dialog-actions > button {
-    min-height: 36px; padding: 0 12px; border-radius: var(--r-md); font-size: var(--fs-sm);
-  }
   /* 入场统一走 @starting-style(Safari 17.5+ / Chromium 117+):与后续可能的
    * 离场过渡同一机制,display 切换也能过渡。老引擎经下面的 @supports not
    * 回退到原 keyframes,两端观感一致。 */
   @starting-style {
     .toast, .connection-notice { opacity: 0; transform: translateY(4px); }
-    .quit-overlay { opacity: 0; }
-    .quit-dialog { opacity: 0; transform: translateY(6px) scale(.99); }
   }
   @supports not (transition-behavior: allow-discrete) {
     .toast, .connection-notice { animation: toast-in var(--dur) var(--ease); }
-    .quit-overlay { animation: approval-fade var(--dur) var(--ease); }
-    .quit-dialog { animation: approval-pop var(--dur) var(--ease); }
   }
   @keyframes toast-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
