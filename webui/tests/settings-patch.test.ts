@@ -32,7 +32,6 @@ function dto(overrides: Partial<ConfigDto> = {}): ConfigDto {
     exec: { defaultShell: null },
     sessionIdleUnloadSecs: 0,
     mcp: { enabled: false, idleShutdownSecs: 300, servers: [] },
-    lsp: { enabled: false, idleShutdownSecs: 600, servers: [] },
     sandbox: { enabled: false },
     toolAllowlistEnabled: false,
     toolAllowlist: [],

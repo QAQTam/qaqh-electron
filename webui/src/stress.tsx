@@ -318,7 +318,6 @@ if (isVisualPreview) {
         },
       ],
     },
-    lsp: { enabled: false, idleShutdownSecs: 300, servers: [] },
   };
   // skills 视觉夹具直接复用 daemon `skills.catalog` 的输出形状；发现、解析和遮蔽
   // 由 catalog 负责，浏览器夹具只提供可展示的条目元数据。

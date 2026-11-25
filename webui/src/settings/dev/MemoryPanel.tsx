@@ -26,7 +26,7 @@ const GROUPS: Array<{ id: ComponentGroup; label: string }> = [
   { id: "ringing", label: "ringing" },
   { id: "agent_registry", label: "agent_registry" },
   { id: "service", label: "service" },
-  { id: "transport", label: "transport(mcp/lsp)" },
+  { id: "transport", label: "transport(mcp)" },
   { id: "workspace", label: "workspace" },
   { id: "other", label: "other" },
 ];

@@ -74,7 +74,6 @@ export function simMemorySnapshot(afterSequence: number | null = null): MemorySn
       { name: "agent_registry.sessions", group: "agent_registry", item_count: 3, payload_bytes: null, heap_estimate_bytes: 42_000_000, updated_at_ms: now },
       { name: "service.context", group: "service", item_count: 96, payload_bytes: 2_100_000, heap_estimate_bytes: 12_800_000, updated_at_ms: now },
       { name: "mcp.servers", group: "transport", item_count: 4, payload_bytes: 512_000, heap_estimate_bytes: 3_200_000, updated_at_ms: now },
-      { name: "lsp.servers", group: "transport", item_count: 0, payload_bytes: 0, heap_estimate_bytes: 0, updated_at_ms: now },
       { name: "workspace.registry", group: "workspace", item_count: 7, payload_bytes: null, heap_estimate_bytes: 960_000, updated_at_ms: now },
       { name: "misc.images", group: "other", item_count: 12, payload_bytes: 88_000_000, heap_estimate_bytes: 96_000_000, updated_at_ms: now },
     ],

@@ -587,11 +587,6 @@ export const SettingsView: Component<{
                               {config().mcp.enabled ? "已启用" : "未启用"}
                             </Badge>
                           </SettingRow>
-                          <SettingRow label="LSP 语言服务" desc={`空闲关闭：${config().lsp.idleShutdownSecs}s`}>
-                            <Badge tone={config().lsp.enabled ? "ok" : "neutral"}>
-                              {config().lsp.enabled ? "已启用" : "未启用"}
-                            </Badge>
-                          </SettingRow>
                         </SettingGroup>
 
                         <Show when={config().mcp.servers.length > 0}>
@@ -606,18 +601,6 @@ export const SettingsView: Component<{
                                   <span class="ui-setting-row-value">
                                     {server.tools == null ? "全部工具" : `${server.tools.length} 个工具`}
                                   </span>
-                                </SettingRow>
-                              )}
-                            </For>
-                          </SettingGroup>
-                        </Show>
-
-                        <Show when={config().lsp.servers.length > 0}>
-                          <SettingGroup title="LSP 服务列表">
-                            <For each={config().lsp.servers}>
-                              {(server) => (
-                                <SettingRow label={server.name} desc={server.command}>
-                                  <span class="ui-setting-row-value is-mono">{server.extensions.join(", ")}</span>
                                 </SettingRow>
                               )}
                             </For>

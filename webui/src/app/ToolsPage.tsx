@@ -1,9 +1,9 @@
 /**
- * 工具页(spec 「工具」):daemon Skills catalog + MCP/LSP 只读表 + 插件占位。
+ * 工具页(spec 「工具」):daemon Skills catalog + MCP 只读表 + 插件占位。
  *
  * skills 由 `skills.catalog` 解析、校验并处理同名遮蔽；renderer 只分组展示。
  *
- * MCP/LSP 复用 config.load 的只读投影(与设置页「MCP / LSP(只读)」同源,
+ * MCP 复用 config.load 的只读投影(与设置页「MCP(只读)」同源,
  * SettingsView.tsx:465-503);插件(plugin)按 codex PluginManifest 形状留占位。
  *
  * Skills catalog 只给 metadata；正文需要后续读取能力支持时再接线。
@@ -301,10 +301,10 @@ export const ToolsPage: Component<{ toolsTab?: "skills" | "mcp" | "plugins" }> =
       </section>
       </Show>
 
-      {/* ── MCP / LSP(config.load 只读,与设置页同源) ── */}
+      {/* ── MCP(config.load 只读,与设置页同源) ── */}
       <Show when={tab() === "mcp"}>
       <section class="tools-section" aria-labelledby="mcp-title">
-        <h2 id="mcp-title"><IconCable /> MCP / LSP</h2>
+        <h2 id="mcp-title"><IconCable /> MCP</h2>
         <Show when={configError != null}>
           <p class="tools-issue"><IconTriangleAlert /> <span>config.load 失败:{configError()}</span></p>
         </Show>
@@ -314,7 +314,6 @@ export const ToolsPage: Component<{ toolsTab?: "skills" | "mcp" | "plugins" }> =
               <div class="readonly-grid">
                 <span>mcp.enabled</span><b>{String(current().mcp.enabled)}</b>
                 <span>mcp.idleShutdownSecs</span><b>{String(current().mcp.idleShutdownSecs)}</b>
-                <span>lsp.enabled</span><b>{String(current().lsp.enabled)}</b>
               </div>
               <Show when={current().mcp.servers.length > 0}>
                 <table class="readonly-table">
@@ -329,24 +328,6 @@ export const ToolsPage: Component<{ toolsTab?: "skills" | "mcp" | "plugins" }> =
                           <td>{server.transport}</td>
                           <td>{server.command !== "" ? server.command : server.url}</td>
                           <td>{server.tools == null ? "全部" : String(server.tools.length)}</td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
-              </Show>
-              <Show when={current().lsp.servers.length > 0}>
-                <table class="readonly-table">
-                  <thead>
-                    <tr><th>server</th><th>command</th><th>extensions</th></tr>
-                  </thead>
-                  <tbody>
-                    <For each={current().lsp.servers}>
-                      {(server) => (
-                        <tr>
-                          <td>{server.name}</td>
-                          <td>{server.command}</td>
-                          <td>{server.extensions.join(", ")}</td>
                         </tr>
                       )}
                     </For>

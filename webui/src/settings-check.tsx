@@ -15,7 +15,6 @@ import { openDevConsole } from "./lib/devmode";
 import { openSettings } from "./settings/store";
 import { openSession } from "./tabs/store";
 import type { McpServerDto } from "./api/qaqh/McpServerDto";
-import type { LspServerDto } from "./api/qaqh/LspServerDto";
 import type { DesktopHostBridge } from "./lib/desktop-host";
 
 type CommandCall = {
@@ -53,21 +52,6 @@ const baseConfig = (): ConfigDto => ({
         maxConcurrentCalls: 8,
         cwd: "",
       } satisfies McpServerDto,
-    ],
-  },
-  lsp: {
-    enabled: false,
-    idleShutdownSecs: 600,
-    servers: [
-      {
-        name: "rust-analyzer",
-        command: "rust-analyzer",
-        args: [],
-        env: {},
-        extensions: ["rs"],
-        startupTimeoutSecs: 20,
-        defaultTimeoutSecs: 60,
-      } satisfies LspServerDto,
     ],
   },
   sandbox: { enabled: true },
