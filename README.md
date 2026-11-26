@@ -1,6 +1,12 @@
-# QAQ-Harness Electron (canonical desktop host)
+> [!IMPORTANT]
+> **已退役 / Archived (2026-11-26)**
+>
+> `qaqh-electron` 已正式退役并停止维护。桌面客户端已全面迁移至原生 Rust + GPUI 实现：**[QAQTam/qaqh-gpui](https://github.com/QAQTam/qaqh-gpui)**。
+> 本仓库现已只读存档，仅供历史参考。
 
-`qaqh-electron` is the first-class and only supported desktop shell. It hosts the SolidJS renderer in `webui/`, owns all OS privileges, daemon discovery credentials and lifecycle, and speaks Ringing v2 through the native `qaqh-napi-client` addon (Rust `qaqh-client`, shared with the TUI / Android / HarmonyOS shells). The renderer receives a narrow `window.qaqhHost` API; Node, Electron primitives, daemon bearer tokens, and unrestricted IPC are not exposed to it.
+# QAQ-Harness Electron (archived legacy desktop host)
+
+`qaqh-electron` is the retired legacy Electron desktop shell (superseded by [`qaqh-gpui`](https://github.com/QAQTam/qaqh-gpui)). Historically, it hosted the SolidJS renderer in `webui/`, owned OS privileges, daemon discovery credentials and lifecycle, and spoke Ringing v2 through the native `qaqh-napi-client` addon (Rust `qaqh-client`, shared with the TUI / Android / HarmonyOS shells). The renderer received a narrow `window.qaqhHost` API; Node, Electron primitives, daemon bearer tokens, and unrestricted IPC were not exposed to it.
 
 ## Architecture
 
